@@ -2,7 +2,7 @@
 from flask import Flask, jsonify, Response
 from flask_cors import CORS
 import time, cv2
-from scanner import scan_request, start_background_scanner, get_latest_frame, auth_status
+from back_end.scanner import scan_request, start_background_scanner, get_latest_frame, auth_status
 
 app = Flask(__name__)
 CORS(app)
