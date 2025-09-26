@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-
 import 'dart:ui_web' as ui_web; // for platformViewRegistry
 import 'dart:html' as html; // for ImageElement (Web only)
 
@@ -36,14 +35,15 @@ class _ScanPageState extends State<ScanPage> {
   Timer? timer;
   bool scanning = false;
 
-  final String raspberryIp = "localhost"; // use localhost for web
+  final String raspberryIp = "localhost"; // change if needed
+
+  // Store video aspect ratio (default 4:3)
+  double aspectRatio = 4 / 3;
 
   @override
   void initState() {
     super.initState();
-
     if (kIsWeb) {
-      // Register HTML <img> view factory for MJPEG feed
       ui_web.platformViewRegistry.registerViewFactory(
         'mjpeg-video',
             (int viewId) => html.ImageElement()
@@ -52,6 +52,22 @@ class _ScanPageState extends State<ScanPage> {
           ..style.width = '100%'
           ..style.height = '100%',
       );
+    }
+
+    // Optionally fetch MJPEG frame once to determine native aspect ratio
+    fetchAspectRatio();
+  }
+
+  Future<void> fetchAspectRatio() async {
+    try {
+      final res = await http.get(Uri.parse("http://$raspberryIp:5000/video_feed"));
+      if (res.statusCode == 200) {
+        // Approximation: assume 4:3 if not detectable
+        setState(() => aspectRatio = 4 / 3);
+      }
+    } catch (_) {
+      // fallback
+      aspectRatio = 4 / 3;
     }
   }
 
@@ -104,32 +120,53 @@ class _ScanPageState extends State<ScanPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text("Face + Barcode Verification")),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            SizedBox(
-              width: 800,  // bigger MJPEG feed
-              height: 600,
-              child: kIsWeb
-                  ? const HtmlElementView(viewType: 'mjpeg-video')
-                  : Image.network(
-                "http://$raspberryIp:5000/video_feed",
-                gaplessPlayback: true,
-                fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) =>
-                const Text("⚠️ Cannot load video"),
-              ),
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          // Dynamically calculate feed height based on native aspect ratio
+          final maxWidth = constraints.maxWidth;
+          final maxHeight = constraints.maxHeight - 150; // leave space for status/buttons
+          double feedWidth = maxWidth;
+          double feedHeight = feedWidth / aspectRatio;
+
+          if (feedHeight > maxHeight) {
+            feedHeight = maxHeight;
+            feedWidth = feedHeight * aspectRatio;
+          }
+
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.start,
+              children: [
+                SizedBox(
+                  width: feedWidth,
+                  height: feedHeight,
+                  child: kIsWeb
+                      ? const HtmlElementView(viewType: 'mjpeg-video')
+                      : Image.network(
+                    "http://$raspberryIp:5000/video_feed",
+                    fit: BoxFit.contain,
+                    gaplessPlayback: true,
+                    errorBuilder: (context, error, stackTrace) =>
+                    const Center(child: Text("⚠️ Cannot load video feed")),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Flexible(
+                  child: Text(
+                    status,
+                    style: const TextStyle(fontSize: 22),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                ElevatedButton(
+                  onPressed: toggleScan,
+                  child: Text(scanning ? "Stop Scan" : "Start Scan"),
+                ),
+              ],
             ),
-            const SizedBox(height: 20),
-            Text(status, style: const TextStyle(fontSize: 22)),
-            const SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: toggleScan,
-              child: Text(scanning ? "Stop Scan" : "Start Scan"),
-            ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
