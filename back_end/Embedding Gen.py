@@ -1,8 +1,10 @@
-import os
+import hashlib
 import json
+import os
+
 import numpy as np
 from deepface import DeepFace
-import hashlib
+
 
 # -------------------------
 # Helpers

@@ -5,8 +5,9 @@
       <excludeFolder url="file://$MODULE_DIR$/front_end/.dart_tool" />
       <excludeFolder url="file://$MODULE_DIR$/front_end/.pub" />
       <excludeFolder url="file://$MODULE_DIR$/front_end/build" />
+      <excludeFolder url="file://$MODULE_DIR$/.venv" />
     </content>
-    <orderEntry type="jdk" jdkName="PythonProject (2)" jdkType="Python SDK" />
+    <orderEntry type="jdk" jdkName="Python 3.12 (PhoneBox)" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
     <orderEntry type="library" name="Dart SDK" level="project" />
   </component>

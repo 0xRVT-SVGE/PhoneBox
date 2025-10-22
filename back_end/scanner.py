@@ -1,14 +1,15 @@
 # back_end/scanner.py
-import cv2
-from deepface import DeepFace
-from pyzbar.pyzbar import decode, ZBarSymbol
-import numpy as np
-import time
-import threading
-import requests
-from queue import Queue
 import json
 import re
+import threading
+import time
+from queue import Queue
+
+import cv2
+import numpy as np
+import requests
+from deepface import DeepFace
+from pyzbar.pyzbar import decode, ZBarSymbol
 
 # ===================================================== #
 # ===================== CONFIG ========================= #

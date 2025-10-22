@@ -1,0 +1,162 @@
+-- ============================
+-- STUDENTS TABLE
+-- ============================
+CREATE TABLE students (
+    sid CHAR(5) PRIMARY KEY
+        CHECK (sid ~ '^E[0-9]{4}$' AND char_length(sid) = 5),
+    last_name VARCHAR(40),
+    first_name VARCHAR(80) NOT NULL,
+    embed FLOAT8[] NOT NULL,
+    location SMALLINT[2]
+        CHECK (
+            array_length(location, 1) = 2
+            AND location[1] BETWEEN 1 AND 500
+            AND location[2] BETWEEN 1 AND 500
+        ),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    modified_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Ensure location uniqueness across all students
+CREATE UNIQUE INDEX unique_location_idx ON students ((location));
+
+-- ============================
+-- PHONES TABLE
+-- ============================
+CREATE TABLE phones (
+    sid CHAR(5) PRIMARY KEY
+        REFERENCES students(sid)
+        ON DELETE CASCADE,
+    pid VARCHAR(32) UNIQUE NOT NULL DEFAULT '',
+    brand VARCHAR(50) NOT NULL,
+    model VARCHAR(50) NOT NULL,
+    imei VARCHAR(20) UNIQUE,
+    cond VARCHAR(30)
+        CHECK (cond IN ('New', 'Good', 'Fair', 'Damaged', 'Broken') OR cond IS NULL),
+    admin_note TEXT,
+    stud_note TEXT,
+    is_stored BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    modified_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ============================
+-- FUNCTION: Generate PID
+-- ============================
+CREATE OR REPLACE FUNCTION gen_phone_pid()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.pid = '' OR NEW.pid IS NULL THEN
+        NEW.pid := encode(
+            digest(NEW.sid || NEW.brand || NEW.model || COALESCE(NEW.imei, 'NULL'), 'md5'),
+            'hex'
+        );
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ============================
+-- FUNCTION: Update modified_at
+-- ============================
+CREATE OR REPLACE FUNCTION update_modified_column()
+RETURNS TRIGGER AS $$
+BEGIN
+   NEW.modified_at = NOW();
+   RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ============================
+-- FUNCTION: Auto-assign unique location
+-- ============================
+CREATE OR REPLACE FUNCTION auto_assign_location()
+RETURNS TRIGGER AS $$
+DECLARE
+    max_x SMALLINT := 500;
+    max_y SMALLINT := 500;
+    x SMALLINT := 1;
+    y SMALLINT := 1;
+    taken BOOLEAN;
+BEGIN
+    -- Only assign automatically if location is not provided
+    IF NEW.location IS NULL THEN
+        LOOP
+            -- Check if current location is free
+            SELECT EXISTS (
+                SELECT 1 FROM students WHERE location = ARRAY[x, y]
+            ) INTO taken;
+
+            EXIT WHEN NOT taken;
+
+            -- Increment location position
+            IF x < max_x THEN
+                x := x + 1;
+            ELSE
+                x := 1;
+                y := y + 1;
+            END IF;
+
+            -- Stop if we exceed the grid
+            IF y > max_y THEN
+                RAISE EXCEPTION 'No available locations left in grid (% x %)', max_x, max_y;
+            END IF;
+        END LOOP;
+
+        NEW.location := ARRAY[x, y];
+    ELSE
+        -- Prevent duplicates for manually set locations
+        IF EXISTS (SELECT 1 FROM students WHERE location = NEW.location) THEN
+            RAISE EXCEPTION 'Location % is already taken', NEW.location;
+        END IF;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ============================
+-- TRIGGERS
+-- ============================
+
+-- Auto-assign unique location
+CREATE TRIGGER students_before_insert
+BEFORE INSERT ON students
+FOR EACH ROW
+EXECUTE FUNCTION auto_assign_location();
+
+-- Update modified_at when student changes
+CREATE TRIGGER students_before_update
+BEFORE UPDATE ON students
+FOR EACH ROW
+EXECUTE FUNCTION update_modified_column();
+
+-- Update modified_at when embedding changes
+CREATE TRIGGER students_embed_modified
+BEFORE UPDATE ON students
+FOR EACH ROW
+WHEN (OLD.embed IS DISTINCT FROM NEW.embed)
+EXECUTE FUNCTION update_modified_column();
+
+-- Auto-generate PID on insert
+CREATE TRIGGER phones_before_insert
+BEFORE INSERT ON phones
+FOR EACH ROW
+EXECUTE FUNCTION gen_phone_pid();
+
+-- Update modified_at when phone changes
+CREATE TRIGGER phones_before_update
+BEFORE UPDATE ON phones
+FOR EACH ROW
+EXECUTE FUNCTION update_modified_column();
+
+-- Regenerate PID if identifying info changes
+CREATE TRIGGER phones_regen_pid
+BEFORE UPDATE ON phones
+FOR EACH ROW
+WHEN (
+    OLD.brand IS DISTINCT FROM NEW.brand
+ OR OLD.model IS DISTINCT FROM NEW.model
+ OR OLD.imei IS DISTINCT FROM NEW.imei
+)
+EXECUTE FUNCTION gen_phone_pid();
