@@ -23,6 +23,11 @@ class _ScanPageState extends State<ScanPage> {
   // Button state follows backend 'running'
   bool scanning = false;
 
+  // Override when stopping manually
+  bool manualOverride = false;
+
+  bool viewDisposed = false;
+
   final socketService = SocketService();
 
   @override
@@ -38,30 +43,37 @@ class _ScanPageState extends State<ScanPage> {
   }
 
   void _connectSocket() {
-    socketService.connect((data) {
-      if (!mounted) return;
+    socketService.connect(_updateScanStatus);
+  }
 
-      setState(() {
-        // Button state tied to 'running'
-        scanning = data["running"] ?? false;
+  void _updateScanStatus(dynamic data) {
+    if (viewDisposed || !mounted) return;
 
-        // Status message independent
-        final auth = data["authorized"] ?? false;
-        final user = data["user"] ?? "";
-        final faceOk = data["face_verified"] ?? false;
-        final barcodeOk = data["barcode_verified"] ?? false;
-        final currentName = data["current_name"] ?? "Idle";
+    // Ignore backend updates while manually stopped
+    if (manualOverride) return;
 
-        if (auth) {
-          scanStatus = "Authorized: $user";
-        } else if (barcodeOk) {
-          scanStatus = "Verifying Face Match: $currentName";
-        } else if (scanning) {
-          scanStatus = "Scanning...";
-        } else {
-          scanStatus = "Idle";
-        }
-      });
+    final running = data["running"] ?? false;
+
+    setState(() {
+      scanning = running;
+
+      final auth = data["authorized"] ?? false;
+      final user = data["user"] ?? "";
+      final timeout = data["badge_timeout_exceeded"] ?? false;
+      final barcodeOk = data["barcode_verified"] ?? false;
+      final currentName = data["current_name"] ?? "Idle";
+
+      if (auth) {
+        scanStatus = "Authorized: $currentName";
+      } else if (timeout) {
+        scanStatus = "Timeout. Unable to Verify Badge.\nAsk for admin's help if it happened more than 2 times";
+      } else if (barcodeOk) {
+        scanStatus = "Verifying Face Match: $currentName";
+      } else if (scanning) {
+        scanStatus = "Scanning...";
+      } else {
+        scanStatus = "Idle";
+      }
     });
   }
 
@@ -76,6 +88,8 @@ class _ScanPageState extends State<ScanPage> {
     _peerConnection = await createPeerConnection(config);
 
     _peerConnection!.onTrack = (event) {
+      if (viewDisposed) return;
+      if (!mounted) return;
       if (event.streams.isNotEmpty) {
         _remoteRenderer.srcObject = event.streams[0];
       }
@@ -94,20 +108,31 @@ class _ScanPageState extends State<ScanPage> {
       await _peerConnection!.setRemoteDescription(
         RTCSessionDescription(answerSDP, 'answer'),
       );
-
-      if (mounted) {
-        setState(() => webrtcStatus = "WebRTC Connected");
-      }
+      if (mounted) setState(() => webrtcStatus = "WebRTC Connected");
     } else {
-      if (mounted) {
-        setState(() => webrtcStatus = "WebRTC Error");
-      }
+      if (mounted) setState(() => webrtcStatus = "WebRTC Error");
     }
   }
 
   void toggleScan() {
-    socketService.toggleScan();
+    if (scanning) {
+      // STOP
+      setState(() {
+        manualOverride = true;
+        scanning = false;
+        scanStatus = "Idle";
+      });
+      socketService.toggleScan();
+    } else {
+      // START
+      setState(() {
+        manualOverride = false;
+      });
+      socketService.toggleScan();
+      socketService.listenScanStatus(_updateScanStatus);
+    }
   }
+
 
   void _openAdminMenu() async {
     final auth = AuthService();
@@ -147,11 +172,20 @@ class _ScanPageState extends State<ScanPage> {
 
   @override
   void dispose() {
-    _peerConnection?.close();
-    _remoteRenderer.dispose();
+    viewDisposed = true;
+
     socketService.disconnect();
+
+    _peerConnection?.onTrack = null;
+    _peerConnection?.close();
+    _peerConnection = null;
+
+    _remoteRenderer.srcObject = null;
+    _remoteRenderer.dispose();
+
     super.dispose();
   }
+
 
   @override
   Widget build(BuildContext context) {
@@ -171,7 +205,7 @@ class _ScanPageState extends State<ScanPage> {
             Expanded(
               child: Center(
                 child: AspectRatio(
-                  aspectRatio: 4 / 3,
+                  aspectRatio: 16 / 9,
                   child: Container(
                     decoration: BoxDecoration(
                       border: Border.all(color: Colors.white24),
@@ -187,7 +221,7 @@ class _ScanPageState extends State<ScanPage> {
             // --- Show statuses ---
             Text(webrtcStatus, style: const TextStyle(fontSize: 16, color: Colors.grey)),
             const SizedBox(height: 4),
-            Text(scanStatus, style: const TextStyle(fontSize: 18)),
+            Text(scanStatus, textAlign: TextAlign.center, style: const TextStyle(fontSize: 18)),
             const SizedBox(height: 10),
 
             Padding(
@@ -199,7 +233,7 @@ class _ScanPageState extends State<ScanPage> {
                   backgroundColor: scanning ? Colors.red : Colors.green,
                   minimumSize: const Size(160, 45),
                 ),
-                onPressed: toggleScan,
+                onPressed: toggleScan, // always active
               ),
             ),
           ],

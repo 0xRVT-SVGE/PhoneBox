@@ -12,7 +12,7 @@ def create_app():
     app.register_blueprint(students_bp, url_prefix="/api/students")
     app.register_blueprint(phones_bp, url_prefix="/api/phones")
 
-    socketio = SocketIO(app, cors_allowed_origins="*")
+    socketio = SocketIO(app, async_mode="threading", cors_allowed_origins="*")
 
 
     return app, socketio

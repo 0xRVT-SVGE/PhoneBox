@@ -1,4 +1,5 @@
 import threading
+import asyncio
 from queue import Queue
 import time
 
@@ -7,6 +8,15 @@ class ScannerState:
         self._frame_lock = threading.Lock()
         self._latest_frame = None
 
+        # --------- Managing students ----------
+        self._rframe_lock = threading.Lock()
+        self._latest_rframe = None
+
+        # --------- PREVIEW EVENTS ----------
+        # Signals for event-driven WebRTC preview
+        self.preview_requested = asyncio.Event()
+        self.photo_taken_event = asyncio.Event()
+
         self.task_queue = Queue(maxsize=1)
         self._scan_request = {"running": False}
         self._auth_status = {"authorized": False, "user": None}
@@ -14,6 +24,7 @@ class ScannerState:
             "face_verified": False,
             "barcode_verified": False,
             "current_name": "Idle",
+            "badge_timeout_exceeded": False,
         }
 
         self._current_student = None
@@ -32,7 +43,16 @@ class ScannerState:
     def set_socketio(self, sio):
         self._socketio = sio
 
-    # ---------------- FRAME ----------------
+    # ---------------- RAW FRAME ----------------
+    def set_rframe(self, frame):
+        with self._rframe_lock:
+            self._latest_rframe = frame.copy() if frame is not None else None
+
+    def get_rframe(self):
+        with self._rframe_lock:
+            return self._latest_rframe.copy() if self._latest_rframe is not None else None
+
+    # ---------------- FRAME WITH ROI ------------
     def set_frame(self, frame):
         with self._frame_lock:
             self._latest_frame = frame.copy() if frame is not None else None
@@ -104,6 +124,19 @@ class ScannerState:
             "face_verified": self._scan_results["face_verified"],
             "barcode_verified": self._scan_results["barcode_verified"],
             "current_name": self._scan_results["current_name"],
-        })
+            "badge_timeout_exceeded": self._scan_results["badge_timeout_exceeded"],
+        }, namespace="/")
+
+    # ---- Preview async methods ----
+    def request_preview(self):
+        self.photo_taken_event.clear()
+        self.preview_requested.set()
+
+    def stop_preview(self):
+        self.preview_requested.clear()
+
+    def mark_photo_taken(self):
+        self.photo_taken_event.set()
+
 
 scanner_state = ScannerState()

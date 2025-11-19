@@ -20,13 +20,7 @@ class SocketService {
     socket.onConnect((_) {
       isConnected = true;
       print("Connected to backend socket");
-      requestStatus(); // Ask backend for initial status
-    });
-
-    // Use the passed callback instead of just printing
-    socket.on("scan_status", (data) {
-      print("Got scan_status: $data"); // Optional debug
-      onScanStatus(data); // Call your UI update
+      requestStatus(); // initial fetch
     });
 
     socket.onDisconnect((_) {
@@ -35,9 +29,22 @@ class SocketService {
     });
   }
 
+  void listenScanStatus(Function(dynamic) onScanStatus) {
+    socket.on("scan_status", (data) {
+      onScanStatus(data);
+
+      // stop listening if running is false
+      if (!(data["running"] ?? false)) {
+        print("[+] Scan finished, removing listener");
+        socket.off("scan_status");
+      }
+    });
+  }
+
   void toggleScan() {
     if (isConnected) {
       socket.emit("toggle_scan", {"toggle": true});
+      print("[>] toggle_scan emitted");
     } else {
       print("Socket not connected!");
     }
@@ -46,6 +53,7 @@ class SocketService {
   void requestStatus() {
     if (isConnected) {
       socket.emit("get_status", {"toggle": true});
+      print("[>] get_status emitted");
     }
   }
 

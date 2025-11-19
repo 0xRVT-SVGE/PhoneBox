@@ -2,7 +2,7 @@
 from flask import Blueprint, jsonify, request
 from back_end.Database.students import (
     create_student, get_student, list_students, update_student, delete_student,
-    search_students, students_near_location, recently_modified_students
+    search_students, recently_modified_students
 )
 
 students_bp = Blueprint("students", __name__)
@@ -39,16 +39,6 @@ def api_delete_student(sid):
 def api_search_students():
     query = request.args.get("q", "").strip()
     return handle_response(search_students(query))
-
-@students_bp.route("/nearby", methods=["GET"])
-def api_students_near_location():
-    try:
-        x = int(request.args.get("x"))
-        y = int(request.args.get("y"))
-        limit = int(request.args.get("limit", 10))
-        return handle_response(students_near_location(x, y, limit))
-    except Exception:
-        return jsonify({"status": "error", "message": "Invalid x, y, or limit"}), 400
 
 @students_bp.route("/recent", methods=["GET"])
 def api_recent_students():

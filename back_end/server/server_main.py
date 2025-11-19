@@ -26,14 +26,14 @@ def handle_toggle_scan(_):
     if new_state:
         scanner_state.update_last_barcode()
 
-    scanner_state.emit_scan_status()
+    scanner_state._emit_socket()
 
 @socketio.on("get_status")
 def handle_get_status(_):
-    scanner_state.emit_scan_status()
+    scanner_state._emit_socket()
 
 # --- Threads ---
 if __name__ == "__main__":
     threading.Thread(target=_start_async_loop, args=(async_loop,), daemon=True).start()
     threading.Thread(target=lambda: scanner_loop(debugwindow=False, debugroi=True), daemon=True).start()
-    socketio.run(app, host="0.0.0.0", port=5000)
+    socketio.run(app, host="0.0.0.0", port=5000, allow_unsafe_werkzeug=True)
