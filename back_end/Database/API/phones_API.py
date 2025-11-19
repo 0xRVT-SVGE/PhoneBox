@@ -1,7 +1,7 @@
 # back_end/Database/API/phones_API.py
 from flask import Blueprint, jsonify, request
 from back_end.Database.phones import (
-    create_phone, get_phone, list_phones, update_phone, delete_phone,
+    create_phone, get_phones, list_phones, update_phone, delete_phone,
     phones_not_stored, phones_by_condition, phone_stats, reassign_phone, regenerate_pid
 )
 
@@ -18,7 +18,7 @@ def route_list_phones():
 
 @phones_bp.route("/<sid>", methods=["GET"])
 def route_get_phone(sid):
-    return handle_response(get_phone(sid))
+    return handle_response(get_phones(sid))
 
 @phones_bp.route("/", methods=["POST"])
 def route_create_phone():

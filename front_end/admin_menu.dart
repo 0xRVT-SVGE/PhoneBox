@@ -2,8 +2,6 @@ import 'package:flutter/material.dart';
 import 'auth.dart';
 import 'package:phonebox_ui/api_service.dart';
 
-
-
 class AdminMenu extends StatefulWidget {
   const AdminMenu({super.key});
 
@@ -29,20 +27,8 @@ class _AdminMenuState extends State<AdminMenu> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => Scaffold(
-          appBar: AppBar(title: const Text("Manage Students")),
-          body: _loading
-              ? const Center(child: CircularProgressIndicator())
-              : ListView.builder(
-            itemCount: _students.length,
-            itemBuilder: (context, index) {
-              final s = _students[index];
-              return ListTile(
-                title: Text("${s['first_name']} ${s['last_name']}"),
-                subtitle: Text("ID: ${s['id']}"),
-              );
-            },
-          ),
+        builder: (context) => ManageStudentsPage(
+          students: _students,
         ),
       ),
     );
@@ -77,6 +63,80 @@ class _AdminMenuState extends State<AdminMenu> {
             child: const Text("Manage Phones"),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ------------------- Manage Students Page -------------------
+class ManageStudentsPage extends StatelessWidget {
+  final List<dynamic> students;
+
+  const ManageStudentsPage({super.key, required this.students});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Manage Students"),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.add),
+            tooltip: "Create New Student",
+            onPressed: () {
+              // TODO: Implement create student form
+              print("Create New Student pressed");
+            },
+          )
+        ],
+      ),
+      body: students.isEmpty
+          ? const Center(child: CircularProgressIndicator())
+          : ListView.builder(
+        itemCount: students.length,
+        itemBuilder: (context, index) {
+          final s = students[index];
+          return Card(
+            margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            child: ListTile(
+              title: Text("${s['first_name']} ${s['last_name']}"),
+              subtitle: Text("ID: ${s['sid']}"),
+              trailing: Wrap(
+                spacing: 6,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.edit),
+                    tooltip: "Edit Student",
+                    onPressed: () {
+                      print("Edit ${s['sid']}");
+                    },
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.camera_alt),
+                    tooltip: "Update Embed",
+                    onPressed: () {
+                      print("Update Embed for ${s['sid']}");
+                    },
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.delete),
+                    tooltip: "Delete Student",
+                    onPressed: () {
+                      print("Delete ${s['sid']}");
+                    },
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.phone),
+                    tooltip: "View Phones",
+                    onPressed: () {
+                      print("View phones for ${s['sid']}");
+                    },
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
       ),
     );
   }

@@ -36,4 +36,4 @@ def handle_get_status(_):
 if __name__ == "__main__":
     threading.Thread(target=_start_async_loop, args=(async_loop,), daemon=True).start()
     threading.Thread(target=lambda: scanner_loop(debugwindow=False, debugroi=True), daemon=True).start()
-    socketio.run(app, host="0.0.0.0", port=5000)
+    socketio.run(app, host="0.0.0.0", port=5000, allow_unsafe_werkzeug=True)

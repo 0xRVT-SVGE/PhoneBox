@@ -1,4 +1,5 @@
 import threading
+import asyncio
 from queue import Queue
 import time
 
@@ -6,6 +7,18 @@ class ScannerState:
     def __init__(self):
         self._frame_lock = threading.Lock()
         self._latest_frame = None
+
+        # --------- Managing students ----------
+        self._rframe_lock = threading.Lock()
+        self._latest_rframe = None
+        self.need_preview = False
+        self.preview_active = False
+        self.take_photo = False
+
+        # --------- PREVIEW EVENTS ----------
+        # Signals for event-driven WebRTC preview
+        self.preview_requested = asyncio.Event()
+        self.photo_taken_event = asyncio.Event()
 
         self.task_queue = Queue(maxsize=1)
         self._scan_request = {"running": False}
@@ -32,7 +45,16 @@ class ScannerState:
     def set_socketio(self, sio):
         self._socketio = sio
 
-    # ---------------- FRAME ----------------
+    # ---------------- RAW FRAME ----------------
+    def set_rframe(self, frame):
+        with self._rframe_lock:
+            self._latest_rframe = frame.copy() if frame is not None else None
+
+    def get_rframe(self):
+        with self._rframe_lock:
+            return self._latest_rframe.copy() if self._latest_rframe is not None else None
+
+    # ---------------- FRAME WITH ROI ------------
     def set_frame(self, frame):
         with self._frame_lock:
             self._latest_frame = frame.copy() if frame is not None else None
@@ -105,5 +127,17 @@ class ScannerState:
             "barcode_verified": self._scan_results["barcode_verified"],
             "current_name": self._scan_results["current_name"],
         })
+
+    # ---- Preview async methods ----
+    def request_preview(self):
+        self.photo_taken_event.clear()
+        self.preview_requested.set()
+
+    def stop_preview(self):
+        self.preview_requested.clear()
+
+    def mark_photo_taken(self):
+        self.photo_taken_event.set()
+
 
 scanner_state = ScannerState()

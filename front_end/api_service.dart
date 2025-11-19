@@ -12,7 +12,7 @@ class ApiService {
 
   static Future<String?> sendOffer(String offerSDP) async {
     final res = await http.post(
-      Uri.parse("$baseUrl/webrtc/offer"),
+      Uri.parse("$baseUrl/webrtc/offer/main"),
       headers: {"Content-Type": "application/json"},
       body: jsonEncode({"sdp": offerSDP, "type": "offer"}),
     );

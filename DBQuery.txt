@@ -24,10 +24,10 @@ CREATE UNIQUE INDEX unique_location_idx ON students ((location));
 -- PHONES TABLE
 -- ============================
 CREATE TABLE phones (
-    sid CHAR(5) PRIMARY KEY
+    pid VARCHAR(32) PRIMARY KEY,                 -- changed: pid is now PK
+    sid CHAR(5) NOT NULL                         -- changed: sid is no longer PK
         REFERENCES students(sid)
         ON DELETE CASCADE,
-    pid VARCHAR(32) UNIQUE NOT NULL DEFAULT '',
     brand VARCHAR(50) NOT NULL,
     model VARCHAR(50) NOT NULL,
     imei VARCHAR(20) UNIQUE,
