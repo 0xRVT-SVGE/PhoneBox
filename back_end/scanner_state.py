@@ -11,9 +11,6 @@ class ScannerState:
         # --------- Managing students ----------
         self._rframe_lock = threading.Lock()
         self._latest_rframe = None
-        self.need_preview = False
-        self.preview_active = False
-        self.take_photo = False
 
         # --------- PREVIEW EVENTS ----------
         # Signals for event-driven WebRTC preview
@@ -27,6 +24,7 @@ class ScannerState:
             "face_verified": False,
             "barcode_verified": False,
             "current_name": "Idle",
+            "badge_timeout_exceeded": False,
         }
 
         self._current_student = None
@@ -126,7 +124,8 @@ class ScannerState:
             "face_verified": self._scan_results["face_verified"],
             "barcode_verified": self._scan_results["barcode_verified"],
             "current_name": self._scan_results["current_name"],
-        })
+            "badge_timeout_exceeded": self._scan_results["badge_timeout_exceeded"],
+        }, namespace="/")
 
     # ---- Preview async methods ----
     def request_preview(self):

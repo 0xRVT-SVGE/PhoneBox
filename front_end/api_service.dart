@@ -22,4 +22,23 @@ class ApiService {
     }
     return null;
   }
+
+  // Create student
+  static Future<bool> createStudent(Map<String, dynamic> data) async {
+    try {
+      final res = await http.post(
+        Uri.parse("$baseUrl/api/students/"),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: jsonEncode(data),
+      );
+
+      return res.statusCode == 200 || res.statusCode == 201;
+    } catch (e) {
+      print("createStudent error: $e");
+      return false;
+    }
+  }
 }
+

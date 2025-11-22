@@ -26,11 +26,11 @@ def handle_toggle_scan(_):
     if new_state:
         scanner_state.update_last_barcode()
 
-    scanner_state.emit_scan_status()
+    scanner_state._emit_socket()
 
 @socketio.on("get_status")
 def handle_get_status(_):
-    scanner_state.emit_scan_status()
+    scanner_state._emit_socket()
 
 # --- Threads ---
 if __name__ == "__main__":

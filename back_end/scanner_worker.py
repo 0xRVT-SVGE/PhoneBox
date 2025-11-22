@@ -80,6 +80,7 @@ def scan_worker():
     face_ok = scanner_state.scan_results["face_verified"]
     barcode_ok = scanner_state.scan_results["barcode_verified"]
     name = scanner_state.scan_results["current_name"]
+    timeout = False
     last_face_scan = 0
     last_barcode_scan = 0
     face_future = None
@@ -95,7 +96,6 @@ def scan_worker():
             break
 
         frame, roi_coords, timestamp = task
-
         # --- BARCODE DETECTION ---
         if timestamp - last_barcode_scan > BARCODE_INTERVAL:
             last_barcode_scan = timestamp
@@ -123,6 +123,7 @@ def scan_worker():
         # --- TIMEOUT ---
         if scanner_state.badge_timeout_exceeded() and not barcode_ok:
             print("[-] Badge timeout exceeded.")
+            timeout = True
             barcode_ok = False
             face_ok = False
             break
@@ -171,6 +172,6 @@ def scan_worker():
     scanner_state.stop_requested = False
     scanner_state.scan_request["running"] = False
     emit_if_changed(
-        {"authorized": barcode_ok and face_ok , "user": name},
-        {"face_verified": face_ok, "barcode_verified": barcode_ok, "current_name": name}
+        {"authorized": face_ok and barcode_ok, "user": name},
+        {"face_verified": face_ok, "barcode_verified": barcode_ok, "current_name": name, "badge_timeout_exceeded": timeout}
     )

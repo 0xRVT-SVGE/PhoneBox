@@ -43,8 +43,8 @@ def process_frame(frame, timestamp, scanning=False, debug=True):
         barcode_ok = current_overlay.get("barcode_verified", False)
         name = current_overlay.get("current_name", "Idle")
         color = (0, 255, 0) if (face_ok and barcode_ok) else (0, 0, 255)
-        cv2.putText(frame, f"Face:{face_ok} | Barcode:{barcode_ok} | {name}", (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+        cv2.putText(frame, f"Face:{face_ok} | Barcode:{barcode_ok} | {name}", (10, 50),
+                    cv2.FONT_HERSHEY_SIMPLEX, 2, color, 4)
 
     scanner_state.set_frame(frame)
     return frame
@@ -52,6 +52,8 @@ def process_frame(frame, timestamp, scanning=False, debug=True):
 # ---------------- SCANNER LOOP ----------------
 def scanner_loop(debugwindow=True, debugroi=True):
     cap = cv2.VideoCapture(0)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
     if not cap.isOpened():
         print("[-] Cannot open camera.")
         return

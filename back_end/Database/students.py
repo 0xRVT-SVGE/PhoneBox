@@ -10,12 +10,12 @@ def create_student(data):
                 INSERT INTO students (sid, last_name, first_name, embed, location)
                 VALUES (%s, %s, %s, %s, %s)
                 RETURNING sid;
-            """, (
-                data["sid"],
+            """, (data["sid"],
                 data.get("last_name"),
                 data["first_name"],
                 data["embed"],
                 data.get("location")
+
             ))
             sid = cur.fetchone()[0]
             conn.commit()
