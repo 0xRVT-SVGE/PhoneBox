@@ -7,6 +7,26 @@ CREATE TABLE students (
     last_name VARCHAR(40),
     first_name VARCHAR(80) NOT NULL,
     embed FLOAT8[] NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    modified_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ============================
+-- PHONES TABLE
+-- ============================
+CREATE TABLE phones (
+    pid VARCHAR(32) PRIMARY KEY,
+    sid CHAR(5) NOT NULL
+        REFERENCES students(sid)
+        ON UPDATE CASCADE,
+        ON DELETE CASCADE,
+    model VARCHAR(50) NOT NULL,
+    imei VARCHAR(20) UNIQUE,
+    cond VARCHAR(30)
+        CHECK (cond IN ('New', 'Good', 'Fair', 'Damaged', 'Broken') OR cond IS NULL),
+    admin_note TEXT,
+    stud_note TEXT,
+    is_stored BOOLEAN DEFAULT FALSE,
     location SMALLINT[2]
         CHECK (
             array_length(location, 1) = 2
@@ -17,28 +37,8 @@ CREATE TABLE students (
     modified_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Ensure location uniqueness across all students
-CREATE UNIQUE INDEX unique_location_idx ON students ((location));
-
--- ============================
--- PHONES TABLE
--- ============================
-CREATE TABLE phones (
-    pid VARCHAR(32) PRIMARY KEY,                 -- changed: pid is now PK
-    sid CHAR(5) NOT NULL                         -- changed: sid is no longer PK
-        REFERENCES students(sid)
-        ON DELETE CASCADE,
-    brand VARCHAR(50) NOT NULL,
-    model VARCHAR(50) NOT NULL,
-    imei VARCHAR(20) UNIQUE,
-    cond VARCHAR(30)
-        CHECK (cond IN ('New', 'Good', 'Fair', 'Damaged', 'Broken') OR cond IS NULL),
-    admin_note TEXT,
-    stud_note TEXT,
-    is_stored BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    modified_at TIMESTAMPTZ DEFAULT NOW()
-);
+-- Ensure location uniqueness across all phones
+CREATE UNIQUE INDEX unique_location_idx ON phones ((location));
 
 -- ============================
 -- FUNCTION: Generate PID
@@ -46,12 +46,10 @@ CREATE TABLE phones (
 CREATE OR REPLACE FUNCTION gen_phone_pid()
 RETURNS TRIGGER AS $$
 BEGIN
-    IF NEW.pid = '' OR NEW.pid IS NULL THEN
         NEW.pid := encode(
-            digest(NEW.sid || NEW.brand || NEW.model || COALESCE(NEW.imei, 'NULL'), 'md5'),
+            digest(NEW.sid || NEW.model || COALESCE(NEW.imei, 'NULL'), 'md5'),
             'hex'
         );
-    END IF;
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
@@ -84,7 +82,7 @@ BEGIN
         LOOP
             -- Check if current location is free
             SELECT EXISTS (
-                SELECT 1 FROM students WHERE location = ARRAY[x, y]
+                SELECT 1 FROM phones WHERE location = ARRAY[x, y]
             ) INTO taken;
 
             EXIT WHEN NOT taken;
@@ -106,7 +104,7 @@ BEGIN
         NEW.location := ARRAY[x, y];
     ELSE
         -- Prevent duplicates for manually set locations
-        IF EXISTS (SELECT 1 FROM students WHERE location = NEW.location) THEN
+        IF EXISTS (SELECT 1 FROM phones WHERE location = NEW.location) THEN
             RAISE EXCEPTION 'Location % is already taken', NEW.location;
         END IF;
     END IF;
@@ -120,10 +118,18 @@ $$ LANGUAGE plpgsql;
 -- ============================
 
 -- Auto-assign unique location
-CREATE TRIGGER students_before_insert
-BEFORE INSERT ON students
+CREATE TRIGGER phones_before_insert_location
+BEFORE INSERT ON phones
 FOR EACH ROW
 EXECUTE FUNCTION auto_assign_location();
+
+
+-- generate pid on insert
+CREATE TRIGGER phones_before_insert_pid
+BEFORE INSERT ON phones
+FOR EACH ROW
+EXECUTE FUNCTION gen_phone_pid();
+
 
 -- Update modified_at when student changes
 CREATE TRIGGER students_before_update
@@ -138,12 +144,6 @@ FOR EACH ROW
 WHEN (OLD.embed IS DISTINCT FROM NEW.embed)
 EXECUTE FUNCTION update_modified_column();
 
--- Auto-generate PID on insert
-CREATE TRIGGER phones_before_insert
-BEFORE INSERT ON phones
-FOR EACH ROW
-EXECUTE FUNCTION gen_phone_pid();
-
 -- Update modified_at when phone changes
 CREATE TRIGGER phones_before_update
 BEFORE UPDATE ON phones
@@ -155,8 +155,7 @@ CREATE TRIGGER phones_regen_pid
 BEFORE UPDATE ON phones
 FOR EACH ROW
 WHEN (
-    OLD.brand IS DISTINCT FROM NEW.brand
- OR OLD.model IS DISTINCT FROM NEW.model
+ OLD.model IS DISTINCT FROM NEW.model
  OR OLD.imei IS DISTINCT FROM NEW.imei
 )
 EXECUTE FUNCTION gen_phone_pid();

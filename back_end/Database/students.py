@@ -7,15 +7,13 @@ def create_student(data):
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO students (sid, last_name, first_name, embed, location)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO students (sid, last_name, first_name, embed)
+                VALUES (%s, %s, %s, %s)
                 RETURNING sid;
             """, (data["sid"],
                 data.get("last_name"),
                 data["first_name"],
-                data["embed"],
-                data.get("location")
-
+                data["embed"]
             ))
             sid = cur.fetchone()[0]
             conn.commit()
@@ -25,6 +23,7 @@ def create_student(data):
         return {"status": "error", "message": str(e)}, 400
     finally:
         put_conn(conn)
+
 
 def get_student(sid):
     conn = get_conn()
@@ -39,6 +38,7 @@ def get_student(sid):
     finally:
         put_conn(conn)
 
+
 def list_students():
     conn = get_conn()
     try:
@@ -50,34 +50,41 @@ def list_students():
     finally:
         put_conn(conn)
 
+
 def update_student(sid, data):
     conn = get_conn()
     try:
         with conn.cursor() as cur:
+            new_sid = data.get("sid") or None  # ignore empty string
             cur.execute("""
                 UPDATE students
-                SET last_name = COALESCE(%s, last_name),
+                SET sid = COALESCE(%s, sid),
+                    last_name = COALESCE(%s, last_name),
                     first_name = COALESCE(%s, first_name),
-                    embed = COALESCE(%s, embed),
-                    location = COALESCE(%s, location)
+                    embed = COALESCE(%s, embed)
                 WHERE sid = %s
                 RETURNING sid;
             """, (
+                new_sid,
                 data.get("last_name"),
                 data.get("first_name"),
                 data.get("embed"),
-                data.get("location"),
                 sid
             ))
-            if cur.rowcount == 0:
+
+            result = cur.fetchone()
+            if not result:
                 return {"status": "error", "message": "Student not found"}, 404
+
             conn.commit()
-            return {"status": "success", "data": {"sid": sid}}, 200
+            return {"status": "success", "data": {"sid": result[0]}}, 200
+
     except Exception as e:
         conn.rollback()
         return {"status": "error", "message": str(e)}, 400
     finally:
         put_conn(conn)
+
 
 def delete_student(sid):
     conn = get_conn()
@@ -86,15 +93,18 @@ def delete_student(sid):
             cur.execute("DELETE FROM students WHERE sid = %s RETURNING sid;", (sid,))
             if cur.rowcount == 0:
                 return {"status": "error", "message": "Student not found"}, 404
+
             conn.commit()
             return {"status": "success", "data": {"sid": sid}}, 200
     finally:
         put_conn(conn)
 
-# ------------------ ADVANCED ------------------
+
+# ------------------ Advanced ------------------
 def search_students(query):
     if not query:
         return {"status": "error", "message": "Missing search query"}, 400
+
     conn = get_conn()
     try:
         with conn.cursor() as cur:
@@ -109,25 +119,10 @@ def search_students(query):
     finally:
         put_conn(conn)
 
-def students_near_location(x, y, limit=10):
-    conn = get_conn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT *, sqrt(power(location[1] - %s, 2) + power(location[2] - %s, 2)) AS distance
-                FROM students
-                ORDER BY distance
-                LIMIT %s;
-            """, (x, y, limit))
-            rows = cur.fetchall()
-            columns = [desc[0] for desc in cur.description]
-            return {"status": "success", "data": [dict(zip(columns, r)) for r in rows]}, 200
-    finally:
-        put_conn(conn)
-
 def recently_modified_students(since):
     if not since:
         return {"status": "error", "message": "Missing 'since' timestamp"}, 400
+
     conn = get_conn()
     try:
         with conn.cursor() as cur:

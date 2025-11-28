@@ -172,6 +172,6 @@ def scan_worker():
     scanner_state.stop_requested = False
     scanner_state.scan_request["running"] = False
     emit_if_changed(
-        {"authorized": face_ok and barcode_ok, "user": name},
+        {"authorized": face_ok and barcode_ok, "user": sid},
         {"face_verified": face_ok, "barcode_verified": barcode_ok, "current_name": name, "badge_timeout_exceeded": timeout}
     )

@@ -64,7 +64,7 @@ class _ScanPageState extends State<ScanPage> {
       final currentName = data["current_name"] ?? "Idle";
 
       if (auth) {
-        scanStatus = "Authorized: $user";
+        scanStatus = "Authorized: $currentName";
       } else if (timeout) {
         scanStatus = "Timeout. Unable to Verify Badge.\nAsk for admin's help if it happened more than 2 times";
       } else if (barcodeOk) {

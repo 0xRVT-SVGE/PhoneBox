@@ -2,7 +2,7 @@
 from flask import Blueprint, jsonify, request
 from back_end.Database.phones import (
     create_phone, get_phones, list_phones, update_phone, delete_phone,
-    phones_not_stored, phones_by_condition, phone_stats, reassign_phone, regenerate_pid
+    phones_not_stored, phones_by_condition, phone_stats, reassign_phone, regenerate_pid, phones_near_location
 )
 
 phones_bp = Blueprint("phones", __name__)
@@ -17,7 +17,7 @@ def route_list_phones():
     return handle_response(list_phones())
 
 @phones_bp.route("/<sid>", methods=["GET"])
-def route_get_phone(sid):
+def route_get_phones(sid):
     return handle_response(get_phones(sid))
 
 @phones_bp.route("/", methods=["POST"])
@@ -51,6 +51,17 @@ def route_phone_stats():
 def route_reassign_phone():
     data = request.get_json(force=True)
     return handle_response(reassign_phone(data.get("old_sid"), data.get("new_sid")))
+
+@phones_bp.route("/nearby", methods=["GET"])
+def api_phones_near_location():
+    try:
+        x = int(request.args.get("x"))
+        y = int(request.args.get("y"))
+        limit = int(request.args.get("limit", 10))
+        return handle_response(phones_near_location(x, y, limit))
+    except Exception:
+        return jsonify({"status": "error", "message": "Invalid x, y, or limit"}), 400
+
 
 @phones_bp.route("/regenerate_pid/<sid>", methods=["PATCH"])
 def route_regenerate_pid(sid):

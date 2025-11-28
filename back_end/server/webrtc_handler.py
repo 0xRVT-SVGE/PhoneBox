@@ -78,9 +78,9 @@ async def _handle_offer(offer_sdp, offer_type, mode):
         video_track = MainVideoTrack()
     else:
         pcs_preview.add(pc)
-
-        if not scanner_state.preview_requested.is_set():
-            raise RuntimeError("Preview not requested")
+        scanner_state.request_preview()
+        """if not scanner_state.preview_requested.is_set():
+            raise RuntimeError("Preview not requested")"""
 
         video_track = PreviewVideoTrack()
 
@@ -152,7 +152,7 @@ def take_photo():
         if embed is None:
             return jsonify({"status": "error", "message": "No face detected"})
 
-        return jsonify({"status": "success", "embedd": embed.tolist()})
+        return jsonify({"status": "success", "embed": "{" + ",".join(str(x) for x in embed.tolist()) + "}"})
 
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)})
