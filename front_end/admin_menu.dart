@@ -811,7 +811,7 @@ class _CreatePhonePageState extends State<CreatePhonePage> {
     final ok = await ApiService.createPhone({
       "sid": widget.studentId,
       "model": _model.text.trim(),
-      "imei": _imei.text.trim().isEmpty ? null : _imei.text.trim(),
+      "imei": _imei.text.trim(),
       "cond": _cond,
       "admin_note": _adminNote.text.trim().isEmpty ? null : _adminNote.text.trim(),
       "stud_note": _studNote.text.trim().isEmpty ? null : _studNote.text.trim(),
@@ -820,7 +820,8 @@ class _CreatePhonePageState extends State<CreatePhonePage> {
     setState(() => _loading = false);
 
     if (ok) Navigator.pop(context, true);
-    else ScaffoldMessenger.of(context).showSnackBar(
+    else
+      ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text("Failed to create phone")),
     );
   }
@@ -843,7 +844,8 @@ class _CreatePhonePageState extends State<CreatePhonePage> {
               const SizedBox(height: 12),
               TextFormField(
                 controller: _imei,
-                decoration: const InputDecoration(labelText: "IMEI (optional)"),
+                decoration: const InputDecoration(labelText: "IMEI"),
+                validator: (v) => (v == null || v.isEmpty) ? "Required" : null,
               ),
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
@@ -853,6 +855,7 @@ class _CreatePhonePageState extends State<CreatePhonePage> {
                     .toList(),
                 decoration: const InputDecoration(labelText: "Condition"),
                 onChanged: (v) => setState(() => _cond = v),
+                validator: (v) => (v == null || v.isEmpty) ? "Required" : null,
               ),
               const SizedBox(height: 12),
               TextFormField(

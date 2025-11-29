@@ -4,6 +4,7 @@ import 'socket_service.dart';
 import 'admin_menu.dart';
 import 'auth.dart';
 import 'api_service.dart';
+import 'scan_success_page.dart';
 
 class ScanPage extends StatefulWidget {
   const ScanPage({super.key});
@@ -64,7 +65,19 @@ class _ScanPageState extends State<ScanPage> {
       final currentName = data["current_name"] ?? "Idle";
 
       if (auth) {
-        scanStatus = "Authorized: $currentName";
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => ScanSuccessPage(
+              sid: user,
+              studentName: currentName,
+            ),
+          ),
+        );
+
+        scanning = false;
+        scanStatus = "Idle";
+
       } else if (timeout) {
         scanStatus = "Timeout. Unable to Verify Badge.\nAsk for admin's help if it happened more than 2 times";
       } else if (barcodeOk) {

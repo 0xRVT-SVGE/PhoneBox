@@ -5,7 +5,7 @@ db_pool = pool.SimpleConnectionPool(
     host="localhost",
     port=5432,
     database="PhoneBoxDB",
-    user="Admin",
+    user="admin",
     password="admin"
 )
 

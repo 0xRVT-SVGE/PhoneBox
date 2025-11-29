@@ -64,7 +64,7 @@ class ApiService {
 
   static Future<bool> createPhone(Map<String, dynamic> data) async {
     final res = await http.post(
-      Uri.parse("$baseUrl/api/phones"),
+      Uri.parse("$baseUrl/api/phones/"),
       headers: {"Content-Type": "application/json"},
       body: jsonEncode(data),
     );

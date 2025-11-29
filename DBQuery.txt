@@ -18,10 +18,10 @@ CREATE TABLE phones (
     pid VARCHAR(32) PRIMARY KEY,
     sid CHAR(5) NOT NULL
         REFERENCES students(sid)
-        ON UPDATE CASCADE,
+        ON UPDATE CASCADE
         ON DELETE CASCADE,
     model VARCHAR(50) NOT NULL,
-    imei VARCHAR(20) UNIQUE,
+    imei VARCHAR(20) UNIQUE NOT NULL,
     cond VARCHAR(30)
         CHECK (cond IN ('New', 'Good', 'Fair', 'Damaged', 'Broken') OR cond IS NULL),
     admin_note TEXT,

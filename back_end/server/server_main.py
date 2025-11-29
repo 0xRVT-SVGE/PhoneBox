@@ -17,15 +17,21 @@ def _start_async_loop(loop):
 # --- WebSocket Events ---
 @socketio.on("toggle_scan")
 def handle_toggle_scan(_):
-    prev_state = scanner_state.scan_request["running"]
-    new_state = not prev_state
+    new_state = not scanner_state.scan_request["running"]
+
 
     scanner_state.stop_requested = not new_state
     scanner_state.scan_request["running"] = new_state
 
     if new_state:
         scanner_state.update_last_barcode()
-
+        scanner_state.auth_status = {"authorized": False, "user": None}
+        scanner_state_scan_results = {
+            "face_verified": False,
+            "barcode_verified": False,
+            "current_name": "Idle",
+            "badge_timeout_exceeded": False,
+        }
     scanner_state._emit_socket()
 
 @socketio.on("get_status")

@@ -20,6 +20,8 @@ def create_phone(data):
             return {"status": "success", "data": {"pid": pid}}, 201
     except Exception as e:
         conn.rollback()
+        import traceback
+        print(traceback.format_exc())
         return {"status": "error", "message": str(e)}, 400
     finally:
         put_conn(conn)
