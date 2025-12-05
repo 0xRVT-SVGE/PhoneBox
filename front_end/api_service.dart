@@ -33,7 +33,8 @@ class ApiService {
     }
   }
 
-  static Future<bool> updateStudent(String sid, Map<String, dynamic> data) async {
+  static Future<bool> updateStudent(String sid,
+      Map<String, dynamic> data) async {
     final res = await http.put(
       Uri.parse("$baseUrl/api/students/$sid"),
       headers: {"Content-Type": "application/json"},
@@ -45,6 +46,25 @@ class ApiService {
   static Future<bool> deleteStudent(String sid) async {
     final res = await http.delete(Uri.parse("$baseUrl/api/students/$sid"));
     return res.statusCode == 200;
+  }
+
+  static Future<List<Map<String, dynamic>>> searchStudents(String query) async {
+    try {
+      final uri = Uri.parse("$baseUrl/api/students/search?q=$query");
+      final response = await http.get(uri);
+
+      if (response.statusCode == 200) {
+        final jsonData = jsonDecode(response.body);
+        if (jsonData['status'] == 'success') {
+          final List<dynamic> data = jsonData['data'];
+          return data.cast<Map<String, dynamic>>();
+        }
+      }
+      return []; // empty if no results or error
+    } catch (e) {
+      print("Search error: $e");
+      return [];
+    }
   }
 
 
@@ -155,10 +175,8 @@ class ApiService {
     return null;
   }
 
-  static Future<void> startPreviewConnection(
-      Map<String, dynamic> offer,
+  static Future<void> startPreviewConnection(Map<String, dynamic> offer,
       RTCVideoRenderer renderer) async {
-
     final pc = await createPeerConnection({
       'iceServers': [
         {'urls': 'stun:stun.l.google.com:19302'}
@@ -208,5 +226,26 @@ class ApiService {
     final res = await http.post(Uri.parse("$baseUrl/webrtc/take_photo"));
     if (res.statusCode != 200) return null;
     return jsonDecode(res.body);
+  }
+
+
+  static Future<bool> cancelPreview() async {
+    try {
+      final res = await http.post(Uri.parse("$baseUrl/webrtc/cancel/preview"));
+      return res.statusCode == 200;
+    } catch (e) {
+      print("cancelPreview error: $e");
+      return false;
+    }
+  }
+
+  static Future<bool> cancelMain() async {
+    try {
+      final res = await http.post(Uri.parse("$baseUrl/webrtc/cancel/main"));
+      return res.statusCode == 200;
+    } catch (e) {
+      print("cancelMain error: $e");
+      return false;
+    }
   }
 }

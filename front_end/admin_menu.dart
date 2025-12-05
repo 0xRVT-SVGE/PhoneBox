@@ -63,10 +63,6 @@ class _AdminMenuState extends State<AdminMenu> {
             onPressed: _navigateToStudentManagement,
             child: const Text("Manage Students"),
           ),
-          ElevatedButton(
-            onPressed: () {},
-            child: const Text("Manage Phones"),
-          ),
         ],
       ),
     );
@@ -158,7 +154,14 @@ class _ManageStudentsPageState extends State<ManageStudentsPage> {
       appBar: AppBar(
         title: const Text("Manage Students"),
         actions: [
-          // Replace this in _ManageStudentsPageState inside build() AppBar IconButton:
+          // Search button
+          IconButton(
+            icon: const Icon(Icons.search),
+            tooltip: "Search Students",
+            onPressed: () {
+              _showSearchDialog();
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.add),
             tooltip: "Create New Student",
@@ -204,7 +207,6 @@ class _ManageStudentsPageState extends State<ManageStudentsPage> {
                       if (updated == true) _loadStudents();
                     },
                   ),
-
                   IconButton(
                     icon: const Icon(Icons.camera_alt),
                     tooltip: "Update Embed",
@@ -222,12 +224,12 @@ class _ManageStudentsPageState extends State<ManageStudentsPage> {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (_) => StudentPhonesPage(studentId: s['sid']),
+                          builder: (_) =>
+                              StudentPhonesPage(studentId: s['sid']),
                         ),
                       );
                     },
                   ),
-
                 ],
               ),
             ),
@@ -236,6 +238,79 @@ class _ManageStudentsPageState extends State<ManageStudentsPage> {
       ),
     );
   }
+
+// -------------------- Search Dialog --------------------
+  void _showSearchDialog() {
+    final _formKey = GlobalKey<FormState>();
+    final TextEditingController _searchController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) =>
+          AlertDialog(
+            title: const Text("Search Students"),
+            content: Form(
+              key: _formKey,
+              child: TextFormField(
+                controller: _searchController,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  hintText: "Enter Student ID (E0000) or Name",
+                ),
+                validator: (value) {
+                  if (value == null || value.trim().isEmpty) {
+                    return "Please enter ID or name";
+                  }
+                  if (!RegExp(r'^E\d{4}$').hasMatch(value.trim()) &&
+                      !RegExp(r'^[A-Za-z\s]+$').hasMatch(value.trim())) {
+                    return "Invalid ID or name format";
+                  }
+                  return null;
+                },
+
+                // Trigger search on Enter
+                onFieldSubmitted: (value) {
+                  if (_formKey.currentState!.validate()) {
+                    Navigator.pop(context);
+                    _searchStudents(_searchController.text.trim());
+                  }
+                },
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text("Cancel"),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  if (_formKey.currentState!.validate()) {
+                    Navigator.pop(context);
+                    _searchStudents(_searchController.text.trim());
+                  }
+                },
+                child: const Text("Search"),
+              ),
+            ],
+          ),
+    );
+  }
+
+  // -------------------- Search Function --------------------
+  Future<void> _searchStudents(String query) async {
+    setState(() => _loading = true);
+    try {
+      final results = await ApiService.searchStudents(query); // define in ApiService
+      if (!mounted) return;
+      setState(() {
+        _students = results;
+        _loading = false;
+      });
+    } catch (_) {
+      setState(() => _loading = false);
+    }
+  }
+
 }
 
 
@@ -486,7 +561,13 @@ class _CaptureEmbedPageState extends State<CaptureEmbedPage> {
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
               ElevatedButton(
-                onPressed: () => Navigator.pop(context, null),
+                onPressed: () async {
+                  // Send cancel request to backend
+                  await ApiService.cancelPreview();
+
+                  // Close the page
+                  Navigator.pop(context);
+                },
                 child: const Text("Cancel"),
               ),
               ElevatedButton(
@@ -610,21 +691,6 @@ class _EditStudentPageState extends State<EditStudentPage> {
               ),
               const SizedBox(height: 12),
 
-              Text(
-                _embedding == null ? "No embedding updated" : "Embedding ready",
-                style: TextStyle(
-                  color: _embedding == null ? Colors.red : Colors.green,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 8),
-
-              ElevatedButton(
-                onPressed: _openPreview,
-                child: const Text("Update Embedding"),
-              ),
-              const SizedBox(height: 24),
-
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
@@ -711,44 +777,102 @@ class _StudentPhonesPageState extends State<StudentPhonesPage> {
   }
 
   Widget _buildPhoneCard(Map<String, dynamic> p) {
+    final pid = p["pid"];
+    final model = p["model"] ?? "Unknown Model";
+
+    final bool stored = p["is_stored"] == true;
+    final String statusText = stored ? "Stored" : "With Student";
+
     String location = p['location'] != null
         ? "[${p['location'][0]}, ${p['location'][1]}]"
         : "N/A";
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      child: ListTile(
-        title: Text("${p['model']}"),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+        child: Row(
           children: [
-            Text("PID: ${p['pid']}"),
-            if (p['imei'] != null) Text("IMEI: ${p['imei']}"),
-            if (p['cond'] != null) Text("Condition: ${p['cond']}"),
-            if (p['admin_note'] != null) Text("Admin Note: ${p['admin_note']}"),
-            if (p['stud_note'] != null) Text("Student Note: ${p['stud_note']}"),
-            Text("Location: $location"),
-          ],
-        ),
-        isThreeLine: true,
-        trailing: Wrap(
-          spacing: 6,
-          children: [
-            IconButton(
-              icon: const Icon(Icons.edit),
-              tooltip: "Edit Phone",
-              onPressed: () => _editPhone(p),
+            // ---------------- LEFT SIDE ----------------
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    "$model",
+                    style: const TextStyle(
+                        fontSize: 17, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 4),
+                  Text("PID: $pid"),
+                  if (p['imei'] != null) Text("IMEI: ${p['imei']}"),
+                  if (p['cond'] != null) Text("Condition: ${p['cond']}"),
+                  if (p['admin_note'] != null)
+                    Text("Admin Note: ${p['admin_note']}"),
+                  if (p['stud_note'] != null)
+                    Text("Student Note: ${p['stud_note']}"),
+                  Text("Location: $location"),
+                  Text("Status: $statusText"),
+                ],
+              ),
             ),
-            IconButton(
-              icon: const Icon(Icons.delete),
-              tooltip: "Delete Phone",
-              onPressed: () => _deletePhone(p['pid']),
+
+            // ---------------- RIGHT SIDE ----------------
+            Column(
+              children: [
+                // ----- TAKE BUTTON -----
+                ElevatedButton(
+                  // Enabled only when stored == true
+                  onPressed: stored ? () {} : null,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green,
+                    //minimumSize: const Size(70, 38),
+                    fixedSize: const Size(80, 34)
+                  ),
+                  child: const Text("Take"),
+                ),
+                const SizedBox(height: 8),
+
+                // ----- PUT BUTTON -----
+                ElevatedButton(
+                  // Enabled only when stored == false
+                  onPressed: !stored ? () {} : null,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue,
+                    //minimumSize: const Size(70, 38),
+                    fixedSize: const Size(80, 34),
+                  ),
+                  child: const Text("Put"),
+                ),
+                const SizedBox(height: 8),
+
+                // ----- EDIT & DELETE -----
+                Wrap(
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.edit),
+                      tooltip: "Edit Phone",
+                      onPressed: () => _editPhone(p),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.delete),
+                      tooltip: "Delete Phone",
+                      onPressed: () => _deletePhone(pid),
+                    ),
+                  ],
+                ),
+              ],
             ),
           ],
         ),
       ),
     );
   }
+
+
+
+
+
 
   @override
   Widget build(BuildContext context) {
@@ -822,8 +946,8 @@ class _CreatePhonePageState extends State<CreatePhonePage> {
     if (ok) Navigator.pop(context, true);
     else
       ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("Failed to create phone")),
-    );
+        const SnackBar(content: Text("Failed to create phone")),
+      );
   }
 
   @override

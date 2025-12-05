@@ -42,7 +42,13 @@ class MainVideoTrack(VideoStreamTrack):
 
     async def recv(self):
         pts, time_base = await self.next_timestamp()
+
+        # Wait until a new frame is available
+        while not scanner_state._main_frame_event.wait(timeout=0.01):
+            await asyncio.sleep(0.001)
+
         frame = scanner_state.get_frame()
+        scanner_state._main_frame_event.clear()
         return make_video_frame(frame, pts, time_base)
 
 
@@ -62,7 +68,12 @@ class PreviewVideoTrack(VideoStreamTrack):
             raise ConnectionError("Preview finished")
 
         pts, time_base = await self.next_timestamp()
+
+        while not scanner_state._preview_frame_event.wait(timeout=0.01):
+            await asyncio.sleep(0.001)
+
         frame = scanner_state.get_rframe()
+        scanner_state._preview_frame_event.clear()
         return make_video_frame(frame, pts, time_base)
 
 
@@ -159,3 +170,18 @@ def take_photo():
 
     finally:
         scanner_state.stop_preview()
+
+
+@webrtc_bp.route("/cancel/<mode>", methods=["POST"])
+def cancel_connection(mode):
+    if mode == "main":
+        pcs = pcs_main
+    else:
+        pcs = pcs_preview
+        scanner_state.stop_preview()
+
+    for pc in list(pcs):
+        asyncio.run_coroutine_threadsafe(pc.close(), async_loop)
+        pcs.discard(pc)
+    return jsonify({"status": "success"})
+

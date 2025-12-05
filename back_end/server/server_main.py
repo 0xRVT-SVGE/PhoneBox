@@ -25,13 +25,13 @@ def handle_toggle_scan(_):
 
     if new_state:
         scanner_state.update_last_barcode()
-        scanner_state.auth_status = {"authorized": False, "user": None}
-        scanner_state_scan_results = {
+        scanner_state.auth_status.update({"authorized": False, "user": None})
+        scanner_state.scan_results.update({
             "face_verified": False,
             "barcode_verified": False,
             "current_name": "Idle",
             "badge_timeout_exceeded": False,
-        }
+        })
     scanner_state._emit_socket()
 
 @socketio.on("get_status")

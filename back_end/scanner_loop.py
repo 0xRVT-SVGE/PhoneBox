@@ -1,4 +1,4 @@
-import threading, time
+import threading, time, asyncio
 import cv2
 from back_end.scanner_state import scanner_state
 from back_end.scanner_worker import scan_worker
@@ -25,17 +25,18 @@ def start_worker():
 def process_frame(frame, timestamp, scanning=False, debug=True):
     h, w = frame.shape[:2]
     roi_coords = (0, h // 2, w // 2, h)
-
+    rframe = frame.copy() if debug else frame
     if scanning and not scanner_state.stop_requested:
         if scanner_state.task_queue.full():
             try:
                 scanner_state.task_queue.get_nowait()
             except Exception:
                 pass
-        scanner_state.task_queue.put((frame.copy(), roi_coords, timestamp))
+        scanner_state.task_queue.put((rframe, roi_coords, timestamp))
 
     if scanner_state.preview_requested.is_set() and not scanner_state.photo_taken_event.is_set():
-        scanner_state.set_rframe(frame)
+        scanner_state.set_rframe(rframe)
+        scanner_state._preview_frame_event.set()
 
     if debug:
         cv2.rectangle(frame, (roi_coords[0], roi_coords[1]), (roi_coords[2], roi_coords[3]), (255, 255, 0), 2)
@@ -47,6 +48,7 @@ def process_frame(frame, timestamp, scanning=False, debug=True):
                     cv2.FONT_HERSHEY_SIMPLEX, 2, color, 4)
 
     scanner_state.set_frame(frame)
+    scanner_state._main_frame_event.set()
     return frame
 
 # ---------------- SCANNER LOOP ----------------
@@ -62,7 +64,6 @@ def scanner_loop(debugwindow=True, debugroi=True):
         ret, frame = cap.read()
         if not ret:
             continue
-
 
         # Restart worker if scanning restarted
         if scanner_state.scan_request["running"] and not scanner_state.stop_requested:

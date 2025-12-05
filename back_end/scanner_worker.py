@@ -85,6 +85,7 @@ def scan_worker():
     last_barcode_scan = 0
     face_future = None
     student = None
+    sid = None
 
     while not scanner_state.stop_requested and scanner_state.scan_request["running"]:
         try:
@@ -172,6 +173,6 @@ def scan_worker():
     scanner_state.stop_requested = False
     scanner_state.scan_request["running"] = False
     emit_if_changed(
-        {"authorized": face_ok and barcode_ok, "user": sid},
+        {"authorized": face_ok and barcode_ok, "user": sid if not None else None},
         {"face_verified": face_ok, "barcode_verified": barcode_ok, "current_name": name, "badge_timeout_exceeded": timeout}
     )

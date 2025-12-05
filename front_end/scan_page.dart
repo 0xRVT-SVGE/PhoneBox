@@ -31,6 +31,8 @@ class _ScanPageState extends State<ScanPage> {
 
   final socketService = SocketService();
 
+  bool _scanStatusListenerRegistered = false; // prevent multiple listeners
+
   @override
   void initState() {
     super.initState();
@@ -90,7 +92,6 @@ class _ScanPageState extends State<ScanPage> {
     });
   }
 
-
   Future<void> _startWebRTC() async {
     final config = {
       'iceServers': [
@@ -98,32 +99,54 @@ class _ScanPageState extends State<ScanPage> {
       ]
     };
 
-    _peerConnection = await createPeerConnection(config);
+    try {
+      await ApiService.cancelMain();
 
-    _peerConnection!.onTrack = (event) {
-      if (viewDisposed) return;
-      if (!mounted) return;
-      if (event.streams.isNotEmpty) {
-        _remoteRenderer.srcObject = event.streams[0];
+      _peerConnection = await createPeerConnection(config);
+
+      _peerConnection!.onTrack = (event) {
+        if (viewDisposed) return;
+        if (!mounted) return;
+        if (event.streams.isNotEmpty) {
+          _remoteRenderer.srcObject = event.streams[0]; // always assign
+        }
+      };
+
+      // Detect connection state changes to reconnect if disconnected
+      _peerConnection!.onConnectionState = (state) async {
+        if (viewDisposed) return;
+        if (state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
+            state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
+          if (mounted) setState(() => webrtcStatus = "Reconnecting...");
+          await _peerConnection?.close();
+          _peerConnection = null;
+          await Future.delayed(const Duration(seconds: 1));
+          if (!viewDisposed) {
+            _remoteRenderer.srcObject = null; // reset before reconnect
+            await _startWebRTC();
+          }
+        }
+      };
+
+      final offer = await _peerConnection!.createOffer({
+        'offerToReceiveVideo': true,
+        'offerToReceiveAudio': false,
+      });
+
+      await _peerConnection!.setLocalDescription(offer);
+
+      final answerSDP = await ApiService.sendOffer(offer.sdp!);
+
+      if (answerSDP != null) {
+        await _peerConnection!.setRemoteDescription(
+          RTCSessionDescription(answerSDP, 'answer'),
+        );
+        if (mounted) setState(() => webrtcStatus = "WebRTC Connected");
+      } else {
+        if (mounted) setState(() => webrtcStatus = "WebRTC Error");
       }
-    };
-
-    final offer = await _peerConnection!.createOffer({
-      'offerToReceiveVideo': true,
-      'offerToReceiveAudio': false,
-    });
-
-    await _peerConnection!.setLocalDescription(offer);
-
-    final answerSDP = await ApiService.sendOffer(offer.sdp!);
-
-    if (answerSDP != null) {
-      await _peerConnection!.setRemoteDescription(
-        RTCSessionDescription(answerSDP, 'answer'),
-      );
-      if (mounted) setState(() => webrtcStatus = "WebRTC Connected");
-    } else {
-      if (mounted) setState(() => webrtcStatus = "WebRTC Error");
+    } catch (e) {
+      if (mounted) setState(() => webrtcStatus = "WebRTC Error: $e");
     }
   }
 
@@ -142,45 +165,82 @@ class _ScanPageState extends State<ScanPage> {
         manualOverride = false;
       });
       socketService.toggleScan();
-      socketService.listenScanStatus(_updateScanStatus);
+      if (!_scanStatusListenerRegistered) {
+        socketService.listenScanStatus(_updateScanStatus);
+        _scanStatusListenerRegistered = true;
+      }
     }
   }
-
 
   void _openAdminMenu() async {
     final auth = AuthService();
 
     if (!auth.isAdmin) {
       final controller = TextEditingController();
-      final result = await showDialog(
+      bool loginSuccess = false;
+
+      await showDialog(
         context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text("Admin Login"),
-          content: TextField(
-            controller: controller,
-            obscureText: true,
-            decoration: const InputDecoration(labelText: "Password"),
+        barrierDismissible: false, // user must explicitly login or cancel
+        builder: (ctx) => StatefulBuilder(
+          builder: (context, setState) => AlertDialog(
+            title: const Text("Admin Login"),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: controller,
+                  autofocus: true,
+                  obscureText: true,
+                  decoration: const InputDecoration(labelText: "Password"),
+                  onSubmitted: (value) {
+                    if (auth.login(value)) {
+                      loginSuccess = true;
+                      Navigator.pop(ctx);
+                    } else {
+                      setState(() {}); // trigger UI update
+                    }
+                  },
+                ),
+                if (!loginSuccess && controller.text.isNotEmpty)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 8.0),
+                    child: Text(
+                      "Wrong password, try again",
+                      style: TextStyle(color: Colors.red),
+                    ),
+                  ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  if (auth.login(controller.text)) {
+                    loginSuccess = true;
+                    Navigator.pop(ctx);
+                  } else {
+                    setState(() {}); // update error message
+                  }
+                },
+                child: const Text("Login"),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text("Cancel"),
+              ),
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                if (auth.login(controller.text)) {
-                  Navigator.pop(ctx, true);
-                } else {
-                  Navigator.pop(ctx, false);
-                }
-              },
-              child: const Text("Login"),
-            )
-          ],
         ),
       );
 
-      if (result != true) return;
+      if (!loginSuccess) return;
     }
 
     if (!mounted) return;
-    Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminMenu()));
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const AdminMenu()),
+    );
   }
 
   @override
@@ -198,7 +258,6 @@ class _ScanPageState extends State<ScanPage> {
 
     super.dispose();
   }
-
 
   @override
   Widget build(BuildContext context) {
@@ -219,13 +278,9 @@ class _ScanPageState extends State<ScanPage> {
               child: Center(
                 child: AspectRatio(
                   aspectRatio: 16 / 9,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      border: Border.all(color: Colors.white24),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: RTCVideoView(_remoteRenderer),
-                  ),
+                  child: _remoteRenderer.srcObject != null
+                      ? RTCVideoView(_remoteRenderer) // only render when ready
+                      : Container(color: Colors.black), // black placeholder
                 ),
               ),
             ),

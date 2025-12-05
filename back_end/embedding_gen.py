@@ -15,7 +15,9 @@ async def generate_embedding():
     then reads latest_rframe, computes face embedding, and returns it.
     """
     # Wait until a photo is taken
-    await scanner_state.photo_taken_event.wait()
+    loop = asyncio.get_running_loop()
+    # Wait for the threading.Event to be set without blocking the event loop
+    await loop.run_in_executor(None, scanner_state.photo_taken_event.wait)
 
     frame = scanner_state.get_rframe()
     if frame is None:

@@ -1,5 +1,4 @@
 import threading
-import asyncio
 from queue import Queue
 import time
 
@@ -7,15 +6,17 @@ class ScannerState:
     def __init__(self):
         self._frame_lock = threading.Lock()
         self._latest_frame = None
+        self._main_frame_event = threading.Event()
 
         # --------- Managing students ----------
         self._rframe_lock = threading.Lock()
         self._latest_rframe = None
+        self._preview_frame_event = threading.Event()
 
         # --------- PREVIEW EVENTS ----------
         # Signals for event-driven WebRTC preview
-        self.preview_requested = asyncio.Event()
-        self.photo_taken_event = asyncio.Event()
+        self.preview_requested = threading.Event()
+        self.photo_taken_event = threading.Event()
 
         self.task_queue = Queue(maxsize=1)
         self._scan_request = {"running": False}
@@ -46,20 +47,20 @@ class ScannerState:
     # ---------------- RAW FRAME ----------------
     def set_rframe(self, frame):
         with self._rframe_lock:
-            self._latest_rframe = frame.copy() if frame is not None else None
+            self._latest_rframe = frame if frame is not None else None
 
     def get_rframe(self):
         with self._rframe_lock:
-            return self._latest_rframe.copy() if self._latest_rframe is not None else None
+            return self._latest_rframe if self._latest_rframe is not None else None
 
     # ---------------- FRAME WITH ROI ------------
     def set_frame(self, frame):
         with self._frame_lock:
-            self._latest_frame = frame.copy() if frame is not None else None
+            self._latest_frame = frame if frame is not None else None
 
     def get_frame(self):
         with self._frame_lock:
-            return self._latest_frame.copy() if self._latest_frame is not None else None
+            return self._latest_frame if self._latest_frame is not None else None
 
     # ---------------- PROPERTIES ----------------
     @property

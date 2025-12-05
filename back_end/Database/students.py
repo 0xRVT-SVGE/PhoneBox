@@ -1,6 +1,6 @@
 # back_end/Database/students.py
 from back_end.Database.db import get_conn, put_conn
-
+import re
 # ------------------ CRUD ------------------
 def create_student(data):
     conn = get_conn()
@@ -105,19 +105,44 @@ def search_students(query):
     if not query:
         return {"status": "error", "message": "Missing search query"}, 400
 
+    query = query.strip()
+
+    # Regex patterns
+    sid_pattern = r"^E\d{4}$"  # SID like E1234
+    name_pattern = r"^[A-Za-z\s]+$"  # Only letters and spaces
+
+    # Decide if the query is SID or name
+    is_sid = bool(re.match(sid_pattern, query))
+    is_name = bool(re.match(name_pattern, query))
+
+    if not (is_sid or is_name):
+        return {"status": "error", "message": "Invalid search query format"}, 400
+
     conn = get_conn()
     try:
         with conn.cursor() as cur:
-            cur.execute("""
-                SELECT * FROM students
-                WHERE sid ILIKE %s OR first_name ILIKE %s OR last_name ILIKE %s
-                ORDER BY sid;
-            """, (f"%{query}%", f"%{query}%", f"%{query}%"))
+            if is_sid:
+                cur.execute("""
+                            SELECT *
+                            FROM students
+                            WHERE sid ILIKE %s
+                            ORDER BY sid;
+                            """, (f"%{query}%",))
+            else:  # treat as name search
+                cur.execute("""
+                            SELECT *
+                            FROM students
+                            WHERE first_name ILIKE %s
+                               OR last_name ILIKE %s
+                            ORDER BY sid;
+                            """, (f"%{query}%", f"%{query}%"))
+
             rows = cur.fetchall()
             columns = [desc[0] for desc in cur.description]
             return {"status": "success", "data": [dict(zip(columns, r)) for r in rows]}, 200
     finally:
         put_conn(conn)
+
 
 def recently_modified_students(since):
     if not since:
