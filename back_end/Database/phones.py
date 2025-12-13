@@ -7,13 +7,13 @@ def create_phone(data):
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO phones (sid, model, imei, cond, admin_note, stud_note, is_stored, location)
+                INSERT INTO phones (sid, model, imei, cond, admin_note, stud_note, is_stored, lid)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING pid;
             """, (
                 data["sid"], data["model"], data.get("imei"),
                 data.get("cond"), data.get("admin_note"), data.get("stud_note"),
-                data.get("is_stored", False), data.get("location") if data.get("location") else None  # allow NULL; trigger will auto-assign
+                data.get("is_stored", False), data.get("lid") if data.get("lid") else None  # allow NULL; trigger will auto-assign
             ))
             pid = cur.fetchone()[0]
             conn.commit()
@@ -69,12 +69,12 @@ def update_phone(pid, data):
                     admin_note = COALESCE(%s, admin_note),
                     stud_note = COALESCE(%s, stud_note),
                     is_stored = COALESCE(%s, is_stored),
-                    location = COALESCE(%s, location)
+                    lid = COALESCE(%s, lid)
                 WHERE pid = %s
                 RETURNING pid;
             """, (
                 data.get("model"), data.get("imei"), data.get("cond"),
-                data.get("admin_note"), data.get("stud_note"), data.get("is_stored"), data.get("location"), pid
+                data.get("admin_note"), data.get("stud_note"), data.get("is_stored"), data.get("lid"), pid
             ))
             if cur.rowcount == 0:
                 return {"status": "error", "message": "Phone not found"}, 404
@@ -163,26 +163,14 @@ def reassign_phone(pid, new_sid):
     finally:
         put_conn(conn)
 
-
-def regenerate_pid(pid):
-    conn = get_conn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("UPDATE phones SET pid = NULL WHERE pid = %s RETURNING pid;", (pid,))
-            if cur.rowcount == 0:
-                return {"status": "error", "message": "Phone not found"}, 404
-            conn.commit()
-            return {"status": "success", "data": {"pid": pid}, "message": "PID regenerated"}, 200
-    finally:
-        put_conn(conn)
-
-def phones_near_location(x, y, limit=10):
+def phones_near_lid(x, y, limit=10):
     conn = get_conn()
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT *, sqrt(power(location[1] - %s, 2) + power(location[2] - %s, 2)) AS distance
+                SELECT phones.*, l.x, l.y, sqrt(power(l.x - %s, 2) + power(l.y - %s, 2)) AS distance
                 FROM phones
+                JOIN locations l ON phones.lid = l.lid
                 ORDER BY distance
                 LIMIT %s;
             """, (x, y, limit))

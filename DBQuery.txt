@@ -4,7 +4,7 @@
 CREATE TABLE students (
     sid CHAR(5) PRIMARY KEY
         CHECK (sid ~ '^E[0-9]{4}$' AND char_length(sid) = 5),
-    last_name VARCHAR(40),
+    last_name VARCHAR(40) NOT NULL,
     first_name VARCHAR(80) NOT NULL,
     embed FLOAT8[] NOT NULL,
     created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -12,10 +12,29 @@ CREATE TABLE students (
 );
 
 -- ============================
+-- LOCATIONS TABLE
+-- ============================
+CREATE TABLE locations (
+    lid SERIAL PRIMARY KEY,
+    x SMALLINT NOT NULL CHECK (x BETWEEN 1 AND 500),
+    y SMALLINT NOT NULL CHECK (y BETWEEN 1 AND 500),
+    UNIQUE (x, y)
+);
+
+CREATE TABLE location_cursor (
+    id BOOLEAN PRIMARY KEY DEFAULT TRUE,
+    x SMALLINT NOT NULL DEFAULT 1,
+    y SMALLINT NOT NULL DEFAULT 1
+);
+
+INSERT INTO location_cursor DEFAULT VALUES;
+
+
+-- ============================
 -- PHONES TABLE
 -- ============================
 CREATE TABLE phones (
-    pid VARCHAR(32) PRIMARY KEY,
+    pid UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     sid CHAR(5) NOT NULL
         REFERENCES students(sid)
         ON UPDATE CASCADE
@@ -27,32 +46,12 @@ CREATE TABLE phones (
     admin_note TEXT,
     stud_note TEXT,
     is_stored BOOLEAN DEFAULT FALSE,
-    location SMALLINT[2]
-        CHECK (
-            array_length(location, 1) = 2
-            AND location[1] BETWEEN 1 AND 500
-            AND location[2] BETWEEN 1 AND 500
-        ),
+    lid INT UNIQUE NOT NULL
+        REFERENCES locations(lid)
+        ON DELETE CASCADE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     modified_at TIMESTAMPTZ DEFAULT NOW()
 );
-
--- Ensure location uniqueness across all phones
-CREATE UNIQUE INDEX unique_location_idx ON phones ((location));
-
--- ============================
--- FUNCTION: Generate PID
--- ============================
-CREATE OR REPLACE FUNCTION gen_phone_pid()
-RETURNS TRIGGER AS $$
-BEGIN
-        NEW.pid := encode(
-            digest(NEW.sid || NEW.model || COALESCE(NEW.imei, 'NULL'), 'md5'),
-            'hex'
-        );
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
 
 -- ============================
 -- FUNCTION: Update modified_at
@@ -66,52 +65,68 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- ============================
--- FUNCTION: Auto-assign unique location
+-- FUNCTION: Assign free location
+-- ============================
+CREATE OR REPLACE FUNCTION assign_or_create_location(x_max INT, y_max INT)
+RETURNS INT AS $$
+DECLARE
+    cur_x SMALLINT;
+    cur_y SMALLINT;
+    new_lid INT;
+BEGIN
+    -- Lock the cursor row (sequential guarantee)
+    SELECT x, y
+    INTO cur_x, cur_y
+    FROM location_cursor
+    FOR UPDATE;
+
+    -- Insert new location
+    INSERT INTO locations (x, y)
+    VALUES (cur_x, cur_y)
+    RETURNING lid INTO new_lid;
+
+    -- Advance cursor (Y first, then X)
+    cur_y := cur_y + 1;
+    IF cur_y > y_max THEN
+        cur_y := 1;
+        cur_x := cur_x + 1;
+    END IF;
+
+    IF cur_x > x_max THEN
+        RAISE EXCEPTION 'No more available locations';
+    END IF;
+
+    UPDATE location_cursor
+    SET x = cur_x, y = cur_y;
+
+    RETURN new_lid;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ============================
+-- FUNCTION: Auto-assign phone location
 -- ============================
 CREATE OR REPLACE FUNCTION auto_assign_location()
 RETURNS TRIGGER AS $$
-DECLARE
-    max_x SMALLINT := 500;
-    max_y SMALLINT := 500;
-    x SMALLINT := 1;
-    y SMALLINT := 1;
-    taken BOOLEAN;
 BEGIN
-    -- Only assign automatically if location is not provided
-    IF NEW.location IS NULL THEN
-        LOOP
-            -- Check if current location is free
-            SELECT EXISTS (
-                SELECT 1 FROM phones WHERE location = ARRAY[x, y]
-            ) INTO taken;
-
-            EXIT WHEN NOT taken;
-
-            -- Increment location position
-            IF x < max_x THEN
-                x := x + 1;
-            ELSE
-                x := 1;
-                y := y + 1;
-            END IF;
-
-            -- Stop if we exceed the grid
-            IF y > max_y THEN
-                RAISE EXCEPTION 'No available locations left in grid (% x %)', max_x, max_y;
-            END IF;
-        END LOOP;
-
-        NEW.location := ARRAY[x, y];
-    ELSE
-        -- Prevent duplicates for manually set locations
-        IF EXISTS (SELECT 1 FROM phones WHERE location = NEW.location) THEN
-            RAISE EXCEPTION 'Location % is already taken', NEW.location;
-        END IF;
-    END IF;
-
+    NEW.lid := assign_or_create_location(500, 500);
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+
+-- ============================
+-- FUNCTION: Generate the UUID
+-- ============================
+CREATE OR REPLACE FUNCTION phones_defaults()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.pid IS NULL THEN
+        NEW.pid := gen_random_uuid();
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
 
 -- ============================
 -- TRIGGERS
@@ -123,12 +138,11 @@ BEFORE INSERT ON phones
 FOR EACH ROW
 EXECUTE FUNCTION auto_assign_location();
 
-
--- generate pid on insert
-CREATE TRIGGER phones_before_insert_pid
+-- Generate the UUID
+CREATE TRIGGER phones_before_insert_defaults
 BEFORE INSERT ON phones
 FOR EACH ROW
-EXECUTE FUNCTION gen_phone_pid();
+EXECUTE FUNCTION phones_defaults();
 
 
 -- Update modified_at when student changes
@@ -141,7 +155,6 @@ EXECUTE FUNCTION update_modified_column();
 CREATE TRIGGER students_embed_modified
 BEFORE UPDATE ON students
 FOR EACH ROW
-WHEN (OLD.embed IS DISTINCT FROM NEW.embed)
 EXECUTE FUNCTION update_modified_column();
 
 -- Update modified_at when phone changes
@@ -149,13 +162,3 @@ CREATE TRIGGER phones_before_update
 BEFORE UPDATE ON phones
 FOR EACH ROW
 EXECUTE FUNCTION update_modified_column();
-
--- Regenerate PID if identifying info changes
-CREATE TRIGGER phones_regen_pid
-BEFORE UPDATE ON phones
-FOR EACH ROW
-WHEN (
- OLD.model IS DISTINCT FROM NEW.model
- OR OLD.imei IS DISTINCT FROM NEW.imei
-)
-EXECUTE FUNCTION gen_phone_pid();

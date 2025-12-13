@@ -54,8 +54,8 @@ class _ScanSuccessPageState extends State<ScanSuccessPage> {
     final model = p["model"] ?? "Unknown Model";
     final isStored = p["is_stored"] == true ? "Stored" : "With Student";
     final location = p["location"] != null
-        ? "[${p['location'][0]}, ${p['location'][1]}]"
-        : "N/A";
+    ? "line= ${p['location'][0]}, column= ${p['location'][1]}"
+    : "N/A";
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),

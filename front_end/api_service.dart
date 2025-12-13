@@ -76,12 +76,6 @@ class ApiService {
     return null;
   }
 
-  static Future<Map<String, dynamic>?> getPhone(String pid) async {
-    final res = await http.get(Uri.parse("$baseUrl/api/phones/pid/$pid"));
-    if (res.statusCode == 200) return jsonDecode(res.body)["data"];
-    return null;
-  }
-
   static Future<bool> createPhone(Map<String, dynamic> data) async {
     final res = await http.post(
       Uri.parse("$baseUrl/api/phones/"),

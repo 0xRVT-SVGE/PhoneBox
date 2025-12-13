@@ -2,7 +2,7 @@
 from flask import Blueprint, jsonify, request
 from back_end.Database.phones import (
     create_phone, get_phones, list_phones, update_phone, delete_phone,
-    phones_not_stored, phones_by_condition, phone_stats, reassign_phone, regenerate_pid, phones_near_location
+    phones_not_stored, phones_by_condition, phone_stats, reassign_phone
 )
 
 phones_bp = Blueprint("phones", __name__)
@@ -25,14 +25,14 @@ def route_create_phone():
     data = request.get_json(force=True)
     return handle_response(create_phone(data))
 
-@phones_bp.route("/<sid>", methods=["PUT"])
-def route_update_phone(sid):
+@phones_bp.route("/<pid>", methods=["PUT"])
+def route_update_phone(pid):
     data = request.get_json(force=True)
-    return handle_response(update_phone(sid, data))
+    return handle_response(update_phone(pid, data))
 
-@phones_bp.route("/<sid>", methods=["DELETE"])
-def route_delete_phone(sid):
-    return handle_response(delete_phone(sid))
+@phones_bp.route("/<pid>", methods=["DELETE"])
+def route_delete_phone(pid):
+    return handle_response(delete_phone(pid))
 
 # --- Advanced ---
 @phones_bp.route("/not_stored", methods=["GET"])
@@ -47,22 +47,7 @@ def route_phones_by_condition(cond):
 def route_phone_stats():
     return handle_response(phone_stats())
 
-@phones_bp.route("/reassign", methods=["PATCH"])
+@phones_bp.route("/<pid>/reassign", methods=["PATCH"])
 def route_reassign_phone():
     data = request.get_json(force=True)
-    return handle_response(reassign_phone(data.get("old_sid"), data.get("new_sid")))
-
-@phones_bp.route("/nearby", methods=["GET"])
-def api_phones_near_location():
-    try:
-        x = int(request.args.get("x"))
-        y = int(request.args.get("y"))
-        limit = int(request.args.get("limit", 10))
-        return handle_response(phones_near_location(x, y, limit))
-    except Exception:
-        return jsonify({"status": "error", "message": "Invalid x, y, or limit"}), 400
-
-
-@phones_bp.route("/regenerate_pid/<sid>", methods=["PATCH"])
-def route_regenerate_pid(sid):
-    return handle_response(regenerate_pid(sid))
+    return handle_response(reassign_phone(data.get("pid"), data.get("new_sid")))
