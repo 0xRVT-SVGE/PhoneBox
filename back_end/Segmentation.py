@@ -4,7 +4,7 @@ import cv2
 rows, cols = 3, 4  # x rows, y cols
 spacing = 10       # pixels between cells
 
-cap = cv2.VideoCapture(0)
+cap = cv2.VideoCapture(1)
 
 while True:
     ret, frame = cap.read()

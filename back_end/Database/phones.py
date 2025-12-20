@@ -7,13 +7,13 @@ def create_phone(data):
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO phones (sid, model, imei, cond, admin_note, stud_note, is_stored, lid)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO phones (sid, model, imei, cond, admin_note, stud_note, is_stored)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 RETURNING pid;
             """, (
-                data["sid"], data["model"], data.get("imei"),
+                data["sid"], data["model"], data["imei"],
                 data.get("cond"), data.get("admin_note"), data.get("stud_note"),
-                data.get("is_stored", False), data.get("lid") if data.get("lid") else None  # allow NULL; trigger will auto-assign
+                data.get("is_stored", False)
             ))
             pid = cur.fetchone()[0]
             conn.commit()
@@ -31,7 +31,12 @@ def get_phones(sid):
     conn = get_conn()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM phones WHERE sid = %s;", (sid,))
+            cur.execute("""
+                SELECT p.*, l.x, l.y
+                FROM phones p
+                JOIN locations l ON p.lid = l.lid
+                WHERE p.sid = %s;
+            """, (sid,))
             rows = cur.fetchall()
 
             if not rows:
@@ -61,6 +66,7 @@ def update_phone(pid, data):
     conn = get_conn()
     try:
         with conn.cursor() as cur:
+            # Fixed: Added WHERE clause and removed semicolon
             cur.execute("""
                 UPDATE phones
                 SET model = COALESCE(%s, model),
@@ -68,13 +74,12 @@ def update_phone(pid, data):
                     cond = COALESCE(%s, cond),
                     admin_note = COALESCE(%s, admin_note),
                     stud_note = COALESCE(%s, stud_note),
-                    is_stored = COALESCE(%s, is_stored),
-                    lid = COALESCE(%s, lid)
-                WHERE pid = %s
-                RETURNING pid;
+                    is_stored = COALESCE(%s, is_stored)
+                WHERE pid = %s;
             """, (
                 data.get("model"), data.get("imei"), data.get("cond"),
-                data.get("admin_note"), data.get("stud_note"), data.get("is_stored"), data.get("lid"), pid
+                data.get("admin_note"), data.get("stud_note"), data.get("is_stored"),
+                pid
             ))
             if cur.rowcount == 0:
                 return {"status": "error", "message": "Phone not found"}, 404
@@ -87,7 +92,6 @@ def update_phone(pid, data):
     finally:
         put_conn(conn)
 
-# Delete a phone by pid
 def delete_phone(pid):
     conn = get_conn()
     try:
@@ -146,7 +150,6 @@ def phone_stats():
     finally:
         put_conn(conn)
 
-# Reassign a single phone to a different student (operate on pid)
 def reassign_phone(pid, new_sid):
     if not pid or not new_sid:
         return {"status": "error", "message": "pid and new_sid are required"}, 400
@@ -177,6 +180,5 @@ def phones_near_lid(x, y, limit=10):
             rows = cur.fetchall()
             columns = [desc[0] for desc in cur.description]
             return {"status": "success", "data": [dict(zip(columns, r)) for r in rows]}, 200
-
     finally:
         put_conn(conn)

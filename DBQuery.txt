@@ -29,6 +29,12 @@ CREATE TABLE location_cursor (
 
 INSERT INTO location_cursor DEFAULT VALUES;
 
+CREATE TABLE free_locations (
+    lid INT PRIMARY KEY
+        REFERENCES locations(lid)
+        ON DELETE CASCADE
+);
+
 
 -- ============================
 -- PHONES TABLE
@@ -70,22 +76,33 @@ $$ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION assign_or_create_location(x_max INT, y_max INT)
 RETURNS INT AS $$
 DECLARE
+    reuse_lid INT;
     cur_x SMALLINT;
     cur_y SMALLINT;
     new_lid INT;
 BEGIN
-    -- Lock the cursor row (sequential guarantee)
-    SELECT x, y
-    INTO cur_x, cur_y
+    -- Try reuse first
+    SELECT lid
+    INTO reuse_lid
+    FROM free_locations
+    ORDER BY lid
+    LIMIT 1
+    FOR UPDATE SKIP LOCKED;
+
+    IF reuse_lid IS NOT NULL THEN
+        DELETE FROM free_locations WHERE lid = reuse_lid;
+        RETURN reuse_lid;
+    END IF;
+
+    -- Fallback to cursor (same as before)
+    SELECT x, y INTO cur_x, cur_y
     FROM location_cursor
     FOR UPDATE;
 
-    -- Insert new location
     INSERT INTO locations (x, y)
     VALUES (cur_x, cur_y)
     RETURNING lid INTO new_lid;
 
-    -- Advance cursor (Y first, then X)
     cur_y := cur_y + 1;
     IF cur_y > y_max THEN
         cur_y := 1;
@@ -96,8 +113,7 @@ BEGIN
         RAISE EXCEPTION 'No more available locations';
     END IF;
 
-    UPDATE location_cursor
-    SET x = cur_x, y = cur_y;
+    UPDATE location_cursor SET x = cur_x, y = cur_y;
 
     RETURN new_lid;
 END;
@@ -127,6 +143,20 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- ============================
+-- FUNCTION: Mark free location
+-- ============================
+CREATE OR REPLACE FUNCTION phones_after_delete()
+RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO free_locations (lid)
+    VALUES (OLD.lid)
+    ON CONFLICT DO NOTHING;
+
+    RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+
 
 -- ============================
 -- TRIGGERS
@@ -144,6 +174,11 @@ BEFORE INSERT ON phones
 FOR EACH ROW
 EXECUTE FUNCTION phones_defaults();
 
+-- Mark free location
+CREATE TRIGGER phones_after_delete_trigger
+AFTER DELETE ON phones
+FOR EACH ROW
+EXECUTE FUNCTION phones_after_delete();
 
 -- Update modified_at when student changes
 CREATE TRIGGER students_before_update

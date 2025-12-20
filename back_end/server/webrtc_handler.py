@@ -1,9 +1,10 @@
 # back_end/server/webrtc_handler.py
 import asyncio
 import numpy as np
+from aiortc.rtcrtpparameters import RTCRtpEncodingParameters
 
 from flask import Blueprint, jsonify, request
-from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
+from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack, RTCRtpSender
 from av import VideoFrame
 
 from back_end.scanner_state import scanner_state
@@ -33,6 +34,55 @@ def make_video_frame(frame, pts, time_base):
     vf.time_base = time_base
     return vf
 
+
+# ===========================================================
+# Force H264 codec on a PeerConnection
+# ===========================================================
+def force_h264(pc: RTCPeerConnection):
+    for transceiver in pc.getTransceivers():
+        if transceiver.kind != "video":
+            continue
+
+        capabilities = RTCRtpSender.getCapabilities("video")
+
+        if not capabilities or not hasattr(capabilities, 'codecs'):
+            print(f"[WebRTC] Warning: Could not get codec capabilities")
+            return
+
+        h264_codecs = [c for c in capabilities.codecs if c.mimeType == "video/H264"]
+
+        if not h264_codecs:
+            raise RuntimeError("H264 not supported by aiortc build")
+
+        transceiver.setCodecPreferences(h264_codecs)
+
+        # Log the codec being used
+        codec = h264_codecs[0]
+        print(f"[WebRTC] Preferred codec: {codec.mimeType} (clockRate: {codec.clockRate})")
+
+
+def modify_sdp_bitrate(sdp: str, max_bitrate_kbps: int) -> str:
+    """
+    Modify SDP to add bitrate constraints
+
+    Args:
+        sdp: The SDP string
+        max_bitrate_kbps: Maximum bitrate in Kbps (e.g., 1000 for 1 Mbps)
+    """
+    lines = sdp.split('\r\n')
+    modified_lines = []
+
+    for i, line in enumerate(lines):
+        modified_lines.append(line)
+
+        # Add bitrate limit after video media line
+        if line.startswith('m=video'):
+            # Add TIAS (Transport Independent Application Specific) bandwidth
+            modified_lines.append(f'b=TIAS:{max_bitrate_kbps * 1000}')
+            # Add AS (Application Specific) bandwidth for compatibility
+            modified_lines.append(f'b=AS:{max_bitrate_kbps}')
+
+    return '\r\n'.join(modified_lines)
 
 # ===========================================================
 # MAIN STREAM (ROI)
@@ -90,17 +140,22 @@ async def _handle_offer(offer_sdp, offer_type, mode):
     else:
         pcs_preview.add(pc)
         scanner_state.request_preview()
-        """if not scanner_state.preview_requested.is_set():
-            raise RuntimeError("Preview not requested")"""
-
         video_track = PreviewVideoTrack()
 
     pc.addTrack(video_track)
 
+    #force_h264(pc)
+
     # Cleanup on disconnect
     @pc.on("connectionstatechange")
     async def on_state_change():
-        if pc.connectionState in ("closed", "failed", "disconnected"):
+        state = pc.connectionState
+
+        if state == "disconnected":
+            # wait briefly before closing to allow transient reconnect
+            await asyncio.sleep(5)
+
+        if state in ("closed", "failed", "disconnected"):
             if mode == "main":
                 pcs_main.discard(pc)
             else:
@@ -113,7 +168,11 @@ async def _handle_offer(offer_sdp, offer_type, mode):
     )
 
     answer = await pc.createAnswer()
-    await pc.setLocalDescription(answer)
+
+    modified_sdp = modify_sdp_bitrate(answer.sdp, max_bitrate_kbps=100)  # 1 Mbps
+    answer_with_bitrate = RTCSessionDescription(sdp=modified_sdp, type=answer.type)
+
+    await pc.setLocalDescription(answer_with_bitrate)
 
     return {
         "status": "success",
@@ -184,4 +243,3 @@ def cancel_connection(mode):
         asyncio.run_coroutine_threadsafe(pc.close(), async_loop)
         pcs.discard(pc)
     return jsonify({"status": "success"})
-
