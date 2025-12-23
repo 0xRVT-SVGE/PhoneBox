@@ -6,6 +6,7 @@ from deepface import DeepFace
 from pyzbar.pyzbar import decode, ZBarSymbol
 import requests
 from back_end.scanner_state import scanner_state
+import threading
 
 API_BASE = "http://127.0.0.1:5000/api/students"
 SIMILARITY_THRESHOLD = 0.5
@@ -14,11 +15,15 @@ SCALED_WIDTH = 720
 FACE_INTERVAL = 0.5
 BARCODE_INTERVAL = 0.5
 
-_executor = ThreadPoolExecutor(max_workers=2)
+_executor = ThreadPoolExecutor(max_workers=1)
+_scan_start_event = threading.Event()  # Start scan signal
+_scan_stop_event = threading.Event()  # Stop scan signal
+
 
 def l2_normalize(vec):
     norm = np.linalg.norm(vec)
     return vec / norm if norm > 0 else vec
+
 
 def parse_pg_array(embed_value):
     import json, re
@@ -38,6 +43,7 @@ def parse_pg_array(embed_value):
         except Exception:
             return None
     return None
+
 
 def fetch_student_by_sid(sid):
     try:
@@ -61,6 +67,7 @@ def _deepface_represent(resized):
         enforce_detection=False
     )
 
+
 def emit_if_changed(new_auth, new_results):
     changed = False
     if new_auth != scanner_state.auth_status:
@@ -72,14 +79,17 @@ def emit_if_changed(new_auth, new_results):
     if changed:
         scanner_state.emit_scan_status()
 
-def scan_worker():
+
+def run_scan_session():
+    """Execute a single scan session until completion or stop signal."""
     emit_if_changed(
         {"authorized": False, "user": None},
         {"face_verified": False, "barcode_verified": False, "current_name": "Idle"}
     )
-    face_ok = scanner_state.scan_results["face_verified"]
-    barcode_ok = scanner_state.scan_results["barcode_verified"]
-    name = scanner_state.scan_results["current_name"]
+
+    face_ok = False
+    barcode_ok = False
+    name = "Idle"
     timeout = False
     last_face_scan = 0
     last_barcode_scan = 0
@@ -87,43 +97,42 @@ def scan_worker():
     student = None
     sid = None
 
-    while not scanner_state.stop_requested and scanner_state.scan_request["running"]:
-        try:
-            task = scanner_state.task_queue.get(timeout=0.5)
-        except Exception:
-            continue
+    while not _scan_stop_event.is_set():
+        # Block until frame or stop event - only wakes when needed
+        task = scanner_state.task_queue.get()
 
-        if task is None or scanner_state.stop_requested:
+        # Check if we got woken by stop event
+        if _scan_stop_event.is_set():
             break
 
         frame, roi_coords, timestamp = task
+
         # --- BARCODE DETECTION ---
         if timestamp - last_barcode_scan > BARCODE_INTERVAL:
             last_barcode_scan = timestamp
             roi = frame[roi_coords[1]:roi_coords[3], roi_coords[0]:roi_coords[2]]
+
             if student is None:
                 decoded = decode(cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY), symbols=[ZBarSymbol.CODE128])
 
-            if decoded:
-                sid = decoded[0].data.decode("utf-8").strip()
-                print(sid)
-                student = fetch_student_by_sid(sid)
+                if decoded:
+                    sid = decoded[0].data.decode("utf-8").strip()
+                    student = fetch_student_by_sid(sid)
 
-                if student is not None and student.get("embed") is not None:
-                    barcode_ok = True
-                    scanner_state.barcode_lock_until = timestamp + VALID_TIME
-                    scanner_state.current_student = student
-                    scanner_state.current_embed = l2_normalize(student["embed"])
-                    name = f"{student.get('first_name', '')} {student.get('last_name', '')}".strip()
-                    scanner_state.update_last_barcode()
-                else:
-                    barcode_ok = False
-                    scanner_state.current_embed = None
-                    scanner_state.current_student = None
+                    if student and student.get("embed") is not None:
+                        barcode_ok = True
+                        scanner_state.barcode_lock_until = timestamp + VALID_TIME
+                        scanner_state.current_student = student
+                        scanner_state.current_embed = l2_normalize(student["embed"])
+                        name = f"{student.get('first_name', '')} {student.get('last_name', '')}".strip()
+                        scanner_state.update_last_barcode()
+                    else:
+                        barcode_ok = False
+                        scanner_state.current_embed = None
+                        scanner_state.current_student = None
 
         # --- TIMEOUT ---
         if scanner_state.badge_timeout_exceeded() and not barcode_ok:
-            print("[-] Badge timeout exceeded.")
             timeout = True
             barcode_ok = False
             face_ok = False
@@ -133,13 +142,10 @@ def scan_worker():
         if barcode_ok and scanner_state.current_embed is not None:
             if timestamp - last_face_scan > FACE_INTERVAL:
                 last_face_scan = timestamp
-                try:
-                    scale = SCALED_WIDTH / frame.shape[1]
-                    resized = cv2.resize(frame, (SCALED_WIDTH, int(frame.shape[0] * scale)))
-                    if face_future is None or face_future.done():
-                        face_future = _executor.submit(_deepface_represent, resized)
-                except Exception:
-                    continue
+                scale = SCALED_WIDTH / frame.shape[1]
+                resized = cv2.resize(frame, (SCALED_WIDTH, int(frame.shape[0] * scale)))
+                if face_future is None or face_future.done():
+                    face_future = _executor.submit(_deepface_represent, resized)
 
         if face_future and face_future.done():
             try:
@@ -168,11 +174,40 @@ def scan_worker():
             {"face_verified": face_ok, "barcode_verified": barcode_ok, "current_name": name}
         )
 
-    # Clean shutdown
-    print("[+] Scan worker finished.")
-    scanner_state.stop_requested = False
+    # Session complete
     scanner_state.scan_request["running"] = False
     emit_if_changed(
-        {"authorized": face_ok and barcode_ok, "user": sid if not None else None},
-        {"face_verified": face_ok, "barcode_verified": barcode_ok, "current_name": name, "badge_timeout_exceeded": timeout}
+        {"authorized": face_ok and barcode_ok, "user": sid},
+        {"face_verified": face_ok, "barcode_verified": barcode_ok, "current_name": name,
+         "badge_timeout_exceeded": timeout}
     )
+    print("finished")
+
+
+def scan_worker():
+    """Persistent worker that waits for start event."""
+    while True:
+        # Block indefinitely on event - TRUE 0% CPU usage
+        _scan_start_event.wait()
+        _scan_start_event.clear()
+        _scan_stop_event.clear()  # Reset stop signal
+
+        # Run the scan session
+        run_scan_session()
+
+        # Clean up after session
+        scanner_state.current_embed = None
+        scanner_state.current_student = None
+
+
+def start_scan():
+    """Trigger a scan session."""
+    _scan_stop_event.clear()
+    _scan_start_event.set()
+
+
+def stop_scan():
+    """Stop the current scan session."""
+    _scan_stop_event.set()
+    # Put dummy frame to unblock queue.get() if it's waiting
+    scanner_state.task_queue.put((None, None, None))

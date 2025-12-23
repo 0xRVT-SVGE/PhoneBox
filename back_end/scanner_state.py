@@ -32,7 +32,6 @@ class ScannerState:
         self._current_embed = None
         self.face_lock_until = 0
         self.barcode_lock_until = 0
-        self.stop_requested = False
 
         self.no_badge_timeout = 10  # seconds
         self._last_barcode_time = time.time()
