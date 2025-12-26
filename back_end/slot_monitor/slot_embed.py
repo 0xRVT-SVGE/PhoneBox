@@ -1,4 +1,6 @@
-# server/slot_monitor/slot_embed.py
+# ============================================================
+# FILE: server/slot_monitor/slot_embed.py
+# ============================================================
 
 import cv2
 import numpy as np
@@ -10,8 +12,12 @@ DCT_SIZE = 8  # 8x8 = 64 coeffs
 
 def compute_embedding(roi_bgr: np.ndarray) -> np.ndarray:
     """
-    Returns a normalized embedding vector.
+    Compute normalized embedding vector from ROI.
+    Returns 96-dimensional vector (32 histogram + 64 DCT) as float32.
     """
+    if roi_bgr is None or roi_bgr.size == 0:
+        raise ValueError("Invalid ROI: empty or None")
+
     gray = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2GRAY)
     gray = cv2.resize(gray, (IMG_SIZE, IMG_SIZE), interpolation=cv2.INTER_AREA)
 
@@ -25,11 +31,23 @@ def compute_embedding(roi_bgr: np.ndarray) -> np.ndarray:
     dct_low = dct[:DCT_SIZE, :DCT_SIZE].flatten()
 
     emb = np.concatenate([hist, dct_low])
-    emb = emb / (np.linalg.norm(emb) + 1e-8)
+    norm = np.linalg.norm(emb)
+    if norm > 1e-8:
+        emb = emb / norm
 
-    return emb
+    return emb.astype(np.float32)
 
 
 def embedding_distance(e1: np.ndarray, e2: np.ndarray) -> float:
-    # cosine distance
-    return 1.0 - float(np.dot(e1, e2))
+    """Compute cosine distance between embeddings"""
+    return float(1.0 - np.dot(e1, e2))
+
+
+def embedding_to_bytes(emb: np.ndarray) -> bytes:
+    """Convert numpy float32 array to bytes for database storage (BYTEA)"""
+    return emb.astype(np.float32).tobytes()
+
+
+def embedding_from_bytes(data: bytes) -> np.ndarray:
+    """Convert bytes from database to numpy float32 array"""
+    return np.frombuffer(data, dtype=np.float32)

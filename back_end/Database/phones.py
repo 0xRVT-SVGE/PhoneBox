@@ -1,5 +1,10 @@
 # back_end/Database/phones.py
 from back_end.Database.db import get_conn, put_conn
+import logging
+
+# Setup logging
+logger = logging.getLogger(__name__)
+
 
 # ------------------ CRUD ------------------
 def create_phone(data):
@@ -7,19 +12,21 @@ def create_phone(data):
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO phones (sid, model, imei, cond, admin_note, stud_note, is_stored)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                RETURNING pid;
-            """, (
-                data["sid"], data["model"], data["imei"],
-                data.get("cond"), data.get("admin_note"), data.get("stud_note"),
-                data.get("is_stored", False)
-            ))
+                        INSERT INTO phones (sid, model, imei, cond, admin_note, stud_note, is_stored)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        RETURNING pid;
+                        """, (
+                            data["sid"], data["model"], data["imei"],
+                            data.get("cond"), data.get("admin_note"), data.get("stud_note"),
+                            data.get("is_stored", False)
+                        ))
             pid = cur.fetchone()[0]
             conn.commit()
+            logger.info(f"Created phone {pid} for student {data['sid']}, IMEI: {data['imei']}")
             return {"status": "success", "data": {"pid": pid}}, 201
     except Exception as e:
         conn.rollback()
+        logger.error(f"Failed to create phone for student {data.get('sid')}: {str(e)}")
         import traceback
         print(traceback.format_exc())
         return {"status": "error", "message": str(e)}, 400
@@ -32,19 +39,20 @@ def get_phones(sid):
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT p.*, l.x, l.y
-                FROM phones p
-                JOIN locations l ON p.lid = l.lid
-                WHERE p.sid = %s;
-            """, (sid,))
+                        SELECT p.*, l.x, l.y
+                        FROM phones p
+                                 JOIN locations l ON p.lid = l.lid
+                        WHERE p.sid = %s;
+                        """, (sid,))
             rows = cur.fetchall()
 
             if not rows:
+                logger.warning(f"No phones found for student {sid}")
                 return {"status": "error", "message": "No phones found"}, 404
 
             columns = [desc[0] for desc in cur.description]
             data = [dict(zip(columns, r)) for r in rows]
-
+            logger.debug(f"Retrieved {len(data)} phone(s) for student {sid}")
             return {"status": "success", "data": data}, 200
     finally:
         put_conn(conn)
@@ -57,6 +65,7 @@ def list_phones():
             cur.execute("SELECT * FROM phones ORDER BY sid;")
             rows = cur.fetchall()
             columns = [desc[0] for desc in cur.description]
+            logger.debug(f"Listed {len(rows)} phones")
             return {"status": "success", "data": [dict(zip(columns, r)) for r in rows]}, 200
     finally:
         put_conn(conn)
@@ -66,28 +75,42 @@ def update_phone(pid, data):
     conn = get_conn()
     try:
         with conn.cursor() as cur:
-            # Fixed: Added WHERE clause and removed semicolon
-            cur.execute("""
-                UPDATE phones
-                SET model = COALESCE(%s, model),
-                    imei = COALESCE(%s, imei),
-                    cond = COALESCE(%s, cond),
-                    admin_note = COALESCE(%s, admin_note),
-                    stud_note = COALESCE(%s, stud_note),
-                    is_stored = COALESCE(%s, is_stored)
-                WHERE pid = %s;
-            """, (
-                data.get("model"), data.get("imei"), data.get("cond"),
-                data.get("admin_note"), data.get("stud_note"), data.get("is_stored"),
-                pid
-            ))
-            if cur.rowcount == 0:
+            # Check if is_stored is changing (important for slot monitoring)
+            cur.execute("SELECT is_stored FROM phones WHERE pid = %s", (pid,))
+            result = cur.fetchone()
+            if not result:
                 return {"status": "error", "message": "Phone not found"}, 404
 
+            old_is_stored = result[0]
+            new_is_stored = data.get("is_stored")
+
+            cur.execute("""
+                        UPDATE phones
+                        SET model      = COALESCE(%s, model),
+                            imei       = COALESCE(%s, imei),
+                            cond       = COALESCE(%s, cond),
+                            admin_note = COALESCE(%s, admin_note),
+                            stud_note  = COALESCE(%s, stud_note),
+                            is_stored  = COALESCE(%s, is_stored)
+                        WHERE pid = %s;
+                        """, (
+                            data.get("model"), data.get("imei"), data.get("cond"),
+                            data.get("admin_note"), data.get("stud_note"), new_is_stored,
+                            pid
+                        ))
+
             conn.commit()
+
+            # Log storage state changes
+            if new_is_stored is not None and old_is_stored != new_is_stored:
+                action = "STORED" if new_is_stored else "RETRIEVED"
+                logger.info(f"Phone {pid} {action} - baseline recalculation triggered")
+            else:
+                logger.debug(f"Updated phone {pid}")
             return {"status": "success", "data": {"pid": pid}}, 200
     except Exception as e:
         conn.rollback()
+        logger.error(f"Failed to update phone {pid}: {str(e)}")
         return {"status": "error", "message": str(e)}, 400
     finally:
         put_conn(conn)
@@ -96,11 +119,23 @@ def delete_phone(pid):
     conn = get_conn()
     try:
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM phones WHERE pid = %s RETURNING pid;", (pid,))
-            if cur.rowcount == 0:
+            # Get phone info before deletion for logging
+            cur.execute("SELECT imei, is_stored FROM phones WHERE pid = %s", (pid,))
+            result = cur.fetchone()
+            if not result:
                 return {"status": "error", "message": "Phone not found"}, 404
+
+            imei, is_stored = result
+
+            cur.execute("DELETE FROM phones WHERE pid = %s RETURNING pid;", (pid,))
             conn.commit()
+
+            logger.info(f"Deleted phone {pid} (IMEI: {imei}, was_stored: {is_stored})")
             return {"status": "success", "data": {"pid": pid}}, 200
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Failed to delete phone {pid}: {str(e)}")
+        return {"status": "error", "message": str(e)}, 400
     finally:
         put_conn(conn)
 
@@ -113,6 +148,7 @@ def phones_not_stored():
             cur.execute("SELECT * FROM phones WHERE is_stored = FALSE ORDER BY sid;")
             rows = cur.fetchall()
             columns = [desc[0] for desc in cur.description]
+            logger.debug(f"Retrieved {len(rows)} phones not in storage")
             return {"status": "success", "data": [dict(zip(columns, r)) for r in rows]}, 200
     finally:
         put_conn(conn)
@@ -125,6 +161,7 @@ def phones_by_condition(cond):
             cur.execute("SELECT * FROM phones WHERE cond = %s ORDER BY sid;", (cond,))
             rows = cur.fetchall()
             if not rows:
+                logger.debug(f"No phones found with condition '{cond}'")
                 return {"status": "success", "data": [], "message": f"No phones with condition '{cond}'"}, 200
             columns = [desc[0] for desc in cur.description]
             return {"status": "success", "data": [dict(zip(columns, r)) for r in rows]}, 200
@@ -137,13 +174,13 @@ def phone_stats():
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT COUNT(*) AS total,
-                       COUNT(*) FILTER (WHERE is_stored) AS stored,
-                       COUNT(*) FILTER (WHERE NOT is_stored) AS in_use,
-                       COUNT(*) FILTER (WHERE cond = 'Damaged') AS damaged,
-                       COUNT(*) FILTER (WHERE cond = 'Broken') AS broken
-                FROM phones;
-            """)
+                        SELECT COUNT(*)                                 AS total,
+                               COUNT(*) FILTER (WHERE is_stored)        AS stored,
+                               COUNT(*) FILTER (WHERE NOT is_stored)    AS in_use,
+                               COUNT(*) FILTER (WHERE cond = 'Damaged') AS damaged,
+                               COUNT(*) FILTER (WHERE cond = 'Broken')  AS broken
+                        FROM phones;
+                        """)
             result = cur.fetchone()
             columns = [desc[0] for desc in cur.description]
             return {"status": "success", "data": dict(zip(columns, result))}, 200
@@ -157,26 +194,119 @@ def reassign_phone(pid, new_sid):
     conn = get_conn()
     try:
         with conn.cursor() as cur:
-            cur.execute("UPDATE phones SET sid = %s WHERE pid = %s RETURNING pid;", (new_sid, pid))
-            if cur.rowcount == 0:
+            # Get old sid for logging
+            cur.execute("SELECT sid FROM phones WHERE pid = %s", (pid,))
+            result = cur.fetchone()
+            if not result:
                 return {"status": "error", "message": "Phone not found for the given pid"}, 404
-
+            old_sid = result[0]
+            cur.execute("UPDATE phones SET sid = %s WHERE pid = %s RETURNING pid;", (new_sid, pid))
             conn.commit()
+            logger.info(f"Reassigned phone {pid} from {old_sid} to {new_sid}")
             return {"status": "success", "data": {"pid": pid, "new_owner": new_sid}}, 200
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Failed to reassign phone {pid}: {str(e)}")
+        return {"status": "error", "message": str(e)}, 400
     finally:
         put_conn(conn)
+
 
 def phones_near_lid(x, y, limit=10):
     conn = get_conn()
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT phones.*, l.x, l.y, sqrt(power(l.x - %s, 2) + power(l.y - %s, 2)) AS distance
-                FROM phones
-                JOIN locations l ON phones.lid = l.lid
-                ORDER BY distance
-                LIMIT %s;
-            """, (x, y, limit))
+                        SELECT phones.*, l.x, l.y, sqrt(power(l.x - %s, 2) + power(l.y - %s, 2)) AS distance
+                        FROM phones
+                                 JOIN locations l ON phones.lid = l.lid
+                        ORDER BY distance
+                        LIMIT %s;
+                        """, (x, y, limit))
+            rows = cur.fetchall()
+            columns = [desc[0] for desc in cur.description]
+            return {"status": "success", "data": [dict(zip(columns, r)) for r in rows]}, 200
+    finally:
+        put_conn(conn)
+
+
+# ------------------ NEW: Slot Monitoring Integration ------------------
+def get_phone_with_slot_status(pid):
+    """Get phone details with current slot monitoring status"""
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                        SELECT p.*,
+                               l.x,
+                               l.y,
+                               s.binary_state,
+                               s.tx_state,
+                               s.last_distance,
+                               s.last_change_ts
+                        FROM phones p
+                                 JOIN locations l ON p.lid = l.lid
+                                 LEFT JOIN slot_current_state s ON l.lid = s.lid
+                        WHERE p.pid = %s;
+                        """, (pid,))
+            row = cur.fetchone()
+
+            if not row:
+                return {"status": "error", "message": "Phone not found"}, 404
+
+            columns = [desc[0] for desc in cur.description]
+            return {"status": "success", "data": dict(zip(columns, row))}, 200
+    finally:
+        put_conn(conn)
+
+
+def get_phone_operation_history(pid, limit=50):
+    """Get operation history for a phone from audit log"""
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                        SELECT operation,
+                               timestamp,
+                               old_data,
+                               new_data
+                        FROM phone_operations
+                        WHERE pid = %s
+                        ORDER BY timestamp DESC
+                        LIMIT %s;
+                        """, (pid, limit))
+            rows = cur.fetchall()
+            columns = [desc[0] for desc in cur.description]
+
+            logger.debug(f"Retrieved {len(rows)} operations for phone {pid}")
+            return {"status": "success", "data": [dict(zip(columns, r)) for r in rows]}, 200
+    finally:
+        put_conn(conn)
+
+
+def get_problem_slots():
+    """Get all slots with monitoring issues"""
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM v_problem_slots;")
+            rows = cur.fetchall()
+            columns = [desc[0] for desc in cur.description]
+
+            if rows:
+                logger.warning(f"Found {len(rows)} problem slots")
+
+            return {"status": "success", "data": [dict(zip(columns, r)) for r in rows]}, 200
+    finally:
+        put_conn(conn)
+
+
+def get_active_phones_with_slots():
+    """Get all stored phones with their slot monitoring status"""
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM v_active_phones_with_slots;")
             rows = cur.fetchall()
             columns = [desc[0] for desc in cur.description]
             return {"status": "success", "data": [dict(zip(columns, r)) for r in rows]}, 200
