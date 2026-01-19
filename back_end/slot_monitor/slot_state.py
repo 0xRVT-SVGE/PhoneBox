@@ -43,7 +43,7 @@ class SlotState:
         Args:
             dist: Current embedding distance
             t_minor: Threshold for OK state (e.g., 0.15)
-            t_major: Threshold for ALTERED/EMPTY state (e.g., 0.35)
+            t_major: Threshold for ALTERED state (e.g., 0.35)
             t_recalc: Threshold for triggering recalculation (e.g., 0.12)
 
         Returns:

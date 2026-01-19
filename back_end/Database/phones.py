@@ -1,32 +1,36 @@
-# back_end/Database/phones.py
+# back_end/Database/API/phones.py
 from back_end.Database.db import get_conn, put_conn
 import logging
 
-# Setup logging
 logger = logging.getLogger(__name__)
 
 
 # ------------------ CRUD ------------------
 def create_phone(data):
+    """Create a new phone (no location assignment)"""
     conn = get_conn()
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                        INSERT INTO phones (sid, model, imei, cond, admin_note, stud_note, is_stored)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        INSERT INTO phones (sid, model, imei, cond, admin_note, stud_note)
+                        VALUES (%s, %s, %s, %s, %s, %s)
                         RETURNING pid;
                         """, (
-                            data["sid"], data["model"], data["imei"],
-                            data.get("cond"), data.get("admin_note"), data.get("stud_note"),
-                            data.get("is_stored", False)
+                            data["sid"],
+                            data["model"],
+                            data["imei"],
+                            data.get("cond"),
+                            data.get("admin_note"),
+                            data.get("stud_note")
                         ))
             pid = cur.fetchone()[0]
             conn.commit()
+
             logger.info(f"Created phone {pid} for student {data['sid']}, IMEI: {data['imei']}")
             return {"status": "success", "data": {"pid": pid}}, 201
     except Exception as e:
         conn.rollback()
-        logger.error(f"Failed to create phone for student {data.get('sid')}: {str(e)}")
+        logger.error(f"Failed to create phone: {str(e)}")
         import traceback
         print(traceback.format_exc())
         return {"status": "error", "message": str(e)}, 400
@@ -35,13 +39,20 @@ def create_phone(data):
 
 
 def get_phones(sid):
+    """Get all phones for a student with current storage location if stored"""
     conn = get_conn()
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                        SELECT p.*, l.x, l.y
+                        SELECT p.*,
+                               ps.lid,
+                               ps.stored_at,
+                               l.x,
+                               l.y,
+                               CASE WHEN ps.pid IS NOT NULL THEN TRUE ELSE FALSE END as is_stored
                         FROM phones p
-                                 JOIN locations l ON p.lid = l.lid
+                                 LEFT JOIN phone_storage ps ON p.pid = ps.pid AND ps.retrieved_at IS NULL
+                                 LEFT JOIN locations l ON ps.lid = l.lid
                         WHERE p.sid = %s;
                         """, (sid,))
             rows = cur.fetchall()
@@ -52,6 +63,16 @@ def get_phones(sid):
 
             columns = [desc[0] for desc in cur.description]
             data = [dict(zip(columns, r)) for r in rows]
+
+            # Convert datetime to string
+            for item in data:
+                if item.get('stored_at'):
+                    item['stored_at'] = item['stored_at'].isoformat()
+                if item.get('created_at'):
+                    item['created_at'] = item['created_at'].isoformat()
+                if item.get('modified_at'):
+                    item['modified_at'] = item['modified_at'].isoformat()
+
             logger.debug(f"Retrieved {len(data)} phone(s) for student {sid}")
             return {"status": "success", "data": data}, 200
     finally:
@@ -59,54 +80,68 @@ def get_phones(sid):
 
 
 def list_phones():
+    """List all phones with current storage status"""
     conn = get_conn()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM phones ORDER BY sid;")
+            cur.execute("""
+                        SELECT p.*,
+                               ps.lid,
+                               ps.stored_at,
+                               l.x,
+                               l.y,
+                               CASE WHEN ps.pid IS NOT NULL THEN TRUE ELSE FALSE END as is_stored
+                        FROM phones p
+                                 LEFT JOIN phone_storage ps ON p.pid = ps.pid AND ps.retrieved_at IS NULL
+                                 LEFT JOIN locations l ON ps.lid = l.lid
+                        ORDER BY p.sid;
+                        """)
             rows = cur.fetchall()
             columns = [desc[0] for desc in cur.description]
+
+            data = [dict(zip(columns, r)) for r in rows]
+            for item in data:
+                if item.get('stored_at'):
+                    item['stored_at'] = item['stored_at'].isoformat()
+                if item.get('created_at'):
+                    item['created_at'] = item['created_at'].isoformat()
+                if item.get('modified_at'):
+                    item['modified_at'] = item['modified_at'].isoformat()
+
             logger.debug(f"Listed {len(rows)} phones")
-            return {"status": "success", "data": [dict(zip(columns, r)) for r in rows]}, 200
+            return {"status": "success", "data": data}, 200
     finally:
         put_conn(conn)
 
 
 def update_phone(pid, data):
+    """Update phone details (NOT storage status - use deposit/withdraw for that)"""
     conn = get_conn()
     try:
         with conn.cursor() as cur:
-            # Check if is_stored is changing (important for slot monitoring)
-            cur.execute("SELECT is_stored FROM phones WHERE pid = %s", (pid,))
-            result = cur.fetchone()
-            if not result:
-                return {"status": "error", "message": "Phone not found"}, 404
-
-            old_is_stored = result[0]
-            new_is_stored = data.get("is_stored")
-
             cur.execute("""
                         UPDATE phones
                         SET model      = COALESCE(%s, model),
                             imei       = COALESCE(%s, imei),
                             cond       = COALESCE(%s, cond),
                             admin_note = COALESCE(%s, admin_note),
-                            stud_note  = COALESCE(%s, stud_note),
-                            is_stored  = COALESCE(%s, is_stored)
+                            stud_note  = COALESCE(%s, stud_note)
                         WHERE pid = %s;
                         """, (
-                            data.get("model"), data.get("imei"), data.get("cond"),
-                            data.get("admin_note"), data.get("stud_note"), new_is_stored,
+                            data.get("model"),
+                            data.get("imei"),
+                            data.get("cond"),
+                            data.get("admin_note"),
+                            data.get("stud_note"),
                             pid
                         ))
 
-            conn.commit()
+            if cur.rowcount == 0:
+                logger.warning(f"Phone {pid} not found for update")
+                return {"status": "error", "message": "Phone not found"}, 404
 
-            # Log storage state changes
-            if new_is_stored is not None and old_is_stored != new_is_stored:
-                action = "STORED" if new_is_stored else "RETRIEVED"
-                logger.info(f"Phone {pid} {action} - baseline recalculation triggered")
-            else:
-                logger.debug(f"Updated phone {pid}")
+            conn.commit()
+            logger.info(f"Updated phone {pid}")
             return {"status": "success", "data": {"pid": pid}}, 200
     except Exception as e:
         conn.rollback()
@@ -115,22 +150,38 @@ def update_phone(pid, data):
     finally:
         put_conn(conn)
 
+
 def delete_phone(pid):
+    """Delete a phone (will also cascade delete storage records)"""
     conn = get_conn()
     try:
         with conn.cursor() as cur:
-            # Get phone info before deletion for logging
-            cur.execute("SELECT imei, is_stored FROM phones WHERE pid = %s", (pid,))
+            # Check if phone is currently stored
+            cur.execute("""
+                        SELECT lid
+                        FROM phone_storage
+                        WHERE pid = %s
+                          AND retrieved_at IS NULL
+                        """, (pid,))
+
+            if cur.fetchone():
+                return {
+                    "status": "error",
+                    "message": "Cannot delete phone while it's in storage. Please withdraw it first."
+                }, 400
+
+            # Get phone info before deletion
+            cur.execute("SELECT imei FROM phones WHERE pid = %s", (pid,))
             result = cur.fetchone()
             if not result:
                 return {"status": "error", "message": "Phone not found"}, 404
 
-            imei, is_stored = result
+            imei = result[0]
 
             cur.execute("DELETE FROM phones WHERE pid = %s RETURNING pid;", (pid,))
             conn.commit()
 
-            logger.info(f"Deleted phone {pid} (IMEI: {imei}, was_stored: {is_stored})")
+            logger.info(f"Deleted phone {pid} (IMEI: {imei})")
             return {"status": "success", "data": {"pid": pid}}, 200
     except Exception as e:
         conn.rollback()
@@ -142,44 +193,88 @@ def delete_phone(pid):
 
 # ------------------ Advanced ------------------
 def phones_not_stored():
+    """Get all phones not currently in storage"""
     conn = get_conn()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM phones WHERE is_stored = FALSE ORDER BY sid;")
+            cur.execute("""
+                        SELECT p.*
+                        FROM phones p
+                                 LEFT JOIN phone_storage ps ON p.pid = ps.pid AND ps.retrieved_at IS NULL
+                        WHERE ps.pid IS NULL
+                        ORDER BY p.sid;
+                        """)
             rows = cur.fetchall()
             columns = [desc[0] for desc in cur.description]
+
+            data = [dict(zip(columns, r)) for r in rows]
+            for item in data:
+                if item.get('created_at'):
+                    item['created_at'] = item['created_at'].isoformat()
+                if item.get('modified_at'):
+                    item['modified_at'] = item['modified_at'].isoformat()
+
             logger.debug(f"Retrieved {len(rows)} phones not in storage")
-            return {"status": "success", "data": [dict(zip(columns, r)) for r in rows]}, 200
+            return {"status": "success", "data": data}, 200
     finally:
         put_conn(conn)
 
 
 def phones_by_condition(cond):
+    """Get phones by condition"""
     conn = get_conn()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM phones WHERE cond = %s ORDER BY sid;", (cond,))
+            cur.execute("""
+                        SELECT p.*,
+                               ps.lid,
+                               l.x,
+                               l.y,
+                               CASE WHEN ps.pid IS NOT NULL THEN TRUE ELSE FALSE END as is_stored
+                        FROM phones p
+                                 LEFT JOIN phone_storage ps ON p.pid = ps.pid AND ps.retrieved_at IS NULL
+                                 LEFT JOIN locations l ON ps.lid = l.lid
+                        WHERE p.cond = %s
+                        ORDER BY p.sid;
+                        """, (cond,))
             rows = cur.fetchall()
+
             if not rows:
                 logger.debug(f"No phones found with condition '{cond}'")
-                return {"status": "success", "data": [], "message": f"No phones with condition '{cond}'"}, 200
+                return {
+                    "status": "success",
+                    "data": [],
+                    "message": f"No phones with condition '{cond}'"
+                }, 200
+
             columns = [desc[0] for desc in cur.description]
-            return {"status": "success", "data": [dict(zip(columns, r)) for r in rows]}, 200
+            data = [dict(zip(columns, r)) for r in rows]
+            for item in data:
+                if item.get('stored_at'):
+                    item['stored_at'] = item['stored_at'].isoformat()
+                if item.get('created_at'):
+                    item['created_at'] = item['created_at'].isoformat()
+                if item.get('modified_at'):
+                    item['modified_at'] = item['modified_at'].isoformat()
+
+            return {"status": "success", "data": data}, 200
     finally:
         put_conn(conn)
 
 
 def phone_stats():
+    """Get phone statistics"""
     conn = get_conn()
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                        SELECT COUNT(*)                                 AS total,
-                               COUNT(*) FILTER (WHERE is_stored)        AS stored,
-                               COUNT(*) FILTER (WHERE NOT is_stored)    AS in_use,
-                               COUNT(*) FILTER (WHERE cond = 'Damaged') AS damaged,
-                               COUNT(*) FILTER (WHERE cond = 'Broken')  AS broken
-                        FROM phones;
+                        SELECT COUNT(*)                                   AS total,
+                               COUNT(ps.pid)                              AS stored,
+                               COUNT(*) - COUNT(ps.pid)                   AS not_stored,
+                               COUNT(*) FILTER (WHERE p.cond = 'Damaged') AS damaged,
+                               COUNT(*) FILTER (WHERE p.cond = 'Broken')  AS broken
+                        FROM phones p
+                                 LEFT JOIN phone_storage ps ON p.pid = ps.pid AND ps.retrieved_at IS NULL;
                         """)
             result = cur.fetchone()
             columns = [desc[0] for desc in cur.description]
@@ -187,7 +282,9 @@ def phone_stats():
     finally:
         put_conn(conn)
 
+
 def reassign_phone(pid, new_sid):
+    """Reassign a phone to a different student"""
     if not pid or not new_sid:
         return {"status": "error", "message": "pid and new_sid are required"}, 400
 
@@ -200,10 +297,17 @@ def reassign_phone(pid, new_sid):
             if not result:
                 return {"status": "error", "message": "Phone not found for the given pid"}, 404
             old_sid = result[0]
+
+            # Verify new student exists
+            cur.execute("SELECT sid FROM students WHERE sid = %s", (new_sid,))
+            if not cur.fetchone():
+                return {"status": "error", "message": "New student not found"}, 404
+
             cur.execute("UPDATE phones SET sid = %s WHERE pid = %s RETURNING pid;", (new_sid, pid))
             conn.commit()
+
             logger.info(f"Reassigned phone {pid} from {old_sid} to {new_sid}")
-            return {"status": "success", "data": {"pid": pid, "new_owner": new_sid}}, 200
+            return {"status": "success", "data": {"pid": pid, "old_owner": old_sid, "new_owner": new_sid}}, 200
     except Exception as e:
         conn.rollback()
         logger.error(f"Failed to reassign phone {pid}: {str(e)}")
@@ -212,25 +316,29 @@ def reassign_phone(pid, new_sid):
         put_conn(conn)
 
 
-def phones_near_lid(x, y, limit=10):
+def get_phone_storage_history(pid):
+    """Get storage history for a phone"""
     conn = get_conn()
     try:
         with conn.cursor() as cur:
-            cur.execute("""
-                        SELECT phones.*, l.x, l.y, sqrt(power(l.x - %s, 2) + power(l.y - %s, 2)) AS distance
-                        FROM phones
-                                 JOIN locations l ON phones.lid = l.lid
-                        ORDER BY distance
-                        LIMIT %s;
-                        """, (x, y, limit))
+            cur.execute("SELECT * FROM get_phone_storage_history(%s)", (pid,))
             rows = cur.fetchall()
             columns = [desc[0] for desc in cur.description]
-            return {"status": "success", "data": [dict(zip(columns, r)) for r in rows]}, 200
+
+            data = [dict(zip(columns, r)) for r in rows]
+            for item in data:
+                if item.get('stored_at'):
+                    item['stored_at'] = item['stored_at'].isoformat()
+                if item.get('retrieved_at'):
+                    item['retrieved_at'] = item['retrieved_at'].isoformat()
+                if item.get('duration'):
+                    item['duration'] = str(item['duration'])
+
+            return {"status": "success", "data": data}, 200
     finally:
         put_conn(conn)
 
 
-# ------------------ NEW: Slot Monitoring Integration ------------------
 def get_phone_with_slot_status(pid):
     """Get phone details with current slot monitoring status"""
     conn = get_conn()
@@ -238,6 +346,8 @@ def get_phone_with_slot_status(pid):
         with conn.cursor() as cur:
             cur.execute("""
                         SELECT p.*,
+                               ps.lid,
+                               ps.stored_at,
                                l.x,
                                l.y,
                                s.binary_state,
@@ -245,7 +355,8 @@ def get_phone_with_slot_status(pid):
                                s.last_distance,
                                s.last_change_ts
                         FROM phones p
-                                 JOIN locations l ON p.lid = l.lid
+                                 LEFT JOIN phone_storage ps ON p.pid = ps.pid AND ps.retrieved_at IS NULL
+                                 LEFT JOIN locations l ON ps.lid = l.lid
                                  LEFT JOIN slot_current_state s ON l.lid = s.lid
                         WHERE p.pid = %s;
                         """, (pid,))
@@ -255,7 +366,19 @@ def get_phone_with_slot_status(pid):
                 return {"status": "error", "message": "Phone not found"}, 404
 
             columns = [desc[0] for desc in cur.description]
-            return {"status": "success", "data": dict(zip(columns, row))}, 200
+            data = dict(zip(columns, row))
+
+            # Convert datetime fields
+            if data.get('stored_at'):
+                data['stored_at'] = data['stored_at'].isoformat()
+            if data.get('last_change_ts'):
+                data['last_change_ts'] = data['last_change_ts'].isoformat()
+            if data.get('created_at'):
+                data['created_at'] = data['created_at'].isoformat()
+            if data.get('modified_at'):
+                data['modified_at'] = data['modified_at'].isoformat()
+
+            return {"status": "success", "data": data}, 200
     finally:
         put_conn(conn)
 
@@ -278,37 +401,12 @@ def get_phone_operation_history(pid, limit=50):
             rows = cur.fetchall()
             columns = [desc[0] for desc in cur.description]
 
+            data = [dict(zip(columns, r)) for r in rows]
+            for item in data:
+                if item.get('timestamp'):
+                    item['timestamp'] = item['timestamp'].isoformat()
+
             logger.debug(f"Retrieved {len(rows)} operations for phone {pid}")
-            return {"status": "success", "data": [dict(zip(columns, r)) for r in rows]}, 200
-    finally:
-        put_conn(conn)
-
-
-def get_problem_slots():
-    """Get all slots with monitoring issues"""
-    conn = get_conn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT * FROM v_problem_slots;")
-            rows = cur.fetchall()
-            columns = [desc[0] for desc in cur.description]
-
-            if rows:
-                logger.warning(f"Found {len(rows)} problem slots")
-
-            return {"status": "success", "data": [dict(zip(columns, r)) for r in rows]}, 200
-    finally:
-        put_conn(conn)
-
-
-def get_active_phones_with_slots():
-    """Get all stored phones with their slot monitoring status"""
-    conn = get_conn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT * FROM v_active_phones_with_slots;")
-            rows = cur.fetchall()
-            columns = [desc[0] for desc in cur.description]
-            return {"status": "success", "data": [dict(zip(columns, r)) for r in rows]}, 200
+            return {"status": "success", "data": data}, 200
     finally:
         put_conn(conn)

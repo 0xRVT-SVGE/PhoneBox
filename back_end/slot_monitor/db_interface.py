@@ -3,7 +3,7 @@
 # ============================================================
 
 import logging
-from typing import Dict, Optional, List
+from typing import Dict, Optional
 import numpy as np
 from back_end.Database.db import get_conn, put_conn
 from .slot_embed import embedding_to_bytes, embedding_from_bytes
@@ -21,10 +21,10 @@ class SlotMonitorDB:
         try:
             with conn.cursor() as cur:
                 cur.execute("""
-                            SELECT lid, embedding
-                            FROM slot_baselines
-                            WHERE embedding IS NOT NULL;
-                            """)
+                    SELECT lid, embedding
+                    FROM slot_baselines
+                    WHERE embedding IS NOT NULL AND embedding != '\\x00'::bytea;
+                """)
                 rows = cur.fetchall()
 
                 baselines = {}
@@ -45,22 +45,15 @@ class SlotMonitorDB:
             emb_bytes = embedding_to_bytes(embedding)
 
             with conn.cursor() as cur:
-                # Update baseline
+                # Update baseline (no history table anymore)
                 cur.execute("""
-                            INSERT INTO slot_baselines (lid, embedding, needs_recalculation, updated_at)
-                            VALUES (%s, %s, FALSE, NOW()) ON CONFLICT (lid)
-                    DO
-                            UPDATE SET
-                                embedding = EXCLUDED.embedding,
-                                needs_recalculation = FALSE,
-                                updated_at = NOW();
-                            """, (lid, emb_bytes))
-
-                # Log to history
-                cur.execute("""
-                            INSERT INTO slot_baseline_history (lid, embedding, reason, created_at)
-                            VALUES (%s, %s, %s, NOW());
-                            """, (lid, emb_bytes, reason))
+                    INSERT INTO slot_baselines (lid, embedding, needs_recalculation, updated_at)
+                    VALUES (%s, %s, FALSE, NOW())
+                    ON CONFLICT (lid) DO UPDATE SET
+                        embedding = EXCLUDED.embedding,
+                        needs_recalculation = FALSE,
+                        updated_at = NOW();
+                """, (lid, emb_bytes))
 
                 conn.commit()
                 logger.info(f"Saved baseline for slot {lid} (reason: {reason})")
@@ -77,22 +70,20 @@ class SlotMonitorDB:
         try:
             with conn.cursor() as cur:
                 cur.execute("""
-                            INSERT INTO slot_current_state
-                            (lid, binary_state, tx_state, last_distance, last_change_ts, updated_at)
-                            VALUES (%s, %s, %s, %s, NOW(), NOW()) ON CONFLICT (lid)
-                    DO
-                            UPDATE SET
-                                binary_state = EXCLUDED.binary_state,
-                                tx_state = EXCLUDED.tx_state,
-                                last_distance = EXCLUDED.last_distance,
-                                last_change_ts = CASE
-                                WHEN slot_current_state.binary_state != EXCLUDED.binary_state
-                                THEN NOW()
-                                ELSE slot_current_state.last_change_ts
-                            END
-                            ,
+                    INSERT INTO slot_current_state
+                        (lid, binary_state, tx_state, last_distance, last_change_ts, updated_at)
+                    VALUES (%s, %s, %s, %s, NOW(), NOW())
+                    ON CONFLICT (lid) DO UPDATE SET
+                        binary_state = EXCLUDED.binary_state,
+                        tx_state = EXCLUDED.tx_state,
+                        last_distance = EXCLUDED.last_distance,
+                        last_change_ts = CASE
+                            WHEN slot_current_state.binary_state != EXCLUDED.binary_state
+                            THEN NOW()
+                            ELSE slot_current_state.last_change_ts
+                        END,
                         updated_at = NOW();
-                            """, (lid, binary_state, tx_state, distance))
+                """, (lid, binary_state, tx_state, distance))
                 conn.commit()
         except Exception as e:
             conn.rollback()
@@ -107,9 +98,9 @@ class SlotMonitorDB:
         try:
             with conn.cursor() as cur:
                 cur.execute("""
-                            INSERT INTO slot_events (lid, binary_state, tx_state, distance, timestamp)
-                            VALUES (%s, %s, %s, %s, NOW());
-                            """, (lid, binary_state, tx_state, distance))
+                    INSERT INTO slot_events (lid, binary_state, tx_state, distance, timestamp)
+                    VALUES (%s, %s, %s, %s, NOW());
+                """, (lid, binary_state, tx_state, distance))
                 conn.commit()
         except Exception as e:
             conn.rollback()
@@ -125,10 +116,10 @@ class SlotMonitorDB:
         try:
             with conn.cursor() as cur:
                 cur.execute("""
-                            INSERT INTO slot_anomalies
-                                (lid, anomaly_type, distance, severity, description, timestamp)
-                            VALUES (%s, %s, %s, %s, %s, NOW());
-                            """, (lid, anomaly_type, distance, severity, description))
+                    INSERT INTO slot_anomalies
+                        (lid, anomaly_type, distance, severity, description, timestamp)
+                    VALUES (%s, %s, %s, %s, %s, NOW());
+                """, (lid, anomaly_type, distance, severity, description))
                 conn.commit()
                 logger.warning(f"Anomaly logged: slot {lid}, type {anomaly_type}, severity {severity}")
         except Exception as e:
@@ -144,10 +135,10 @@ class SlotMonitorDB:
         try:
             with conn.cursor() as cur:
                 cur.execute("""
-                            INSERT INTO slot_system_errors
-                                (error_type, error_count, severity, description, timestamp)
-                            VALUES (%s, 1, %s, %s, NOW());
-                            """, (error_type, severity, description))
+                    INSERT INTO slot_system_errors
+                        (error_type, error_count, severity, description, timestamp)
+                    VALUES (%s, 1, %s, %s, NOW());
+                """, (error_type, severity, description))
                 conn.commit()
         except Exception as e:
             conn.rollback()

@@ -5,9 +5,9 @@
 import time
 import threading
 import logging
-from typing import Dict
+from typing import Dict, Optional
 import numpy as np
-
+from back_end.Database.db import get_conn, put_conn
 from .slot_camera import SlotCamera
 from .slot_embed import compute_embedding, embedding_distance
 from .slot_state import SlotState, BinaryState, TxState
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 # Thresholds (can be configured)
 T_MINOR = 0.15  # OK threshold
-T_MAJOR = 0.35  # ALTERED/EMPTY threshold
+T_MAJOR = 0.35  # ALTERED threshold
 T_RECALC = 0.12  # Baseline recalculation threshold
 CHECK_INTERVAL = 5.0  # Check every 5 seconds
 
@@ -50,12 +50,13 @@ class SlotMonitor(threading.Thread):
             if lid in baseline_map:
                 self.slots[lid] = SlotState(lid, baseline_map[lid])
             else:
-                logger.warning(f"No baseline for slot {lid}, will create on first check")
+                logger.warning(f"No baseline for slot {lid}, will skip until initialized")
 
         self.running = True
         self.paused_slots = set()  # Slots to skip (during deposit/withdrawal)
         self.last_check_time = 0
         self.check_counter = 0
+        self.frame_count = 0  # Track frames for uptime calculation
 
         logger.info(f"SlotMonitor initialized with {len(self.slots)} slots, grace_period={grace_period}s")
 
@@ -66,8 +67,13 @@ class SlotMonitor(threading.Thread):
 
     def resume_slot(self, lid: int, new_baseline: Optional[np.ndarray] = None):
         """Resume monitoring for a slot, optionally with new baseline"""
-        if new_baseline is not None and lid in self.slots:
-            self.slots[lid].reset_baseline(new_baseline)
+        if new_baseline is not None:
+            if lid in self.slots:
+                self.slots[lid].reset_baseline(new_baseline)
+            else:
+                # Create new slot state if doesn't exist
+                self.slots[lid] = SlotState(lid, new_baseline)
+
             self.db.save_baseline(lid, new_baseline, 'manual_recalibration')
 
         self.paused_slots.discard(lid)
@@ -81,7 +87,7 @@ class SlotMonitor(threading.Thread):
             try:
                 current_time = time.time()
 
-                # Check every 5 seconds
+                # Check every CHECK_INTERVAL seconds
                 if current_time - self.last_check_time < CHECK_INTERVAL:
                     time.sleep(0.5)
                     continue
@@ -99,6 +105,8 @@ class SlotMonitor(threading.Thread):
                     )
                     time.sleep(1.0)
                     continue
+
+                self.frame_count += 1
 
                 # Extract ROIs
                 try:
@@ -118,6 +126,10 @@ class SlotMonitor(threading.Thread):
                     if lid in self.paused_slots:
                         continue
 
+                    # Skip if no baseline yet
+                    if lid not in self.slots:
+                        continue
+
                     try:
                         self._process_slot(lid, roi)
                     except Exception as e:
@@ -135,10 +147,6 @@ class SlotMonitor(threading.Thread):
 
     def _process_slot(self, lid: int, roi: np.ndarray):
         """Process a single slot"""
-        # Skip if no slot state (no baseline)
-        if lid not in self.slots:
-            return
-
         slot = self.slots[lid]
 
         # Compute embedding
@@ -146,6 +154,11 @@ class SlotMonitor(threading.Thread):
             emb = compute_embedding(roi)
         except Exception as e:
             logger.error(f"Failed to compute embedding for slot {lid}: {e}")
+            self.db.log_system_error(
+                'baseline_calc_failure',
+                f"Slot {lid}: {str(e)}",
+                'warning'
+            )
             return
 
         # Calculate distance
@@ -181,18 +194,24 @@ class SlotMonitor(threading.Thread):
                 anomaly_type,
                 dist,
                 severity,
-                f"Slot in {binary_str}/{tx_str} state for >{self.grace_period}s"
+                f"Slot in {binary_str}/{tx_str} state for >{self.grace_period}s (dist={dist:.3f})"
             )
 
     def _log_system_health(self):
         """Log system health metrics"""
+        if not self.slots:
+            return
+
         total = len(self.slots)
         altered = sum(1 for s in self.slots.values() if s.binary_state == BinaryState.ALTERED)
         occupied = sum(1 for s in self.slots.values() if s.tx_state == TxState.OCCUPIED)
 
         distances = [s.last_dist for s in self.slots.values()]
-        avg_dist = np.mean(distances) if distances else 0.0
-        max_dist = np.max(distances) if distances else 0.0
+        avg_dist = float(np.mean(distances)) if distances else 0.0
+        max_dist = float(np.max(distances)) if distances else 0.0
+
+        # Estimate uptime in seconds (assuming ~30fps when active)
+        uptime_seconds = int(self.frame_count / 30) if self.frame_count > 0 else 0
 
         conn = get_conn()
         try:
@@ -202,7 +221,7 @@ class SlotMonitor(threading.Thread):
                             (active_slots, altered_slots, avg_distance, max_distance,
                              camera_uptime_seconds, timestamp)
                             VALUES (%s, %s, %s, %s, %s, NOW());
-                            """, (total, altered, avg_dist, max_dist, int(self.camera.frame_count / 30)))
+                            """, (total, altered, avg_dist, max_dist, uptime_seconds))
                 conn.commit()
         except Exception as e:
             logger.error(f"Failed to log system health: {e}")

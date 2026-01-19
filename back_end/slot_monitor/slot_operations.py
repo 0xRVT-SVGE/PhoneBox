@@ -1,5 +1,5 @@
 # ============================================================
-# FILE: back_end/slot_monitor/slot_operations.py (NEW - CONSOLIDATED)
+# FILE: back_end/Database/API/slot_operations.py
 # ============================================================
 
 import logging
@@ -31,22 +31,13 @@ class SlotOperations:
     # PHONE DEPOSIT/WITHDRAWAL OPERATIONS
     # ============================================================
 
-    def deposit_phone(self, pid: str, wait_for_stable: float = 3.0) -> Dict:
+    def deposit_phone(self, pid: str, lid: int, wait_for_stable: float = 3.0) -> Dict:
         """
-        Deposit a phone into storage.
-
-        Workflow:
-        1. Scan QR code (pid) to identify phone
-        2. Verify phone is NOT currently stored
-        3. Get the phone's assigned location (lid)
-        4. Pause monitoring for that slot
-        5. Wait for hand to leave and slot to stabilize
-        6. Capture new baseline
-        7. Update phone status to stored
-        8. Resume monitoring
+        Deposit a phone into a specific storage location.
 
         Args:
-            pid: Phone UUID (from QR code scan)
+            pid: Phone UUID
+            lid: Location ID where phone will be stored
             wait_for_stable: Seconds to wait after placing phone
 
         Returns:
@@ -58,21 +49,33 @@ class SlotOperations:
         conn = get_conn()
         try:
             with conn.cursor() as cur:
-                # Get phone info
+                # Verify phone exists and is not already stored
                 cur.execute("""
-                    SELECT sid, is_stored, lid
-                    FROM phones
-                    WHERE pid = %s
-                """, (pid,))
+                            SELECT p.sid, ps.pid
+                            FROM phones p
+                                     LEFT JOIN phone_storage ps ON p.pid = ps.pid AND ps.retrieved_at IS NULL
+                            WHERE p.pid = %s
+                            """, (pid,))
                 result = cur.fetchone()
 
                 if not result:
                     return {"status": "error", "message": "Phone not found"}
 
-                sid, is_stored, lid = result
+                sid, existing_storage = result
 
-                if is_stored:
+                if existing_storage:
                     return {"status": "error", "message": "Phone already in storage"}
+
+                # Verify location exists and is empty
+                cur.execute("""
+                            SELECT ps.pid
+                            FROM phone_storage ps
+                            WHERE ps.lid = %s
+                              AND ps.retrieved_at IS NULL
+                            """, (lid,))
+
+                if cur.fetchone():
+                    return {"status": "error", "message": f"Location {lid} already occupied"}
 
                 logger.info(f"Starting deposit: phone {pid} at location {lid}")
 
@@ -89,13 +92,14 @@ class SlotOperations:
                     self.monitor.resume_slot(lid)
                     return {"status": "error", "message": "Failed to capture baseline"}
 
-                # Update phone status to stored (triggers DB baseline update)
+                # Create storage record (triggers DB state update via trigger)
                 cur.execute("""
-                    UPDATE phones
-                    SET is_stored = TRUE
-                    WHERE pid = %s;
-                """, (pid,))
+                            INSERT INTO phone_storage (pid, lid, stored_at)
+                            VALUES (%s, %s, NOW())
+                            RETURNING id;
+                            """, (pid, lid))
 
+                storage_id = cur.fetchone()[0]
                 conn.commit()
 
                 # Resume monitoring with new baseline
@@ -107,7 +111,8 @@ class SlotOperations:
                     "message": "Phone deposited successfully",
                     "pid": pid,
                     "lid": lid,
-                    "student": sid
+                    "student": sid,
+                    "storage_id": storage_id
                 }
 
         except Exception as e:
@@ -123,18 +128,8 @@ class SlotOperations:
         """
         Withdraw a phone from storage.
 
-        Workflow:
-        1. Take phone from slot
-        2. Scan QR code (pid) to identify phone
-        3. Verify phone IS currently stored
-        4. Pause monitoring for that slot
-        5. Wait for hand to leave
-        6. Capture new baseline (empty slot)
-        7. Update phone status to not stored
-        8. Resume monitoring
-
         Args:
-            pid: Phone UUID (from QR code scan)
+            pid: Phone UUID
             wait_for_removal: Seconds to wait after removing phone
 
         Returns:
@@ -146,21 +141,20 @@ class SlotOperations:
         conn = get_conn()
         try:
             with conn.cursor() as cur:
-                # Get phone info
+                # Get active storage record
                 cur.execute("""
-                    SELECT sid, is_stored, lid
-                    FROM phones
-                    WHERE pid = %s
-                """, (pid,))
+                            SELECT ps.id, ps.lid, p.sid
+                            FROM phone_storage ps
+                                     JOIN phones p ON ps.pid = p.pid
+                            WHERE ps.pid = %s
+                              AND ps.retrieved_at IS NULL
+                            """, (pid,))
                 result = cur.fetchone()
 
                 if not result:
-                    return {"status": "error", "message": "Phone not found"}
-
-                sid, is_stored, lid = result
-
-                if not is_stored:
                     return {"status": "error", "message": "Phone not in storage"}
+
+                storage_id, lid, sid = result
 
                 logger.info(f"Starting withdrawal: phone {pid} from location {lid}")
 
@@ -177,12 +171,12 @@ class SlotOperations:
                     self.monitor.resume_slot(lid)
                     return {"status": "error", "message": "Failed to capture baseline"}
 
-                # Update phone status to not stored
+                # Update storage record (triggers DB state update via trigger)
                 cur.execute("""
-                    UPDATE phones
-                    SET is_stored = FALSE
-                    WHERE pid = %s;
-                """, (pid,))
+                            UPDATE phone_storage
+                            SET retrieved_at = NOW()
+                            WHERE id = %s;
+                            """, (storage_id,))
 
                 conn.commit()
 
@@ -195,7 +189,8 @@ class SlotOperations:
                     "message": "Phone withdrawn successfully",
                     "pid": pid,
                     "lid": lid,
-                    "student": sid
+                    "student": sid,
+                    "storage_id": storage_id
                 }
 
         except Exception as e:
@@ -209,7 +204,7 @@ class SlotOperations:
 
     def _capture_slot_baseline(self, lid: int) -> Optional[np.ndarray]:
         """Capture baseline embedding for a slot"""
-        from back_end.slot_monitor.slot_embed import compute_embedding
+        from .slot_embed import compute_embedding
 
         try:
             # Capture multiple frames and average for stability
@@ -252,10 +247,17 @@ class SlotOperations:
         try:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT binary_state, tx_state, last_distance, last_change_ts
-                    FROM slot_current_state
-                    WHERE lid = %s;
-                """, (lid,))
+                            SELECT s.binary_state,
+                                   s.tx_state,
+                                   s.last_distance,
+                                   s.last_change_ts,
+                                   ps.pid,
+                                   p.imei
+                            FROM slot_current_state s
+                                     LEFT JOIN phone_storage ps ON s.lid = ps.lid AND ps.retrieved_at IS NULL
+                                     LEFT JOIN phones p ON ps.pid = p.pid
+                            WHERE s.lid = %s;
+                            """, (lid,))
                 row = cur.fetchone()
 
                 if not row:
@@ -267,7 +269,9 @@ class SlotOperations:
                     "binary_state": row[0],
                     "tx_state": row[1],
                     "distance": float(row[2]),
-                    "last_change": row[3].isoformat()
+                    "last_change": row[3].isoformat(),
+                    "phone_pid": row[4],
+                    "phone_imei": row[5]
                 }
         except Exception as e:
             logger.error(f"Error fetching slot {lid} status: {e}")
@@ -281,15 +285,23 @@ class SlotOperations:
         try:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT 
-                        l.lid, l.x, l.y,
-                        s.binary_state, s.tx_state, s.last_distance, s.last_change_ts,
-                        p.imei, p.model, p.sid
-                    FROM locations l
-                    LEFT JOIN slot_current_state s ON l.lid = s.lid
-                    LEFT JOIN phones p ON l.lid = p.lid AND p.is_stored = TRUE
-                    ORDER BY l.lid;
-                """)
+                            SELECT l.lid,
+                                   l.x,
+                                   l.y,
+                                   s.binary_state,
+                                   s.tx_state,
+                                   s.last_distance,
+                                   s.last_change_ts,
+                                   ps.pid,
+                                   p.imei,
+                                   p.model,
+                                   p.sid
+                            FROM locations l
+                                     LEFT JOIN slot_current_state s ON l.lid = s.lid
+                                     LEFT JOIN phone_storage ps ON l.lid = ps.lid AND ps.retrieved_at IS NULL
+                                     LEFT JOIN phones p ON ps.pid = p.pid
+                            ORDER BY l.lid;
+                            """)
                 rows = cur.fetchall()
                 columns = [desc[0] for desc in cur.description]
 
@@ -345,21 +357,21 @@ class SlotOperations:
             with conn.cursor() as cur:
                 if severity:
                     cur.execute("""
-                        SELECT id, lid, anomaly_type, distance, severity, description, timestamp
-                        FROM slot_anomalies
-                        WHERE timestamp > NOW() - INTERVAL '%s hours'
-                          AND severity = %s
-                        ORDER BY timestamp DESC
-                        LIMIT 100;
-                    """, (hours, severity))
+                                SELECT id, lid, anomaly_type, distance, severity, description, timestamp
+                                FROM slot_anomalies
+                                WHERE timestamp > NOW() - INTERVAL '%s hours'
+                                  AND severity = %s
+                                ORDER BY timestamp DESC
+                                LIMIT 100;
+                                """, (hours, severity))
                 else:
                     cur.execute("""
-                        SELECT id, lid, anomaly_type, distance, severity, description, timestamp
-                        FROM slot_anomalies
-                        WHERE timestamp > NOW() - INTERVAL '%s hours'
-                        ORDER BY timestamp DESC
-                        LIMIT 100;
-                    """, (hours,))
+                                SELECT id, lid, anomaly_type, distance, severity, description, timestamp
+                                FROM slot_anomalies
+                                WHERE timestamp > NOW() - INTERVAL '%s hours'
+                                ORDER BY timestamp DESC
+                                LIMIT 100;
+                                """, (hours,))
 
                 rows = cur.fetchall()
                 columns = [desc[0] for desc in cur.description]
@@ -412,6 +424,28 @@ class SlotOperations:
                 }
         except Exception as e:
             logger.error(f"Error fetching system health: {e}")
+            return {"status": "error", "message": str(e)}
+        finally:
+            put_conn(conn)
+
+    def get_empty_locations(self, limit: int = 10) -> Dict:
+        """Get available empty locations"""
+        conn = get_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM get_available_locations(%s);", (limit,))
+                rows = cur.fetchall()
+                columns = [desc[0] for desc in cur.description]
+
+                locations = [dict(zip(columns, row)) for row in rows]
+
+                return {
+                    "status": "success",
+                    "locations": locations,
+                    "count": len(locations)
+                }
+        except Exception as e:
+            logger.error(f"Error fetching empty locations: {e}")
             return {"status": "error", "message": str(e)}
         finally:
             put_conn(conn)

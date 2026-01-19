@@ -20,7 +20,7 @@ def visualize_camera_grid(cam_index=1, rows=3, cols=4, spacing=10):
         '+' - Increase spacing
         '-' - Decrease spacing
     """
-    cap = cv2.VideoCapture(cam_index, cv2.CAP_DSHOW)
+    cap = cv2.VideoCapture(cam_index)
 
     if not cap.isOpened():
         print(f"Error: Cannot open camera {cam_index}")
@@ -115,7 +115,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--camera",
         type=int,
-        default=1,
+        default=0,
         help="Camera device index (default: 1)"
     )
     parser.add_argument(

@@ -12,7 +12,7 @@ CREATE TABLE students (
 );
 
 -- ============================
--- LOCATIONS TABLE
+-- LOCATIONS TABLE (STATIC GRID)
 -- ============================
 CREATE TABLE locations (
     lid SERIAL PRIMARY KEY,
@@ -21,23 +21,12 @@ CREATE TABLE locations (
     UNIQUE (x, y)
 );
 
-CREATE TABLE location_cursor (
-    id BOOLEAN PRIMARY KEY DEFAULT TRUE,
-    x SMALLINT NOT NULL DEFAULT 1,
-    y SMALLINT NOT NULL DEFAULT 1,
-    CONSTRAINT check_single_row CHECK (id = TRUE)
-);
-
-INSERT INTO location_cursor DEFAULT VALUES;
-
-CREATE TABLE free_locations (
-    lid INT PRIMARY KEY
-        REFERENCES locations(lid)
-        ON DELETE CASCADE
-);
+-- Pre-populate grid (run once during setup)
+-- INSERT INTO locations (x, y)
+-- SELECT x, y FROM generate_series(1, 10) x, generate_series(1, 10) y;
 
 -- ============================
--- PHONES TABLE
+-- PHONES TABLE (NO lid COLUMN)
 -- ============================
 CREATE TABLE phones (
     pid UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -51,20 +40,52 @@ CREATE TABLE phones (
         CHECK (cond IN ('New', 'Good', 'Fair', 'Damaged', 'Broken') OR cond IS NULL),
     admin_note TEXT,
     stud_note TEXT,
-    is_stored BOOLEAN DEFAULT FALSE,
-    lid INT UNIQUE NOT NULL
-        REFERENCES locations(lid)
-        ON DELETE CASCADE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     modified_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Optimized indexes - removed redundant ones
+-- Indexes
 CREATE INDEX idx_phones_sid ON phones(sid);
-CREATE INDEX idx_phones_stored ON phones(is_stored) WHERE is_stored = TRUE;
+CREATE INDEX idx_phones_imei ON phones(imei);
 
 -- ============================
--- PHONE OPERATION LOGS
+-- PHONE STORAGE (JUNCTION TABLE)
+-- ============================
+CREATE TABLE phone_storage (
+    id SERIAL PRIMARY KEY,
+    pid UUID NOT NULL
+        REFERENCES phones(pid)
+        ON DELETE CASCADE,
+    lid INT NOT NULL
+        REFERENCES locations(lid)
+        ON DELETE CASCADE,
+    stored_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+    retrieved_at TIMESTAMPTZ,
+
+    -- Constraint: retrieved_at must be after stored_at
+    CONSTRAINT check_retrieval_time CHECK (
+        retrieved_at IS NULL OR retrieved_at > stored_at
+    )
+);
+
+-- CRITICAL: Only one active storage per phone
+CREATE UNIQUE INDEX uniq_active_phone_storage
+ON phone_storage(pid)
+WHERE retrieved_at IS NULL;
+
+-- CRITICAL: Only one phone per location at a time
+CREATE UNIQUE INDEX uniq_active_location
+ON phone_storage(lid)
+WHERE retrieved_at IS NULL;
+
+-- Performance indexes
+CREATE INDEX idx_phone_storage_pid ON phone_storage(pid);
+CREATE INDEX idx_phone_storage_lid ON phone_storage(lid);
+CREATE INDEX idx_phone_storage_active ON phone_storage(pid, lid) WHERE retrieved_at IS NULL;
+CREATE INDEX idx_phone_storage_retrieved ON phone_storage(retrieved_at) WHERE retrieved_at IS NOT NULL;
+
+-- ============================
+-- PHONE OPERATION LOGS (1 MONTH RETENTION)
 -- ============================
 CREATE TABLE phone_operations (
     id SERIAL PRIMARY KEY,
@@ -72,30 +93,31 @@ CREATE TABLE phone_operations (
         REFERENCES phones(pid)
         ON DELETE CASCADE,
     operation VARCHAR(20) NOT NULL
-        CHECK (operation IN ('INSERT', 'UPDATE', 'DELETE', 'STORE', 'RETRIEVE')),
+        CHECK (operation IN ('INSERT', 'UPDATE', 'DELETE')),
     old_data JSONB,
     new_data JSONB,
-    changed_by VARCHAR(100),
-    timestamp TIMESTAMPTZ DEFAULT NOW()
+    timestamp TIMESTAMPTZ DEFAULT NOW() NOT NULL
 );
 
--- Optimized: Single composite index instead of two
 CREATE INDEX idx_phone_operations_pid_ts ON phone_operations(pid, timestamp DESC);
+CREATE INDEX idx_phone_operations_ts ON phone_operations(timestamp DESC);
 
 -- ============================
 -- SLOT MONITORING TABLES
 -- ============================
 
+-- Baseline embeddings for each location
 CREATE TABLE slot_baselines (
     lid INT PRIMARY KEY
         REFERENCES locations(lid)
         ON DELETE CASCADE,
     embedding BYTEA NOT NULL,
-    needs_recalculation BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
+    needs_recalculation BOOLEAN DEFAULT FALSE NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
 );
 
+-- Current real-time state of each slot
 CREATE TABLE slot_current_state (
     lid INT PRIMARY KEY
         REFERENCES locations(lid)
@@ -108,9 +130,10 @@ CREATE TABLE slot_current_state (
         DEFAULT 'UNKNOWN',
     last_distance FLOAT NOT NULL DEFAULT 0.0,
     last_change_ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
+    updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
 );
 
+-- Historical state change events (1 MONTH RETENTION)
 CREATE TABLE slot_events (
     id SERIAL PRIMARY KEY,
     lid INT NOT NULL
@@ -122,17 +145,7 @@ CREATE TABLE slot_events (
     timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE slot_baseline_history (
-    id SERIAL PRIMARY KEY,
-    lid INT NOT NULL
-        REFERENCES locations(lid)
-        ON DELETE CASCADE,
-    embedding BYTEA NOT NULL,
-    reason VARCHAR(50) NOT NULL
-        CHECK (reason IN ('startup', 'phone_stored', 'phone_retrieved', 'manual_recalibration', 'auto_adapt')),
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
+-- Anomaly detection log (1 MONTH RETENTION)
 CREATE TABLE slot_anomalies (
     id SERIAL PRIMARY KEY,
     lid INT NOT NULL
@@ -141,12 +154,13 @@ CREATE TABLE slot_anomalies (
     anomaly_type VARCHAR(50) NOT NULL
         CHECK (anomaly_type IN ('high_distance', 'rapid_changes', 'stuck_altered', 'unexpected_empty', 'unexpected_occupied')),
     distance FLOAT,
-    severity VARCHAR(20) DEFAULT 'medium'
+    severity VARCHAR(20) DEFAULT 'medium' NOT NULL
         CHECK (severity IN ('low', 'medium', 'high', 'critical')),
     description TEXT,
     timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- System health metrics (1 MONTH RETENTION)
 CREATE TABLE slot_system_health (
     id SERIAL PRIMARY KEY,
     active_slots INT NOT NULL,
@@ -157,29 +171,31 @@ CREATE TABLE slot_system_health (
     timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- System errors/warnings (1 MONTH RETENTION)
 CREATE TABLE slot_system_errors (
     id SERIAL PRIMARY KEY,
     error_type VARCHAR(50) NOT NULL
         CHECK (error_type IN ('camera_read_failure', 'db_connection_failure', 'baseline_calc_failure', 'roi_extraction_failure')),
     error_count INT NOT NULL DEFAULT 1,
-    severity VARCHAR(20) DEFAULT 'error'
+    severity VARCHAR(20) DEFAULT 'error' NOT NULL
         CHECK (severity IN ('warning', 'error', 'critical')),
     description TEXT,
     timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Optimized indexes
+-- Indexes for slot monitoring (optimized for 1-month queries)
 CREATE INDEX idx_slot_events_lid_ts ON slot_events(lid, timestamp DESC);
-CREATE INDEX idx_slot_baseline_history_lid ON slot_baseline_history(lid, created_at DESC);
+CREATE INDEX idx_slot_events_ts ON slot_events(timestamp DESC);
 CREATE INDEX idx_slot_anomalies_lid_ts ON slot_anomalies(lid, timestamp DESC);
-CREATE INDEX idx_slot_anomalies_critical ON slot_anomalies(timestamp DESC) WHERE severity IN ('high', 'critical');
-CREATE INDEX idx_slot_system_health_ts ON slot_system_health(timestamp DESC) LIMIT 1000;
-CREATE INDEX idx_slot_system_errors_recent ON slot_system_errors(timestamp DESC) LIMIT 500;
-CREATE INDEX idx_slot_baselines_needs_recalc ON slot_baselines(lid) WHERE needs_recalculation = TRUE;
-CREATE INDEX idx_slot_current_altered ON slot_current_state(lid) WHERE binary_state = 'ALTERED';
+CREATE INDEX idx_slot_anomalies_ts ON slot_anomalies(timestamp DESC);
+CREATE INDEX idx_slot_anomalies_severity ON slot_anomalies(severity, timestamp DESC) WHERE severity IN ('high', 'critical');
+CREATE INDEX idx_slot_system_health_ts ON slot_system_health(timestamp DESC);
+CREATE INDEX idx_slot_system_errors_ts ON slot_system_errors(timestamp DESC);
+CREATE INDEX idx_slot_baselines_needs_recalc ON slot_baselines(needs_recalculation) WHERE needs_recalculation = TRUE;
+CREATE INDEX idx_slot_current_state_altered ON slot_current_state(binary_state) WHERE binary_state = 'ALTERED';
 
 -- ============================
--- OPTIMIZED FUNCTIONS
+-- FUNCTIONS
 -- ============================
 
 CREATE OR REPLACE FUNCTION update_modified_column()
@@ -190,58 +206,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE OR REPLACE FUNCTION assign_or_create_location(x_max INT, y_max INT)
-RETURNS INT AS $$
-DECLARE
-    reuse_lid INT;
-    cur_x SMALLINT;
-    cur_y SMALLINT;
-    new_lid INT;
-BEGIN
-    SELECT lid INTO reuse_lid
-    FROM free_locations
-    ORDER BY lid
-    LIMIT 1
-    FOR UPDATE SKIP LOCKED;
-
-    IF reuse_lid IS NOT NULL THEN
-        DELETE FROM free_locations WHERE lid = reuse_lid;
-        RETURN reuse_lid;
-    END IF;
-
-    SELECT x, y INTO cur_x, cur_y FROM location_cursor FOR UPDATE;
-
-    INSERT INTO locations (x, y) VALUES (cur_x, cur_y) RETURNING lid INTO new_lid;
-
-    cur_y := cur_y + 1;
-    IF cur_y > y_max THEN
-        cur_y := 1;
-        cur_x := cur_x + 1;
-    END IF;
-
-    IF cur_x > x_max THEN
-        RAISE EXCEPTION 'No more available locations';
-    END IF;
-
-    UPDATE location_cursor SET x = cur_x, y = cur_y;
-    RETURN new_lid;
-END;
-$$ LANGUAGE plpgsql;
-
--- ============================
--- FUNCTION: Auto-assign phone location
--- ============================
-CREATE OR REPLACE FUNCTION auto_assign_location()
-RETURNS TRIGGER AS $$
-BEGIN
-    NEW.lid := assign_or_create_location(500, 500);
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
--- ============================
--- FUNCTION: Generate the UUID
--- ============================
 CREATE OR REPLACE FUNCTION phones_defaults()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -252,20 +216,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- ============================
--- FUNCTION: Mark free location
--- ============================
-CREATE OR REPLACE FUNCTION phones_after_delete()
-RETURNS TRIGGER AS $$
-BEGIN
-    INSERT INTO free_locations (lid) VALUES (OLD.lid) ON CONFLICT DO NOTHING;
-    RETURN OLD;
-END;
-$$ LANGUAGE plpgsql;
-
--- ============================
--- FUNCTION: Log phone operations
--- ============================
 CREATE OR REPLACE FUNCTION log_phone_operation()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -278,14 +228,7 @@ BEGIN
         old_json := NULL;
         new_json := to_jsonb(NEW);
     ELSIF TG_OP = 'UPDATE' THEN
-        -- Detect specific operation types
-        IF OLD.is_stored = FALSE AND NEW.is_stored = TRUE THEN
-            op_type := 'STORE';
-        ELSIF OLD.is_stored = TRUE AND NEW.is_stored = FALSE THEN
-            op_type := 'RETRIEVE';
-        ELSE
-            op_type := 'UPDATE';
-        END IF;
+        op_type := 'UPDATE';
         old_json := to_jsonb(OLD);
         new_json := to_jsonb(NEW);
     ELSIF TG_OP = 'DELETE' THEN
@@ -311,250 +254,321 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- ============================
--- FUNCTION: Initialize slot monitoring for new phone
--- ============================
-CREATE OR REPLACE FUNCTION initialize_slot_monitoring()
+CREATE OR REPLACE FUNCTION handle_phone_storage()
 RETURNS TRIGGER AS $$
 BEGIN
-    IF NEW.is_stored = TRUE THEN
-        INSERT INTO slot_current_state (lid, binary_state, tx_state, last_distance, last_change_ts)
-        VALUES (NEW.lid, 'OK', 'OCCUPIED', 0.0, NOW())
-        ON CONFLICT (lid) DO UPDATE SET tx_state = 'OCCUPIED', last_change_ts = NOW();
+    -- Initialize slot state if it doesn't exist
+    INSERT INTO slot_current_state (lid, binary_state, tx_state, last_distance, last_change_ts)
+    VALUES (NEW.lid, 'OK', 'OCCUPIED', 0.0, NOW())
+    ON CONFLICT (lid) DO UPDATE SET
+        tx_state = 'OCCUPIED',
+        binary_state = 'OK',
+        last_change_ts = NOW();
 
-        INSERT INTO slot_baselines (lid, embedding, needs_recalculation)
-        VALUES (NEW.lid, '\x00'::bytea, TRUE)
-        ON CONFLICT (lid) DO UPDATE SET needs_recalculation = TRUE;
-    END IF;
+    -- Mark baseline for recalculation
+    INSERT INTO slot_baselines (lid, embedding, needs_recalculation)
+    VALUES (NEW.lid, '\x00'::bytea, TRUE)
+    ON CONFLICT (lid) DO UPDATE SET
+        needs_recalculation = TRUE,
+        updated_at = NOW();
+
+    -- Log event
+    INSERT INTO slot_events (lid, binary_state, tx_state, distance, timestamp)
+    VALUES (NEW.lid, 'OK', 'OCCUPIED', 0.0, NOW());
+
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
--- Optimized: Batch operations, removed redundant event logging
-CREATE OR REPLACE FUNCTION handle_storage_state_change()
+CREATE OR REPLACE FUNCTION handle_phone_retrieval()
 RETURNS TRIGGER AS $$
 BEGIN
-    IF OLD.is_stored != NEW.is_stored THEN
-        UPDATE slot_baselines SET needs_recalculation = TRUE, updated_at = NOW() WHERE lid = NEW.lid;
+    -- Update slot state to EMPTY
+    UPDATE slot_current_state
+    SET tx_state = 'EMPTY',
+        binary_state = 'OK',
+        last_change_ts = NOW()
+    WHERE lid = NEW.lid;
 
-        IF NEW.is_stored = TRUE THEN
-            UPDATE slot_current_state
-            SET tx_state = 'OCCUPIED', binary_state = 'OK', last_change_ts = NOW()
-            WHERE lid = NEW.lid;
-        ELSE
-            UPDATE slot_current_state
-            SET tx_state = 'EMPTY', binary_state = 'OK', last_change_ts = NOW()
-            WHERE lid = NEW.lid;
-        END IF;
+    -- Mark baseline for recalculation
+    UPDATE slot_baselines
+    SET needs_recalculation = TRUE,
+        updated_at = NOW()
+    WHERE lid = NEW.lid;
 
-        -- Single event log per state change
-        INSERT INTO slot_events (lid, binary_state, tx_state, distance, timestamp)
-        VALUES (NEW.lid, 'OK', CASE WHEN NEW.is_stored THEN 'OCCUPIED' ELSE 'EMPTY' END, 0.0, NOW());
-    END IF;
+    -- Log event
+    INSERT INTO slot_events (lid, binary_state, tx_state, distance, timestamp)
+    VALUES (NEW.lid, 'OK', 'EMPTY', 0.0, NOW());
+
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
--- ============================
--- FUNCTION: Cleanup slot monitoring on phone removal
--- ============================
-CREATE OR REPLACE FUNCTION cleanup_slot_monitoring()
-RETURNS TRIGGER AS $$
-BEGIN
-    IF OLD.is_stored = TRUE THEN
-        UPDATE slot_current_state
-        SET tx_state = 'EMPTY', binary_state = 'OK', last_change_ts = NOW()
-        WHERE lid = OLD.lid;
-
-        UPDATE slot_baselines SET needs_recalculation = TRUE WHERE lid = OLD.lid;
-
-        INSERT INTO slot_events (lid, binary_state, tx_state, distance, timestamp)
-        VALUES (OLD.lid, 'OK', 'EMPTY', 0.0, NOW());
-    END IF;
-    RETURN OLD;
-END;
-$$ LANGUAGE plpgsql;
-
--- ============================
--- FUNCTION: Cleanup old logs (1 month retention)
--- ============================
 CREATE OR REPLACE FUNCTION cleanup_old_logs()
 RETURNS TABLE(
     deleted_phone_ops INT,
+    deleted_storage INT,
     deleted_events INT,
     deleted_anomalies INT,
     deleted_health INT,
     deleted_errors INT
 ) AS $$
 DECLARE
-    cutoff_1month TIMESTAMPTZ := NOW() - INTERVAL '1 month';
-    cutoff_3months TIMESTAMPTZ := NOW() - INTERVAL '3 months';
+    d_phone_ops INT;
+    d_storage INT;
+    d_events INT;
+    d_anomalies INT;
+    d_health INT;
+    d_errors INT;
 BEGIN
-    WITH deleted AS (DELETE FROM phone_operations WHERE timestamp < cutoff_1month RETURNING 1)
-    SELECT COUNT(*)::INT INTO deleted_phone_ops FROM deleted;
+    -- Delete phone operations older than 1 month
+    DELETE FROM phone_operations
+    WHERE timestamp < NOW() - INTERVAL '1 month';
+    GET DIAGNOSTICS d_phone_ops = ROW_COUNT;
 
-    WITH deleted AS (DELETE FROM slot_events WHERE timestamp < cutoff_1month RETURNING 1)
-    SELECT COUNT(*)::INT INTO deleted_events FROM deleted;
+    -- Delete phone storage records older than 1 month (already retrieved)
+    DELETE FROM phone_storage
+    WHERE retrieved_at IS NOT NULL
+      AND retrieved_at < NOW() - INTERVAL '1 month';
+    GET DIAGNOSTICS d_storage = ROW_COUNT;
 
-    WITH deleted AS (DELETE FROM slot_anomalies WHERE timestamp < cutoff_1month RETURNING 1)
-    SELECT COUNT(*)::INT INTO deleted_anomalies FROM deleted;
+    -- Delete slot events older than 1 month
+    DELETE FROM slot_events
+    WHERE timestamp < NOW() - INTERVAL '1 month';
+    GET DIAGNOSTICS d_events = ROW_COUNT;
 
-    WITH deleted AS (DELETE FROM slot_system_health WHERE timestamp < cutoff_1month RETURNING 1)
-    SELECT COUNT(*)::INT INTO deleted_health FROM deleted;
+    -- Delete anomalies older than 1 month
+    DELETE FROM slot_anomalies
+    WHERE timestamp < NOW() - INTERVAL '1 month';
+    GET DIAGNOSTICS d_anomalies = ROW_COUNT;
 
-    WITH deleted AS (DELETE FROM slot_system_errors WHERE timestamp < cutoff_1month RETURNING 1)
-    SELECT COUNT(*)::INT INTO deleted_errors FROM deleted;
+    -- Delete health metrics older than 1 month
+    DELETE FROM slot_system_health
+    WHERE timestamp < NOW() - INTERVAL '1 month';
+    GET DIAGNOSTICS d_health = ROW_COUNT;
 
-    DELETE FROM slot_baseline_history WHERE created_at < cutoff_3months;
+    -- Delete system errors older than 1 month
+    DELETE FROM slot_system_errors
+    WHERE timestamp < NOW() - INTERVAL '1 month';
+    GET DIAGNOSTICS d_errors = ROW_COUNT;
+
+    deleted_phone_ops := d_phone_ops;
+    deleted_storage := d_storage;
+    deleted_events := d_events;
+    deleted_anomalies := d_anomalies;
+    deleted_health := d_health;
+    deleted_errors := d_errors;
 
     RETURN NEXT;
+
+    RAISE NOTICE 'Cleanup complete: % phone ops, % storage records, % events, % anomalies, % health, % errors deleted',
+        d_phone_ops, d_storage, d_events, d_anomalies, d_health, d_errors;
 END;
 $$ LANGUAGE plpgsql;
 
 -- ============================
--- TRIGGERS (Optimized Order)
+-- TRIGGERS
 -- ============================
 
--- PHONE TRIGGERS
 CREATE TRIGGER phones_before_insert_defaults
-BEFORE INSERT ON phones FOR EACH ROW EXECUTE FUNCTION phones_defaults();
-
-CREATE TRIGGER phones_before_insert_location
-BEFORE INSERT ON phones FOR EACH ROW EXECUTE FUNCTION auto_assign_location();
+BEFORE INSERT ON phones
+FOR EACH ROW
+EXECUTE FUNCTION phones_defaults();
 
 CREATE TRIGGER phones_before_update
-BEFORE UPDATE ON phones FOR EACH ROW EXECUTE FUNCTION update_modified_column();
-
-CREATE TRIGGER phones_after_insert_slot_init
-AFTER INSERT ON phones FOR EACH ROW EXECUTE FUNCTION initialize_slot_monitoring();
-
-CREATE TRIGGER phones_after_update_storage_state
-AFTER UPDATE ON phones FOR EACH ROW
-WHEN (OLD.is_stored IS DISTINCT FROM NEW.is_stored)
-EXECUTE FUNCTION handle_storage_state_change();
-
-CREATE TRIGGER phones_before_delete_cleanup_slot
-BEFORE DELETE ON phones FOR EACH ROW EXECUTE FUNCTION cleanup_slot_monitoring();
-
-CREATE TRIGGER phones_after_delete_trigger
-AFTER DELETE ON phones FOR EACH ROW EXECUTE FUNCTION phones_after_delete();
+BEFORE UPDATE ON phones
+FOR EACH ROW
+EXECUTE FUNCTION update_modified_column();
 
 CREATE TRIGGER phones_after_all_operations
-AFTER INSERT OR UPDATE OR DELETE ON phones FOR EACH ROW EXECUTE FUNCTION log_phone_operation();
+AFTER INSERT OR UPDATE OR DELETE ON phones
+FOR EACH ROW
+EXECUTE FUNCTION log_phone_operation();
 
--- STUDENT TRIGGERS
 CREATE TRIGGER students_before_update
-BEFORE UPDATE ON students FOR EACH ROW EXECUTE FUNCTION update_modified_column();
+BEFORE UPDATE ON students
+FOR EACH ROW
+EXECUTE FUNCTION update_modified_column();
 
--- SLOT MONITORING TRIGGERS
 CREATE TRIGGER slot_baselines_before_update
-BEFORE UPDATE ON slot_baselines FOR EACH ROW EXECUTE FUNCTION update_modified_column();
+BEFORE UPDATE ON slot_baselines
+FOR EACH ROW
+EXECUTE FUNCTION update_modified_column();
 
 CREATE TRIGGER slot_state_before_update
-BEFORE UPDATE ON slot_current_state FOR EACH ROW EXECUTE FUNCTION update_modified_column();
+BEFORE UPDATE ON slot_current_state
+FOR EACH ROW
+EXECUTE FUNCTION update_modified_column();
+
+CREATE TRIGGER phone_storage_after_insert
+AFTER INSERT ON phone_storage
+FOR EACH ROW
+WHEN (NEW.retrieved_at IS NULL)
+EXECUTE FUNCTION handle_phone_storage();
+
+CREATE TRIGGER phone_storage_after_update
+AFTER UPDATE ON phone_storage
+FOR EACH ROW
+WHEN (OLD.retrieved_at IS NULL AND NEW.retrieved_at IS NOT NULL)
+EXECUTE FUNCTION handle_phone_retrieval();
 
 -- ============================
--- MATERIALIZED VIEWS (for heavy queries)
+-- VIEWS
 -- ============================
 
-CREATE MATERIALIZED VIEW mv_system_health_current AS
+CREATE OR REPLACE VIEW v_active_phone_storage AS
+SELECT
+    ps.id,
+    ps.pid,
+    ps.lid,
+    ps.stored_at,
+    p.sid,
+    p.imei,
+    p.model,
+    p.cond,
+    l.x,
+    l.y,
+    s.binary_state,
+    s.tx_state,
+    s.last_distance,
+    s.last_change_ts,
+    st.first_name,
+    st.last_name
+FROM phone_storage ps
+JOIN phones p ON ps.pid = p.pid
+JOIN locations l ON ps.lid = l.lid
+LEFT JOIN slot_current_state s ON l.lid = s.lid
+JOIN students st ON p.sid = st.sid
+WHERE ps.retrieved_at IS NULL;
+
+CREATE OR REPLACE VIEW v_empty_locations AS
+SELECT
+    l.lid,
+    l.x,
+    l.y,
+    s.binary_state,
+    s.tx_state,
+    s.last_change_ts
+FROM locations l
+LEFT JOIN phone_storage ps ON l.lid = ps.lid AND ps.retrieved_at IS NULL
+LEFT JOIN slot_current_state s ON l.lid = s.lid
+WHERE ps.lid IS NULL;
+
+CREATE OR REPLACE VIEW v_problem_slots AS
+SELECT
+    l.lid,
+    l.x,
+    l.y,
+    s.binary_state,
+    s.tx_state,
+    s.last_distance,
+    s.last_change_ts,
+    p.imei,
+    p.model,
+    COUNT(a.id) as anomaly_count_24h
+FROM locations l
+JOIN slot_current_state s ON l.lid = s.lid
+LEFT JOIN phone_storage ps ON l.lid = ps.lid AND ps.retrieved_at IS NULL
+LEFT JOIN phones p ON ps.pid = p.pid
+LEFT JOIN slot_anomalies a ON l.lid = a.lid AND a.timestamp > NOW() - INTERVAL '24 hours'
+WHERE s.binary_state = 'ALTERED'
+   OR EXISTS (
+       SELECT 1 FROM slot_anomalies sa
+       WHERE sa.lid = l.lid
+       AND sa.timestamp > NOW() - INTERVAL '1 hour'
+       AND sa.severity IN ('high', 'critical')
+   )
+GROUP BY l.lid, l.x, l.y, s.binary_state, s.tx_state, s.last_distance, s.last_change_ts, p.imei, p.model;
+
+CREATE OR REPLACE VIEW v_system_health_current AS
 SELECT
     COUNT(*) as total_slots,
     COUNT(*) FILTER (WHERE s.tx_state = 'OCCUPIED') as occupied_slots,
     COUNT(*) FILTER (WHERE s.tx_state = 'EMPTY') as empty_slots,
+    COUNT(*) FILTER (WHERE s.tx_state = 'UNKNOWN') as unknown_slots,
     COUNT(*) FILTER (WHERE s.binary_state = 'ALTERED') as altered_slots,
     AVG(s.last_distance) as avg_distance,
     MAX(s.last_distance) as max_distance,
-    NOW() as last_updated
+    (SELECT COUNT(*) FROM slot_anomalies WHERE timestamp > NOW() - INTERVAL '1 hour') as anomalies_last_hour,
+    (SELECT COUNT(*) FROM slot_system_errors WHERE timestamp > NOW() - INTERVAL '1 hour') as errors_last_hour
 FROM slot_current_state s
-JOIN locations l ON s.lid = l.lid
-JOIN phones p ON l.lid = p.lid
-WHERE p.is_stored = TRUE;
-
-CREATE INDEX ON mv_system_health_current(last_updated);
-
--- Refresh materialized view (call this every 5-10 minutes from your monitoring thread)
--- REFRESH MATERIALIZED VIEW CONCURRENTLY mv_system_health_current;
+JOIN locations l ON s.lid = l.lid;
 
 -- ============================
--- LIGHTWEIGHT VIEWS
+-- HELPER FUNCTIONS
 -- ============================
 
-CREATE OR REPLACE VIEW v_active_phones_with_slots AS
-SELECT
-    p.pid, p.sid, p.imei, p.model, p.cond, p.is_stored,
-    l.lid, l.x, l.y,
-    s.binary_state, s.tx_state, s.last_distance, s.last_change_ts,
-    st.first_name, st.last_name
-FROM phones p
-JOIN locations l ON p.lid = l.lid
-LEFT JOIN slot_current_state s ON l.lid = s.lid
-JOIN students st ON p.sid = st.sid
-WHERE p.is_stored = TRUE;
-
-CREATE OR REPLACE VIEW v_problem_slots AS
-SELECT
-    l.lid, l.x, l.y,
-    s.binary_state, s.tx_state, s.last_distance, s.last_change_ts,
-    p.imei, p.model
-FROM locations l
-JOIN slot_current_state s ON l.lid = s.lid
-LEFT JOIN phones p ON l.lid = p.lid AND p.is_stored = TRUE
-WHERE s.binary_state = 'ALTERED'
-   OR EXISTS (
-       SELECT 1 FROM slot_anomalies sa
-       WHERE sa.lid = l.lid AND sa.timestamp > NOW() - INTERVAL '1 hour'
-       AND sa.severity IN ('high', 'critical')
-   );
-
--- ============================
--- HELPER FUNCTIONS (Optimized)
--- ============================
-
-CREATE OR REPLACE FUNCTION get_phone_history(phone_imei VARCHAR)
+CREATE OR REPLACE FUNCTION get_phone_storage_history(phone_pid UUID, months_back INT DEFAULT 1)
 RETURNS TABLE(
-    operation VARCHAR,
-    timestamp TIMESTAMPTZ,
-    student_name TEXT,
-    old_stored BOOLEAN,
-    new_stored BOOLEAN
+    storage_id INT,
+    lid INT,
+    x SMALLINT,
+    y SMALLINT,
+    stored_at TIMESTAMPTZ,
+    retrieved_at TIMESTAMPTZ,
+    duration INTERVAL
 ) AS $$
 BEGIN
     RETURN QUERY
     SELECT
-        po.operation,
-        po.timestamp,
-        st.first_name || ' ' || st.last_name,
-        (po.old_data->>'is_stored')::BOOLEAN,
-        (po.new_data->>'is_stored')::BOOLEAN
-    FROM phone_operations po
-    JOIN phones p ON po.pid = p.pid
-    LEFT JOIN students st ON p.sid = st.sid
-    WHERE p.imei = phone_imei
-    ORDER BY po.timestamp DESC
-    LIMIT 100;
+        ps.id,
+        ps.lid,
+        l.x,
+        l.y,
+        ps.stored_at,
+        ps.retrieved_at,
+        COALESCE(ps.retrieved_at, NOW()) - ps.stored_at as duration
+    FROM phone_storage ps
+    JOIN locations l ON ps.lid = l.lid
+    WHERE ps.pid = phone_pid
+      AND ps.stored_at > NOW() - (months_back || ' months')::INTERVAL
+    ORDER BY ps.stored_at DESC;
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE OR REPLACE FUNCTION get_slot_anomalies(slot_lid INT, hours_back INT DEFAULT 24)
+CREATE OR REPLACE FUNCTION get_location_usage_history(location_lid INT, months_back INT DEFAULT 1)
 RETURNS TABLE(
-    anomaly_type VARCHAR,
-    count BIGINT,
-    last_occurrence TIMESTAMPTZ,
-    max_severity VARCHAR
+    phone_pid UUID,
+    imei VARCHAR,
+    student_sid CHAR,
+    stored_at TIMESTAMPTZ,
+    retrieved_at TIMESTAMPTZ,
+    duration INTERVAL
 ) AS $$
 BEGIN
     RETURN QUERY
     SELECT
-        a.anomaly_type,
-        COUNT(*),
-        MAX(a.timestamp),
-        MAX(a.severity)
-    FROM slot_anomalies a
-    WHERE a.lid = slot_lid
-      AND a.timestamp > NOW() - (hours_back || ' hours')::INTERVAL
-    GROUP BY a.anomaly_type
-    ORDER BY COUNT(*) DESC;
+        ps.pid,
+        p.imei,
+        p.sid,
+        ps.stored_at,
+        ps.retrieved_at,
+        COALESCE(ps.retrieved_at, NOW()) - ps.stored_at as duration
+    FROM phone_storage ps
+    JOIN phones p ON ps.pid = p.pid
+    WHERE ps.lid = location_lid
+      AND ps.stored_at > NOW() - (months_back || ' months')::INTERVAL
+    ORDER BY ps.stored_at DESC;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION get_available_locations(limit_count INT DEFAULT 10)
+RETURNS TABLE(
+    lid INT,
+    x SMALLINT,
+    y SMALLINT
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        l.lid,
+        l.x,
+        l.y
+    FROM locations l
+    LEFT JOIN phone_storage ps ON l.lid = ps.lid AND ps.retrieved_at IS NULL
+    WHERE ps.lid IS NULL
+    ORDER BY l.lid
+    LIMIT limit_count;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -562,8 +576,19 @@ $$ LANGUAGE plpgsql;
 -- COMMENTS
 -- ============================
 
-COMMENT ON TABLE phones IS 'Stores information about student phones';
-COMMENT ON TABLE phone_operations IS 'Lightweight audit log - only essential fields';
-COMMENT ON TABLE slot_baselines IS 'Visual baseline embeddings for each slot';
-COMMENT ON TABLE slot_current_state IS 'Current monitoring state - frequently updated';
-COMMENT ON MATERIALIZED VIEW mv_system_health_current IS 'Cached system health - refresh every 5-10 minutes';
+COMMENT ON TABLE phones IS 'Student phones (not tied to locations)';
+COMMENT ON TABLE locations IS 'Static storage grid';
+COMMENT ON TABLE phone_storage IS 'Junction table tracking which phone is in which location (1 month retention after retrieval)';
+COMMENT ON TABLE phone_operations IS 'Audit log of phone operations (1 month retention)';
+COMMENT ON TABLE slot_baselines IS 'Visual baseline embeddings for each storage slot';
+COMMENT ON TABLE slot_current_state IS 'Current real-time monitoring state of each slot';
+COMMENT ON TABLE slot_events IS 'State change event log (1 month retention)';
+COMMENT ON TABLE slot_anomalies IS 'Anomaly detection log (1 month retention)';
+
+COMMENT ON COLUMN phone_storage.retrieved_at IS 'NULL = currently stored, NOT NULL = retrieved';
+COMMENT ON COLUMN slot_baselines.needs_recalculation IS 'Flag set when baseline should be recalculated';
+COMMENT ON COLUMN slot_current_state.binary_state IS 'OK = matches baseline, ALTERED = significant change detected';
+COMMENT ON COLUMN slot_current_state.tx_state IS 'OCCUPIED = phone present, EMPTY = no phone, UNKNOWN = indeterminate';
+
+COMMENT ON INDEX uniq_active_phone_storage IS 'Prevents depositing same phone twice without retrieval';
+COMMENT ON INDEX uniq_active_location IS 'Prevents putting two phones in same location';
