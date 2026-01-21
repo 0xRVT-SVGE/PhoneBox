@@ -1,235 +1,292 @@
-# ============================================================
-# FILE: server/slot_monitor/slot_monitor_main.py
-# ============================================================
-
 import time
 import threading
 import logging
-from typing import Dict, Optional
 import numpy as np
-from back_end.Database.db import get_conn, put_conn
-from .slot_camera import SlotCamera
-from .slot_embed import compute_embedding, embedding_distance
-from .slot_state import SlotState, BinaryState, TxState
-from .db_interface import SlotMonitorDB
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Dict
+
+from .alarm_controller import AlarmController
+from .slot_state import SlotState
 
 logger = logging.getLogger(__name__)
 
-# Thresholds (can be configured)
-T_MINOR = 0.15  # OK threshold
-T_MAJOR = 0.35  # ALTERED threshold
-T_RECALC = 0.12  # Baseline recalculation threshold
-CHECK_INTERVAL = 5.0  # Check every 5 seconds
 
+class SlotMonitor:
+    """
+    Main monitoring thread with parallel slot processing.
+    No DB logic in processing loop - only state management.
+    """
 
-class SlotMonitor(threading.Thread):
-    """Main slot monitoring thread"""
+    def __init__(
+            self,
+            db,
+            embedder,
+            mismatch_threshold: float = 0.35,
+            recalc_threshold: float = 0.12,
+            grace_period: float = 15.0,
+            interval: float = 5.0,
+            workers: int = 4,
+    ):
+        self.db = db
+        self.embedder = embedder
 
-    def __init__(self, cam_index: int, rois: Dict[int, tuple], grace_period: float = 15.0):
-        """
-        Initialize slot monitor.
-
-        Args:
-            cam_index: Camera device index
-            rois: Dictionary mapping lid -> (x, y, w, h)
-            grace_period: Seconds to wait before alarming on UNKNOWN state
-        """
-        super().__init__(daemon=True)
-        self.name = "SlotMonitor"
-
-        self.camera = SlotCamera(cam_index, rois)
-        self.db = SlotMonitorDB()
+        # Thresholds
+        self.mismatch_threshold = mismatch_threshold
+        self.recalc_threshold = recalc_threshold
         self.grace_period = grace_period
+        self.interval = interval
 
-        # Load baselines from database
-        baseline_map = self.db.load_baselines()
-
-        # Initialize slot states
+        # Runtime state
         self.slots: Dict[int, SlotState] = {}
-        for lid in rois.keys():
-            if lid in baseline_map:
-                self.slots[lid] = SlotState(lid, baseline_map[lid])
-            else:
-                logger.warning(f"No baseline for slot {lid}, will skip until initialized")
+        self.alarm = AlarmController()
+        self.paused_slots: set[int] = set()
 
-        self.running = True
-        self.paused_slots = set()  # Slots to skip (during deposit/withdrawal)
-        self.last_check_time = 0
-        self.check_counter = 0
-        self.frame_count = 0  # Track frames for uptime calculation
+        # Threading
+        self._stop_event = threading.Event()
+        self.executor = ThreadPoolExecutor(max_workers=workers)
 
-        logger.info(f"SlotMonitor initialized with {len(self.slots)} slots, grace_period={grace_period}s")
+        # Metrics
+        self.cycle_count = 0
+        self.last_cycle_time = 0.0
+
+        logger.info(
+            f"SlotMonitor initialized: "
+            f"mismatch={mismatch_threshold}, "
+            f"recalc={recalc_threshold}, "
+            f"grace={grace_period}s, "
+            f"interval={interval}s, "
+            f"workers={workers}"
+        )
+
+    # ------------------------------------------------------------
+    # LIFECYCLE
+    # ------------------------------------------------------------
+
+    def initialize(self):
+        """Initialize monitoring from DB state."""
+        occupied = self.db.fetch_occupied_slots()
+        # Returns: [(lid, pid, baseline_embed)]
+
+        initialized = 0
+        mismatches = 0
+
+        for lid, pid, baseline in occupied:
+            try:
+                realtime = self.embedder.compute(lid)
+                dist = float(np.linalg.norm(realtime - baseline))
+
+                if dist > self.mismatch_threshold:
+                    logger.warning(
+                        f"Slot {lid} has mismatch on init: dist={dist:.3f} "
+                        f"(threshold={self.mismatch_threshold})"
+                    )
+                    mismatches += 1
+
+                state = SlotState(
+                    lid=lid,
+                    baseline_emb=realtime,
+                    is_occupied=True,
+                )
+
+                self.slots[lid] = state
+                self.db.save_baseline(lid, realtime)
+                initialized += 1
+
+            except Exception as e:
+                logger.error(f"Failed to initialize slot {lid}: {e}")
+
+        logger.info(
+            f"Initialized {initialized} occupied slots "
+            f"({mismatches} with initial mismatches)"
+        )
+
+    def start(self):
+        """Start monitoring thread."""
+        t = threading.Thread(target=self._scheduler_loop, daemon=True, name="SlotMonitor")
+        t.start()
+        logger.info("SlotMonitor thread started")
+
+    def stop(self):
+        """Stop monitoring thread."""
+        logger.info("Stopping SlotMonitor...")
+        self._stop_event.set()
+        self.executor.shutdown(wait=False)
+        logger.info("SlotMonitor stopped")
+
+    # ------------------------------------------------------------
+    # DEPOSIT / WITHDRAWAL OPERATIONS
+    # ------------------------------------------------------------
 
     def pause_slot(self, lid: int):
-        """Temporarily pause monitoring for a slot (during operations)"""
+        """Pause monitoring for a slot during operations."""
         self.paused_slots.add(lid)
         logger.info(f"Slot {lid} monitoring paused")
 
-    def resume_slot(self, lid: int, new_baseline: Optional[np.ndarray] = None):
-        """Resume monitoring for a slot, optionally with new baseline"""
-        if new_baseline is not None:
-            if lid in self.slots:
-                self.slots[lid].reset_baseline(new_baseline)
-            else:
-                # Create new slot state if doesn't exist
-                self.slots[lid] = SlotState(lid, new_baseline)
-
-            self.db.save_baseline(lid, new_baseline, 'manual_recalibration')
-
+    def resume_slot(self, lid: int, baseline: np.ndarray, is_occupied: bool):
+        """Resume monitoring with new baseline after operation."""
         self.paused_slots.discard(lid)
-        logger.info(f"Slot {lid} monitoring resumed")
 
-    def run(self):
-        """Main monitoring loop"""
-        logger.info("SlotMonitor thread started")
+        if lid in self.slots:
+            self.slots[lid].reset_baseline(baseline)
+            self.slots[lid].is_occupied = is_occupied
+        else:
+            self.slots[lid] = SlotState(
+                lid=lid,
+                baseline_emb=baseline,
+                is_occupied=is_occupied,
+            )
 
-        while self.running:
+        self.db.save_baseline(lid, baseline)
+        logger.info(f"Slot {lid} monitoring resumed (occupied={is_occupied})")
+
+    def remove_slot(self, lid: int):
+        """Remove slot from monitoring (phone withdrawn, slot now empty)."""
+        if lid in self.slots:
+            del self.slots[lid]
+            logger.info(f"Slot {lid} removed from monitoring")
+
+    # ------------------------------------------------------------
+    # MONITORING LOOP
+    # ------------------------------------------------------------
+
+    def _scheduler_loop(self):
+        """Main monitoring loop with fixed interval."""
+        next_tick = time.time()
+
+        while not self._stop_event.is_set():
+            cycle_start = time.time()
+
             try:
-                current_time = time.time()
-
-                # Check every CHECK_INTERVAL seconds
-                if current_time - self.last_check_time < CHECK_INTERVAL:
-                    time.sleep(0.5)
-                    continue
-
-                self.last_check_time = current_time
-                self.check_counter += 1
-
-                # Read frame
-                frame = self.camera.read()
-                if frame is None:
-                    self.db.log_system_error(
-                        'camera_read_failure',
-                        'Failed to read frame from camera',
-                        'error'
-                    )
-                    time.sleep(1.0)
-                    continue
-
-                self.frame_count += 1
-
-                # Extract ROIs
-                try:
-                    rois = self.camera.extract_rois(frame)
-                except Exception as e:
-                    logger.error(f"ROI extraction failed: {e}")
-                    self.db.log_system_error(
-                        'roi_extraction_failure',
-                        str(e),
-                        'error'
-                    )
-                    continue
-
-                # Process each slot
-                for lid, roi in rois.items():
-                    # Skip paused slots
-                    if lid in self.paused_slots:
-                        continue
-
-                    # Skip if no baseline yet
-                    if lid not in self.slots:
-                        continue
-
-                    try:
-                        self._process_slot(lid, roi)
-                    except Exception as e:
-                        logger.error(f"Error processing slot {lid}: {e}")
-
-                # Log health metrics every 10 checks (~50 seconds)
-                if self.check_counter % 10 == 0:
-                    self._log_system_health()
-
+                self._run_monitor_cycle()
             except Exception as e:
-                logger.error(f"Error in monitoring loop: {e}", exc_info=True)
-                time.sleep(1.0)
+                logger.error(f"Error in monitor cycle: {e}", exc_info=True)
 
-        logger.info("SlotMonitor thread stopped")
+            # Fixed interval scheduling
+            next_tick += self.interval
+            sleep_time = max(0, next_tick - time.time())
 
-    def _process_slot(self, lid: int, roi: np.ndarray):
-        """Process a single slot"""
-        slot = self.slots[lid]
+            self.last_cycle_time = time.time() - cycle_start
+            self.cycle_count += 1
 
-        # Compute embedding
-        try:
-            emb = compute_embedding(roi)
-        except Exception as e:
-            logger.error(f"Failed to compute embedding for slot {lid}: {e}")
-            self.db.log_system_error(
-                'baseline_calc_failure',
-                f"Slot {lid}: {str(e)}",
-                'warning'
-            )
-            return
+            if sleep_time > 0:
+                time.sleep(sleep_time)
 
-        # Calculate distance
-        dist = embedding_distance(emb, slot.baseline)
-
-        # Update state
-        result = slot.update(dist, T_MINOR, T_MAJOR, T_RECALC)
-
-        # Update database
-        binary_str = 'OK' if slot.binary_state == BinaryState.OK else 'ALTERED'
-        tx_str = slot.tx_state.name
-
-        self.db.update_slot_state(lid, binary_str, tx_str, dist)
-
-        # Log state changes
-        if result['state_changed']:
-            self.db.log_slot_event(lid, binary_str, tx_str, dist)
-            logger.info(f"Slot {lid} state changed: {binary_str}/{tx_str} (dist={dist:.3f})")
-
-        # Recalculate baseline if needed (gradual lighting changes)
-        if result['needs_recalc']:
-            logger.info(f"Recalculating baseline for slot {lid} (gradual change detected)")
-            self.slots[lid].reset_baseline(emb)
-            self.db.save_baseline(lid, emb, 'auto_adapt')
-
-        # Check for alarms
-        if slot.should_alarm(self.grace_period):
-            anomaly_type = 'unexpected_empty' if slot.binary_state == BinaryState.ALTERED else 'stuck_altered'
-            severity = 'high' if slot.binary_state == BinaryState.ALTERED else 'medium'
-
-            self.db.log_anomaly(
-                lid,
-                anomaly_type,
-                dist,
-                severity,
-                f"Slot in {binary_str}/{tx_str} state for >{self.grace_period}s (dist={dist:.3f})"
-            )
-
-    def _log_system_health(self):
-        """Log system health metrics"""
+    def _run_monitor_cycle(self):
+        """Run one monitoring cycle across all slots in parallel."""
         if not self.slots:
             return
 
+        futures = []
+
+        # Submit all slot computations
+        for lid, state in self.slots.items():
+            if lid in self.paused_slots:
+                continue
+
+            futures.append(
+                self.executor.submit(
+                    self._compute_slot,
+                    lid,
+                    state.baseline,
+                )
+            )
+
+        # Process results as they complete
+        for future in as_completed(futures):
+            try:
+                lid, realtime, dist = future.result()
+                self._apply_result(lid, realtime, dist)
+            except Exception as e:
+                logger.error(f"Error processing slot result: {e}")
+
+        # Log health metrics periodically
+        if self.cycle_count % 10 == 0:
+            self._log_health()
+
+    def _compute_slot(self, lid: int, baseline: np.ndarray):
+        """Compute embedding and distance for a single slot."""
+        realtime = self.embedder.compute(lid)
+        dist = float(np.linalg.norm(realtime - baseline))
+        return lid, realtime, dist
+
+    def _apply_result(self, lid: int, realtime: np.ndarray, dist: float):
+        """Apply monitoring result to slot state."""
+        if lid not in self.slots:
+            return
+
+        state = self.slots[lid]
+
+        # Update state
+        result = state.update_distance(
+            dist=dist,
+            mismatch_threshold=self.mismatch_threshold,
+            recalc_threshold=self.recalc_threshold,
+            grace_period=self.grace_period,
+        )
+
+        # Get phone ID from DB
+        pid = self.db.get_pid_for_lid(lid)
+
+        # Handle alarm triggers
+        if result["trigger_alarm"]:
+            self.alarm.trigger(pid, lid)
+            logger.critical(
+                f"MISMATCH ALARM: LID={lid}, PID={pid}, dist={dist:.3f}"
+            )
+
+        if result["stop_alarm"]:
+            any_left = any(s.mismatch for s in self.slots.values())
+            self.alarm.stop_if_clear(any_left)
+
+        # Handle baseline adaptation
+        if result["needs_recalc"]:
+            logger.info(f"Adapting baseline for slot {lid} (dist={dist:.3f})")
+            state.adapt_baseline(realtime)
+            self.db.save_baseline(lid, realtime)
+
+    # ------------------------------------------------------------
+    # ADMIN INTERFACE
+    # ------------------------------------------------------------
+
+    def admin_login(self, password: str) -> dict:
+        """Admin authentication to view alarm details."""
+        return self.alarm.authenticate_admin(password)
+
+    def admin_clear_alarms(self):
+        """Admin override to clear all alarms."""
+        self.alarm.clear()
+        logger.info("Admin cleared all alarms")
+
+    # ------------------------------------------------------------
+    # METRICS
+    # ------------------------------------------------------------
+
+    def _log_health(self):
+        """Log system health metrics."""
         total = len(self.slots)
-        altered = sum(1 for s in self.slots.values() if s.binary_state == BinaryState.ALTERED)
-        occupied = sum(1 for s in self.slots.values() if s.tx_state == TxState.OCCUPIED)
+        mismatched = sum(1 for s in self.slots.values() if s.mismatch)
 
         distances = [s.last_dist for s in self.slots.values()]
         avg_dist = float(np.mean(distances)) if distances else 0.0
         max_dist = float(np.max(distances)) if distances else 0.0
 
-        # Estimate uptime in seconds (assuming ~30fps when active)
-        uptime_seconds = int(self.frame_count / 30) if self.frame_count > 0 else 0
+        alarm_status = self.alarm.get_status()
 
-        conn = get_conn()
-        try:
-            with conn.cursor() as cur:
-                cur.execute("""
-                            INSERT INTO slot_system_health
-                            (active_slots, altered_slots, avg_distance, max_distance,
-                             camera_uptime_seconds, timestamp)
-                            VALUES (%s, %s, %s, %s, %s, NOW());
-                            """, (total, altered, avg_dist, max_dist, uptime_seconds))
-                conn.commit()
-        except Exception as e:
-            logger.error(f"Failed to log system health: {e}")
-        finally:
-            put_conn(conn)
+        logger.info(
+            f"Health: {total} slots, {mismatched} mismatched, "
+            f"avg_dist={avg_dist:.3f}, max_dist={max_dist:.3f}, "
+            f"alarm={alarm_status['active']}, "
+            f"cycle_time={self.last_cycle_time:.2f}s"
+        )
 
-    def stop(self):
-        """Stop monitoring thread"""
-        logger.info("Stopping SlotMonitor...")
-        self.running = False
-        self.camera.release()
+    def get_status(self) -> dict:
+        """Get current monitoring status."""
+        return {
+            "total_slots": len(self.slots),
+            "paused_slots": len(self.paused_slots),
+            "mismatched_slots": sum(1 for s in self.slots.values() if s.mismatch),
+            "alarm": self.alarm.get_status(),
+            "cycle_count": self.cycle_count,
+            "last_cycle_time": self.last_cycle_time,
+            "avg_distance": float(np.mean([s.last_dist for s in self.slots.values()])) if self.slots else 0.0
+        }

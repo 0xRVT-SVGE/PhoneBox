@@ -1,122 +1,140 @@
-# ============================================================
-# FILE: server/slot_monitor/slot_state.py
-# ============================================================
-
-from enum import Enum, auto
 import time
 import numpy as np
-
-
-class BinaryState(Enum):
-    OK = auto()
-    ALTERED = auto()
-
-
-class TxState(Enum):
-    OCCUPIED = auto()
-    EMPTY = auto()
-    UNKNOWN = auto()
+from typing import Optional
 
 
 class SlotState:
-    """Track state of a single storage slot"""
+    """
+    Runtime-only state for a single slot.
+    No DB logic. No enums. Pure state tracking.
+    """
 
-    def __init__(self, lid: int, baseline_emb: np.ndarray):
+    def __init__(
+        self,
+        lid: int,
+        baseline_emb: np.ndarray,
+        is_occupied: bool,
+    ):
         self.lid = lid
-        self.baseline = baseline_emb.copy()
 
-        self.binary_state = BinaryState.OK
-        self.tx_state = TxState.UNKNOWN
+        # Authoritative baseline (from DB, then runtime-adapted)
+        self.baseline: np.ndarray = baseline_emb.copy()
 
-        self.last_dist = 0.0
-        self.last_change_ts = time.time()
-        self.unknown_since = None  # Track when UNKNOWN state started
+        # Runtime-derived occupancy (from SQL, not stored)
+        self.is_occupied: bool = is_occupied
 
-        # For adaptive baseline updates
-        self.distances_history = []  # Track recent distances
-        self.max_history = 10  # Keep last 10 measurements
+        # Runtime mismatch flag
+        self.mismatch: bool = False
 
-    def update(self, dist: float, t_minor: float, t_major: float, t_recalc: float = 0.12):
+        # Distance tracking
+        self.last_dist: float = 0.0
+
+        # Grace-period handling
+        self._grace_start_ts: Optional[float] = None
+
+        # Baseline adaptation tracking
+        self.distances_history: list[float] = []
+        self.max_history = 10
+
+    # ------------------------------------------------------------
+    # MAIN UPDATE (called by monitoring thread)
+    # ------------------------------------------------------------
+
+    def update_distance(
+        self,
+        dist: float,
+        mismatch_threshold: float,
+        recalc_threshold: float,
+        grace_period: float,
+    ) -> dict:
         """
-        Update slot state based on distance.
-
-        Args:
-            dist: Current embedding distance
-            t_minor: Threshold for OK state (e.g., 0.15)
-            t_major: Threshold for ALTERED state (e.g., 0.35)
-            t_recalc: Threshold for triggering recalculation (e.g., 0.12)
+        Update slot runtime state using ONLY embedding distance.
 
         Returns:
-            dict with 'state_changed' and 'needs_recalc' flags
+            {
+                "trigger_alarm": bool,
+                "stop_alarm": bool,
+                "needs_recalc": bool,
+            }
         """
-        old_binary = self.binary_state
-        old_tx = self.tx_state
 
         self.last_dist = dist
         self.distances_history.append(dist)
         if len(self.distances_history) > self.max_history:
             self.distances_history.pop(0)
 
-        # State determination
-        if dist < t_minor:
-            self.binary_state = BinaryState.OK
-            self.tx_state = TxState.OCCUPIED
-            self.unknown_since = None
+        now = time.time()
 
-        elif dist >= t_major:
-            self.binary_state = BinaryState.ALTERED
-            self.tx_state = TxState.EMPTY
-            self.unknown_since = None
-            if old_binary != BinaryState.ALTERED:
-                self.last_change_ts = time.time()
+        # ----------------------------
+        # CASE 1: NORMAL / STABLE
+        # ----------------------------
+        if dist < mismatch_threshold:
+            stop_alarm = self.mismatch
+            self.mismatch = False
+            self._grace_start_ts = None
 
-        else:  # Between t_minor and t_major - UNKNOWN zone
-            self.tx_state = TxState.UNKNOWN
-            if self.unknown_since is None:
-                self.unknown_since = time.time()
+            needs_recalc = self._should_recalculate(recalc_threshold)
 
-        # Check if baseline recalculation needed
-        # Gradual changes (lighting, someone standing in front) that are consistent
-        needs_recalc = False
-        if len(self.distances_history) >= 5:
-            # If last 5 readings are all above recalc threshold but below major
-            recent_5 = self.distances_history[-5:]
-            if all(t_recalc < d < t_major for d in recent_5):
-                needs_recalc = True
-                logger.info(f"Slot {self.lid}: Baseline recalculation needed (consistent elevated distance)")
+            return {
+                "trigger_alarm": False,
+                "stop_alarm": stop_alarm,
+                "needs_recalc": needs_recalc,
+            }
 
-        state_changed = (old_binary != self.binary_state or old_tx != self.tx_state)
+        # ----------------------------
+        # CASE 2: SUSPICIOUS
+        # ----------------------------
+        if self._grace_start_ts is None:
+            self._grace_start_ts = now
+            return {
+                "trigger_alarm": False,
+                "stop_alarm": False,
+                "needs_recalc": False,
+            }
+
+        # Grace expired → alarm condition
+        if now - self._grace_start_ts >= grace_period:
+            if not self.mismatch:
+                self.mismatch = True
+                return {
+                    "trigger_alarm": True,
+                    "stop_alarm": False,
+                    "needs_recalc": False,
+                }
 
         return {
-            'state_changed': state_changed,
-            'needs_recalc': needs_recalc
+            "trigger_alarm": False,
+            "stop_alarm": False,
+            "needs_recalc": False,
         }
 
-    def should_alarm(self, grace_period: float) -> bool:
-        """
-        Check if alarm should trigger.
-
-        Args:
-            grace_period: Seconds to wait before alarming on UNKNOWN state
-        """
-        # Immediate alarm for ALTERED state
-        if self.binary_state == BinaryState.ALTERED:
-            return True
-
-        # Alarm if UNKNOWN for too long (e.g., hand blocking camera)
-        if self.tx_state == TxState.UNKNOWN and self.unknown_since:
-            if time.time() - self.unknown_since > grace_period:
-                return True
-
-        return False
+    # ------------------------------------------------------------
+    # BASELINE MANAGEMENT
+    # ------------------------------------------------------------
 
     def reset_baseline(self, new_emb: np.ndarray):
-        """
-        Completely replace baseline (used after deposit/withdrawal operations).
-
-        Args:
-            new_emb: New embedding to set as baseline
-        """
+        """Hard baseline replacement (deposit / withdrawal / init sync)."""
         self.baseline = new_emb.copy()
         self.distances_history.clear()
-        logger.info(f"Slot {self.lid}: Baseline reset")
+        self.mismatch = False
+        self._grace_start_ts = None
+
+    def adapt_baseline(self, new_emb: np.ndarray):
+        """Soft adaptation (lighting drift)."""
+        self.baseline = new_emb.copy()
+        self.distances_history.clear()
+
+    # ------------------------------------------------------------
+    # INTERNAL
+    # ------------------------------------------------------------
+
+    def _should_recalculate(self, recalc_threshold: float) -> bool:
+        """
+        Recalculate baseline if recent distances show stable drift
+        but no mismatch.
+        """
+        if len(self.distances_history) < 5:
+            return False
+
+        recent = self.distances_history[-5:]
+        return all(recalc_threshold < d for d in recent)

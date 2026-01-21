@@ -6,7 +6,7 @@ db_pool = pool.SimpleConnectionPool(
     port=5432,
     database="PhoneBoxDB",
     user="Admin",
-    password="Admin"
+    password="admin"
 )
 
 def get_conn():

@@ -1,147 +1,147 @@
-# ============================================================
-# FILE: server/slot_monitor/db_interface.py
-# ============================================================
-
 import logging
-from typing import Dict, Optional
 import numpy as np
+from typing import List, Tuple, Optional
 from back_end.Database.db import get_conn, put_conn
-from .slot_embed import embedding_to_bytes, embedding_from_bytes
 
 logger = logging.getLogger(__name__)
 
 
 class SlotMonitorDB:
-    """Database interface for slot monitoring system"""
+    """
+    Pure DB interface for slot monitoring.
+    No business logic - just CRUD operations.
+    """
+
+    # ------------------------------------------------------------
+    # BASELINE MANAGEMENT
+    # ------------------------------------------------------------
 
     @staticmethod
-    def load_baselines() -> Dict[int, np.ndarray]:
-        """Load all baselines from database"""
+    def fetch_occupied_slots() -> List[Tuple[int, int, np.ndarray]]:
+        """
+        Fetch all occupied slots with their baselines.
+
+        Returns:
+            List of (lid, pid, baseline_embedding)
+        """
         conn = get_conn()
         try:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT lid, embedding
-                    FROM slot_baselines
-                    WHERE embedding IS NOT NULL AND embedding != '\\x00'::bytea;
-                """)
+                            SELECT ps.lid,
+                                   ps.pid,
+                                   sb.embedding
+                            FROM phone_storage ps
+                                     JOIN slot_baselines sb ON ps.lid = sb.lid
+                            WHERE ps.retrieved_at IS NULL
+                              AND sb.embedding IS NOT NULL
+                              AND sb.embedding != '\\x00'::bytea
+                            ORDER BY ps.lid;
+                            """)
+
                 rows = cur.fetchall()
 
-                baselines = {}
-                for lid, emb_bytes in rows:
+                result = []
+                for lid, pid, emb_bytes in rows:
                     if emb_bytes:
-                        baselines[lid] = embedding_from_bytes(emb_bytes)
+                        emb = _embedding_from_bytes(emb_bytes)
+                        result.append((lid, pid, emb))
 
-                logger.info(f"Loaded {len(baselines)} baselines from database")
-                return baselines
+                logger.info(f"Fetched {len(result)} occupied slots from DB")
+                return result
+
+        except Exception as e:
+            logger.error(f"Failed to fetch occupied slots: {e}")
+            return []
         finally:
             put_conn(conn)
 
     @staticmethod
-    def save_baseline(lid: int, embedding: np.ndarray, reason: str = 'auto_adapt'):
-        """Save or update baseline for a slot"""
+    def save_baseline(lid: int, embedding: np.ndarray):
+        """Save or update baseline embedding for a slot."""
         conn = get_conn()
         try:
-            emb_bytes = embedding_to_bytes(embedding)
+            emb_bytes = _embedding_to_bytes(embedding)
 
             with conn.cursor() as cur:
-                # Update baseline (no history table anymore)
                 cur.execute("""
-                    INSERT INTO slot_baselines (lid, embedding, needs_recalculation, updated_at)
-                    VALUES (%s, %s, FALSE, NOW())
-                    ON CONFLICT (lid) DO UPDATE SET
-                        embedding = EXCLUDED.embedding,
-                        needs_recalculation = FALSE,
-                        updated_at = NOW();
-                """, (lid, emb_bytes))
+                            INSERT INTO slot_baselines (lid, embedding, updated_at)
+                            VALUES (%s, %s, NOW())
+                            ON CONFLICT (lid) DO UPDATE SET embedding  = EXCLUDED.embedding,
+                                                            updated_at = NOW();
+                            """, (lid, emb_bytes))
 
                 conn.commit()
-                logger.info(f"Saved baseline for slot {lid} (reason: {reason})")
+                logger.debug(f"Saved baseline for slot {lid}")
+
         except Exception as e:
             conn.rollback()
             logger.error(f"Failed to save baseline for slot {lid}: {e}")
         finally:
             put_conn(conn)
 
+    # ------------------------------------------------------------
+    # SLOT STATE QUERIES
+    # ------------------------------------------------------------
+
     @staticmethod
-    def update_slot_state(lid: int, binary_state: str, tx_state: str, distance: float):
-        """Update current slot state"""
+    def get_pid_for_lid(lid: int) -> Optional[int]:
+        """Get phone ID for a given location."""
         conn = get_conn()
         try:
             with conn.cursor() as cur:
                 cur.execute("""
-                    INSERT INTO slot_current_state
-                        (lid, binary_state, tx_state, last_distance, last_change_ts, updated_at)
-                    VALUES (%s, %s, %s, %s, NOW(), NOW())
-                    ON CONFLICT (lid) DO UPDATE SET
-                        binary_state = EXCLUDED.binary_state,
-                        tx_state = EXCLUDED.tx_state,
-                        last_distance = EXCLUDED.last_distance,
-                        last_change_ts = CASE
-                            WHEN slot_current_state.binary_state != EXCLUDED.binary_state
-                            THEN NOW()
-                            ELSE slot_current_state.last_change_ts
-                        END,
-                        updated_at = NOW();
-                """, (lid, binary_state, tx_state, distance))
-                conn.commit()
+                            SELECT pid
+                            FROM phone_storage
+                            WHERE lid = %s
+                              AND retrieved_at IS NULL
+                            LIMIT 1;
+                            """, (lid,))
+
+                row = cur.fetchone()
+                return row[0] if row else None
+
         except Exception as e:
-            conn.rollback()
-            logger.error(f"Failed to update slot state for {lid}: {e}")
+            logger.error(f"Failed to get PID for LID {lid}: {e}")
+            return None
         finally:
             put_conn(conn)
 
     @staticmethod
-    def log_slot_event(lid: int, binary_state: str, tx_state: str, distance: float):
-        """Log slot state change event"""
+    def is_slot_occupied(lid: int) -> bool:
+        """Check if a slot is currently occupied."""
         conn = get_conn()
         try:
             with conn.cursor() as cur:
                 cur.execute("""
-                    INSERT INTO slot_events (lid, binary_state, tx_state, distance, timestamp)
-                    VALUES (%s, %s, %s, %s, NOW());
-                """, (lid, binary_state, tx_state, distance))
-                conn.commit()
+                            SELECT EXISTS(SELECT 1
+                                          FROM phone_storage
+                                          WHERE lid = %s
+                                            AND retrieved_at IS NULL);
+                            """, (lid,))
+
+                return cur.fetchone()[0]
+
         except Exception as e:
-            conn.rollback()
-            logger.error(f"Failed to log event for slot {lid}: {e}")
+            logger.error(f"Failed to check occupancy for slot {lid}: {e}")
+            return False
         finally:
             put_conn(conn)
 
-    @staticmethod
-    def log_anomaly(lid: int, anomaly_type: str, distance: float,
-                    severity: str = 'medium', description: str = None):
-        """Log detected anomaly"""
-        conn = get_conn()
-        try:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    INSERT INTO slot_anomalies
-                        (lid, anomaly_type, distance, severity, description, timestamp)
-                    VALUES (%s, %s, %s, %s, %s, NOW());
-                """, (lid, anomaly_type, distance, severity, description))
-                conn.commit()
-                logger.warning(f"Anomaly logged: slot {lid}, type {anomaly_type}, severity {severity}")
-        except Exception as e:
-            conn.rollback()
-            logger.error(f"Failed to log anomaly for slot {lid}: {e}")
-        finally:
-            put_conn(conn)
+    # ------------------------------------------------------------
+    # ANOMALY LOGGING
+    # ------------------------------------------------------------
 
-    @staticmethod
-    def log_system_error(error_type: str, description: str, severity: str = 'error'):
-        """Log system-level error"""
-        conn = get_conn()
-        try:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    INSERT INTO slot_system_errors
-                        (error_type, error_count, severity, description, timestamp)
-                    VALUES (%s, 1, %s, %s, NOW());
-                """, (error_type, severity, description))
-                conn.commit()
-        except Exception as e:
-            conn.rollback()
-            logger.error(f"Failed to log system error: {e}")
-        finally:
-            put_conn(conn)
+
+# ------------------------------------------------------------
+# EMBEDDING SERIALIZATION HELPERS
+# ------------------------------------------------------------
+
+def _embedding_to_bytes(emb: np.ndarray) -> bytes:
+    """Convert numpy embedding to bytes for DB storage."""
+    return emb.astype(np.float32).tobytes()
+
+
+def _embedding_from_bytes(data: bytes) -> np.ndarray:
+    """Convert bytes from DB to numpy embedding."""
+    return np.frombuffer(data, dtype=np.float32)
