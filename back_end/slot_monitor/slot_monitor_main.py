@@ -64,28 +64,44 @@ class SlotMonitor:
 
     def initialize(self):
         """Initialize monitoring from DB state."""
-        occupied = self.db.fetch_occupied_slots()
-        # Returns: [(lid, pid, baseline_embed)]
+        # Fetch occupied slots (source of truth for occupancy)
+        occupied_slots = self.db.fetch_occupied_slots()
+        # Returns: [(lid, pid)]
+
+        occupied_lids = {lid for lid, pid in occupied_slots}
+
+        # Fetch ALL baselines (for all slots, occupied and empty)
+        baselines = self.db.fetch_all_baselines()
+        # Returns: {lid: baseline_embedding}
+
+        logger.info(f"Found {len(occupied_lids)} occupied slots, {len(baselines)} baselines")
 
         initialized = 0
         mismatches = 0
 
-        for lid, pid, baseline in occupied:
+        # Initialize monitoring for ALL slots that have baselines
+        for lid, baseline in baselines.items():
             try:
+                # Determine if slot is occupied from DB
+                is_occupied = lid in occupied_lids
+
+                # Compute current embedding
                 realtime = self.embedder.compute(lid)
                 dist = float(np.linalg.norm(realtime - baseline))
 
+                # Check for mismatch on initialization
                 if dist > self.mismatch_threshold:
                     logger.warning(
                         f"Slot {lid} has mismatch on init: dist={dist:.3f} "
-                        f"(threshold={self.mismatch_threshold})"
+                        f"(threshold={self.mismatch_threshold}, occupied={is_occupied})"
                     )
                     mismatches += 1
 
+                # Create slot state
                 state = SlotState(
                     lid=lid,
                     baseline_emb=realtime,
-                    is_occupied=True,
+                    is_occupied=is_occupied,
                 )
 
                 self.slots[lid] = state
@@ -96,8 +112,9 @@ class SlotMonitor:
                 logger.error(f"Failed to initialize slot {lid}: {e}")
 
         logger.info(
-            f"Initialized {initialized} occupied slots "
-            f"({mismatches} with initial mismatches)"
+            f"Initialized {initialized} slots total "
+            f"({len(occupied_lids)} occupied, {initialized - len(occupied_lids)} empty, "
+            f"{mismatches} with initial mismatches)"
         )
 
     def start(self):

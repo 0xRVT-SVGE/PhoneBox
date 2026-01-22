@@ -53,12 +53,42 @@ class MockEmbedder:
         return compute_embedding(img)
 
 
+class MockDB:
+    """Mock database for testing"""
+
+    def __init__(self):
+        self.baselines = {}
+        self.occupied = {}  # lid -> pid mapping
+
+    def fetch_occupied_slots(self):
+        """Return list of (lid, pid) tuples"""
+        return [(lid, pid) for lid, pid in self.occupied.items()]
+
+    def fetch_all_baselines(self):
+        """Return dict of {lid: embedding}"""
+        return self.baselines.copy()
+
+    def save_baseline(self, lid: int, embedding: np.ndarray):
+        """Save baseline"""
+        self.baselines[lid] = embedding.copy()
+        logger.debug(f"Saved baseline for slot {lid}")
+
+    def get_pid_for_lid(self, lid: int):
+        """Get PID for location"""
+        return self.occupied.get(lid, lid)  # Return lid if no mapping
+
+    def is_slot_occupied(self, lid: int) -> bool:
+        """Check if slot is occupied"""
+        return lid in self.occupied
+
+
 class TestMonitoringSystem:
     """Test the complete monitoring system"""
 
     def __init__(self, image_dir: str = "./test_images"):
         self.image_dir = Path(image_dir)
         self.embedder = MockEmbedder(image_dir)
+        self.db = MockDB()
         self.alarm = AlarmController()
         self.slots: Dict[int, SlotState] = {}
 
@@ -71,13 +101,13 @@ class TestMonitoringSystem:
 
     def setup_test_scenario(self, scenario: Dict):
         """
-        Setup a test scenario with baseline images and test images.
+        Setup a test scenario with baseline images and occupancy states.
 
         scenario = {
             "slots": {
-                0: {"baseline": "slot0_empty.jpg", "test": "slot0_occupied.jpg"},
-                1: {"baseline": "slot1_phone.jpg", "test": "slot1_phone.jpg"},
-                2: {"baseline": "slot2_phone.jpg", "test": "slot2_empty.jpg"},
+                0: {"baseline": "slot0_empty.jpg", "occupied": False},
+                1: {"baseline": "slot1_phone.jpg", "occupied": True, "pid": 101},
+                2: {"baseline": "slot2_phone.jpg", "occupied": True, "pid": 102},
             }
         }
         """
@@ -87,19 +117,30 @@ class TestMonitoringSystem:
 
         for lid, config in scenario["slots"].items():
             baseline_path = config["baseline"]
+            is_occupied = config.get("occupied", False)
+            pid = config.get("pid", lid)
 
             # Load baseline image and compute embedding
             self.embedder.load_slot_images(lid, baseline_path)
             baseline_emb = self.embedder.compute(lid)
 
-            # Create slot state (assume occupied for now)
+            # Save to mock DB
+            self.db.save_baseline(lid, baseline_emb)
+            if is_occupied:
+                self.db.occupied[lid] = pid
+
+            # Create slot state
             self.slots[lid] = SlotState(
                 lid=lid,
                 baseline_emb=baseline_emb,
-                is_occupied=True
+                is_occupied=is_occupied
             )
 
-            logger.info(f"Slot {lid}: baseline set from {baseline_path}")
+            logger.info(
+                f"Slot {lid}: baseline={baseline_path}, "
+                f"occupied={is_occupied}" +
+                (f", pid={pid}" if is_occupied else "")
+            )
 
     def run_monitoring_cycle(self, test_images: Dict[int, str], pid_map: Dict[int, int]):
         """
@@ -245,9 +286,9 @@ def main():
 
     scenario1 = {
         "slots": {
-            0: {"baseline": "slot0_phone.jpg", "test": "slot0_phone.jpg"},
-            1: {"baseline": "slot1_phone.jpg", "test": "slot1_phone.jpg"},
-            2: {"baseline": "slot2_empty.jpg", "test": "slot2_empty.jpg"},
+            0: {"baseline": "slot0_phone.jpg", "occupied": True, "pid": 101},
+            1: {"baseline": "slot1_phone.jpg", "occupied": True, "pid": 102},
+            2: {"baseline": "slot2_empty.jpg", "occupied": False},
         }
     }
 
@@ -265,13 +306,13 @@ def main():
     test_system.print_alarm_status()
 
     # ==========================================
-    # TEST 2: Phone Removed (Should Trigger Alarm)
+    # TEST 2: Phone Removed from Occupied Slot
     # ==========================================
-    logger.info("\n\n" + "🧪 TEST 2: Phone Removed (Should Trigger Alarm)" + "\n")
+    logger.info("\n\n" + "🧪 TEST 2: Phone Removed from Occupied Slot (Should Trigger Alarm)" + "\n")
 
     test_images2 = {
         0: "slot0_phone.jpg",
-        1: "slot1_empty.jpg",  # Phone removed!
+        1: "slot1_empty.jpg",  # Phone removed from occupied slot!
         2: "slot2_empty.jpg"
     }
 
@@ -282,7 +323,7 @@ def main():
     test_system.print_alarm_status()
 
     # ==========================================
-    # TEST 3: Phone Added (Should Trigger Alarm)
+    # TEST 3: Phone Added to Empty Slot
     # ==========================================
     logger.info("\n\n" + "🧪 TEST 3: Phone Added to Empty Slot (Should Trigger Alarm)" + "\n")
 

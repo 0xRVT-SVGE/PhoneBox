@@ -17,42 +17,65 @@ class SlotMonitorDB:
     # ------------------------------------------------------------
 
     @staticmethod
-    def fetch_occupied_slots() -> List[Tuple[int, int, np.ndarray]]:
+    def fetch_occupied_slots() -> List[Tuple[int, int]]:
         """
-        Fetch all occupied slots with their baselines.
+        Fetch all currently occupied slots.
 
         Returns:
-            List of (lid, pid, baseline_embedding)
+            List of (lid, pid) tuples
         """
         conn = get_conn()
         try:
             with conn.cursor() as cur:
                 cur.execute("""
-                            SELECT ps.lid,
-                                   ps.pid,
-                                   sb.embedding
-                            FROM phone_storage ps
-                                     JOIN slot_baselines sb ON ps.lid = sb.lid
-                            WHERE ps.retrieved_at IS NULL
-                              AND sb.embedding IS NOT NULL
-                              AND sb.embedding != '\\x00'::bytea
-                            ORDER BY ps.lid;
+                            SELECT lid, pid
+                            FROM phone_storage
+                            WHERE retrieved_at IS NULL
+                            ORDER BY lid;
                             """)
 
                 rows = cur.fetchall()
-
-                result = []
-                for lid, pid, emb_bytes in rows:
-                    if emb_bytes:
-                        emb = _embedding_from_bytes(emb_bytes)
-                        result.append((lid, pid, emb))
-
-                logger.info(f"Fetched {len(result)} occupied slots from DB")
-                return result
+                logger.info(f"Fetched {len(rows)} occupied slots from DB")
+                return rows
 
         except Exception as e:
             logger.error(f"Failed to fetch occupied slots: {e}")
             return []
+        finally:
+            put_conn(conn)
+
+    @staticmethod
+    def fetch_all_baselines() -> Dict[int, np.ndarray]:
+        """
+        Fetch ALL slot baselines (occupied and empty slots).
+
+        Returns:
+            Dict mapping lid -> baseline_embedding
+        """
+        conn = get_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                            SELECT lid, embedding
+                            FROM slot_baselines
+                            WHERE embedding IS NOT NULL
+                              AND embedding != '\\x00'::bytea
+                            ORDER BY lid;
+                            """)
+
+                rows = cur.fetchall()
+
+                baselines = {}
+                for lid, emb_bytes in rows:
+                    if emb_bytes:
+                        baselines[lid] = _embedding_from_bytes(emb_bytes)
+
+                logger.info(f"Fetched {len(baselines)} baselines from DB")
+                return baselines
+
+        except Exception as e:
+            logger.error(f"Failed to fetch baselines: {e}")
+            return {}
         finally:
             put_conn(conn)
 
