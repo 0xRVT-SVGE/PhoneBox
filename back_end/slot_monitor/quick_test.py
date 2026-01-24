@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
-Complete test suite for phone monitoring system using static images.
-Tests the full pipeline: embedding → distance → state tracking → alarms
+Quick test suite for phone monitoring system using photos.
+Uses actual database and system modules - NO custom DB helpers.
 """
 
 import os
+import sys
 import time
 import logging
 import numpy as np
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, Optional
 import cv2
 
 # Configure logging
@@ -19,30 +20,30 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Import your modules
+# Import actual system modules
 from slot_state import SlotState
 from alarm_controller import AlarmController
 from slot_embed import compute_embedding, embedding_distance
+from db_interface import SlotMonitorDB
 
 
-class MockEmbedder:
-    """Mock embedder that reads images from a directory"""
+class PhotoEmbedder:
+    """Embedder that uses photos from a directory"""
 
     def __init__(self, image_dir: str):
         self.image_dir = Path(image_dir)
-        self.images: Dict[int, str] = {}
+        self.current_images: Dict[int, str] = {}
 
-    def load_slot_images(self, slot_id: int, image_path: str):
-        """Register an image for a specific slot"""
-        self.images[slot_id] = image_path
-        logger.info(f"Loaded image for slot {slot_id}: {image_path}")
+    def set_image(self, lid: int, image_name: str):
+        """Set the current image for a slot"""
+        self.current_images[lid] = image_name
 
     def compute(self, lid: int) -> np.ndarray:
-        """Compute embedding for a slot from its registered image"""
-        if lid not in self.images:
-            raise ValueError(f"No image registered for slot {lid}")
+        """Compute embedding for a slot from its current image"""
+        if lid not in self.current_images:
+            raise ValueError(f"No image set for slot {lid}")
 
-        img_path = self.image_dir / self.images[lid]
+        img_path = self.image_dir / self.current_images[lid]
         if not img_path.exists():
             raise FileNotFoundError(f"Image not found: {img_path}")
 
@@ -53,117 +54,110 @@ class MockEmbedder:
         return compute_embedding(img)
 
 
-class MockDB:
-    """Mock database for testing"""
-
-    def __init__(self):
-        self.baselines = {}
-        self.occupied = {}  # lid -> pid mapping
-
-    def fetch_occupied_slots(self):
-        """Return list of (lid, pid) tuples"""
-        return [(lid, pid) for lid, pid in self.occupied.items()]
-
-    def fetch_all_baselines(self):
-        """Return dict of {lid: embedding}"""
-        return self.baselines.copy()
-
-    def save_baseline(self, lid: int, embedding: np.ndarray):
-        """Save baseline"""
-        self.baselines[lid] = embedding.copy()
-        logger.debug(f"Saved baseline for slot {lid}")
-
-    def get_pid_for_lid(self, lid: int):
-        """Get PID for location"""
-        return self.occupied.get(lid, lid)  # Return lid if no mapping
-
-    def is_slot_occupied(self, lid: int) -> bool:
-        """Check if slot is occupied"""
-        return lid in self.occupied
-
-
-class TestMonitoringSystem:
-    """Test the complete monitoring system"""
+class QuickTestSystem:
+    """Quick test system using photos and real database"""
 
     def __init__(self, image_dir: str = "./test_images"):
         self.image_dir = Path(image_dir)
-        self.embedder = MockEmbedder(image_dir)
-        self.db = MockDB()
+        self.embedder = PhotoEmbedder(image_dir)
+        self.db = SlotMonitorDB()
         self.alarm = AlarmController()
         self.slots: Dict[int, SlotState] = {}
 
-        # Test configuration
-        self.mismatch_threshold = 0.35
-        self.recalc_threshold = 0.12
-        self.grace_period = 3.0  # Shorter for testing
+        # Test configuration (more sensitive for photos)
+        self.mismatch_threshold = 0.03
+        self.recalc_threshold = 0.0015
+        self.grace_period = 0.0  # Instant for testing
 
-        logger.info(f"Test system initialized with image_dir: {image_dir}")
+        logger.info(f"Test system initialized")
+        logger.info(f"  Image dir: {image_dir}")
+        logger.info(f"  Mismatch threshold: {self.mismatch_threshold}")
+        logger.info(f"  Grace period: {self.grace_period}s")
 
-    def setup_test_scenario(self, scenario: Dict):
+    def calibrate_from_images(self, slot_configs: Dict[int, Dict]):
         """
-        Setup a test scenario with baseline images and occupancy states.
+        Calibrate baselines from images.
 
-        scenario = {
-            "slots": {
-                0: {"baseline": "slot0_empty.jpg", "occupied": False},
-                1: {"baseline": "slot1_phone.jpg", "occupied": True, "pid": 101},
-                2: {"baseline": "slot2_phone.jpg", "occupied": True, "pid": 102},
-            }
+        IMPORTANT: Before running this, ensure:
+        1. Locations exist in database (INSERT INTO locations)
+        2. Phones exist in database (INSERT INTO phones)
+        3. Phone storage records exist for occupied slots (INSERT INTO phone_storage)
+
+        slot_configs = {
+            0: {"image": "slot0_empty.jpg"},
+            1: {"image": "slot1_phone.jpg"},
+            ...
         }
         """
-        logger.info("=" * 60)
-        logger.info("SETTING UP TEST SCENARIO")
-        logger.info("=" * 60)
+        logger.info("=" * 70)
+        logger.info("CALIBRATING BASELINES FROM IMAGES")
+        logger.info("=" * 70)
+        logger.info("NOTE: Database must already have locations, phones, and phone_storage set up!")
+        logger.info("")
 
-        for lid, config in scenario["slots"].items():
-            baseline_path = config["baseline"]
-            is_occupied = config.get("occupied", False)
-            pid = config.get("pid", lid)
+        for lid, config in slot_configs.items():
+            image = config["image"]
 
-            # Load baseline image and compute embedding
-            self.embedder.load_slot_images(lid, baseline_path)
-            baseline_emb = self.embedder.compute(lid)
+            logger.info(f"Calibrating slot {lid}: {image}")
 
-            # Save to mock DB
-            self.db.save_baseline(lid, baseline_emb)
-            if is_occupied:
-                self.db.occupied[lid] = pid
+            # Set image and compute embedding
+            self.embedder.set_image(lid, image)
+            baseline = self.embedder.compute(lid)
 
-            # Create slot state
+            # Save baseline to DB (using existing db_interface method)
+            self.db.save_baseline(lid, baseline)
+
+        logger.info(f"✅ Calibrated {len(slot_configs)} slots")
+
+    def initialize_monitoring(self):
+        """Initialize monitoring from DB (like real system)"""
+        logger.info("\n" + "=" * 70)
+        logger.info("INITIALIZING MONITORING FROM DATABASE")
+        logger.info("=" * 70)
+
+        # Fetch from DB (using existing db_interface methods)
+        occupied_slots = self.db.fetch_occupied_slots()
+        occupied_lids = {lid: pid for lid, pid in occupied_slots}
+
+        baselines = self.db.fetch_all_baselines()
+
+        logger.info(f"Found {len(occupied_lids)} occupied slots in DB")
+        logger.info(f"Found {len(baselines)} baselines in DB")
+
+        # Initialize slot states
+        for lid, baseline in baselines.items():
+            is_occupied = lid in occupied_lids
+
             self.slots[lid] = SlotState(
                 lid=lid,
-                baseline_emb=baseline_emb,
+                baseline_emb=baseline,
                 is_occupied=is_occupied
             )
 
-            logger.info(
-                f"Slot {lid}: baseline={baseline_path}, "
-                f"occupied={is_occupied}" +
-                (f", pid={pid}" if is_occupied else "")
-            )
+            status = "OCCUPIED" if is_occupied else "EMPTY"
+            pid = occupied_lids.get(lid, "N/A")
+            logger.info(f"  Slot {lid}: {status}" + (f" (PID: {pid})" if is_occupied else ""))
 
-    def run_monitoring_cycle(self, test_images: Dict[int, str], pid_map: Dict[int, int]):
-        """
-        Run one monitoring cycle with test images.
+        logger.info(f"✅ Initialized {len(self.slots)} slots")
 
-        test_images = {0: "slot0_occupied.jpg", 1: "slot1_phone.jpg", ...}
-        pid_map = {0: 101, 1: 102, ...}  # lid -> pid mapping
-        """
-        logger.info("\n" + "=" * 60)
+    def run_monitoring_cycle(self, test_images: Dict[int, str]):
+        """Run one monitoring cycle with test images"""
+        logger.info("\n" + "=" * 70)
         logger.info("RUNNING MONITORING CYCLE")
-        logger.info("=" * 60)
+        logger.info("=" * 70)
 
         for lid, img_name in test_images.items():
             if lid not in self.slots:
                 logger.warning(f"Slot {lid} not initialized, skipping")
                 continue
 
-            # Update embedder with test image
-            self.embedder.images[lid] = img_name
+            slot = self.slots[lid]
+
+            # Set current image
+            self.embedder.set_image(lid, img_name)
 
             # Compute embedding
             current_emb = self.embedder.compute(lid)
-            slot = self.slots[lid]
 
             # Calculate distance
             dist = embedding_distance(current_emb, slot.baseline)
@@ -179,29 +173,36 @@ class TestMonitoringSystem:
             # Log results
             logger.info(f"\nSlot {lid}:")
             logger.info(f"  Image: {img_name}")
-            logger.info(f"  Distance: {dist:.4f}")
+            logger.info(f"  Distance: {dist:.6f}")
+            logger.info(f"  Occupied: {slot.is_occupied}")
             logger.info(f"  Mismatch: {slot.mismatch}")
-            logger.info(f"  Trigger alarm: {result['trigger_alarm']}")
-            logger.info(f"  Stop alarm: {result['stop_alarm']}")
-            logger.info(f"  Needs recalc: {result['needs_recalc']}")
+            logger.info(f"  Trigger: {result['trigger_alarm']}")
+            logger.info(f"  Stop: {result['stop_alarm']}")
+            logger.info(f"  Recalc: {result['needs_recalc']}")
 
-            # Handle alarms
-            pid = pid_map.get(lid, lid)  # Use lid as pid if not mapped
+            # Handle alarms (using existing db_interface method)
+            pid = self.db.get_pid_for_lid(lid) or f"unknown-{lid}"
 
             if result["trigger_alarm"]:
                 self.alarm.trigger(pid, lid)
-                logger.warning(f"  ⚠️  ALARM TRIGGERED for PID={pid}, LID={lid}")
+                logger.warning(f"  🚨 ALARM TRIGGERED!")
 
             if result["stop_alarm"]:
                 any_mismatch = any(s.mismatch for s in self.slots.values())
                 self.alarm.stop_if_clear(any_mismatch)
 
+            if result["needs_recalc"]:
+                logger.info(f"  🔄 Baseline adaptation triggered")
+                slot.adapt_baseline(current_emb)
+                self.db.save_baseline(lid, current_emb)
+
     def print_alarm_status(self):
-        """Print current alarm status"""
+        """Print alarm status"""
         status = self.alarm.get_status()
-        logger.info("\n" + "=" * 60)
+
+        logger.info("\n" + "=" * 70)
         logger.info("ALARM STATUS")
-        logger.info("=" * 60)
+        logger.info("=" * 70)
         logger.info(f"Active: {status['active']}")
         logger.info(f"Mismatch count: {status['mismatch_count']}")
         logger.info(f"Duration: {status['duration']:.1f}s")
@@ -211,162 +212,181 @@ class TestMonitoringSystem:
             for pid, lid in sorted(self.alarm.mismatches):
                 logger.info(f"  PID={pid}, LID={lid}")
 
-    def test_grace_period(self):
-        """Test that grace period works correctly"""
-        logger.info("\n" + "=" * 60)
-        logger.info("TESTING GRACE PERIOD")
-        logger.info("=" * 60)
+    def admin_clear(self):
+        """Admin clear alarms"""
+        logger.info("\n" + "=" * 70)
+        logger.info("ADMIN CLEAR")
+        logger.info("=" * 70)
 
-        # Setup: one slot with significant distance but below grace period
-        slot = self.slots[0]
-        test_emb = self.embedder.compute(0)
+        result = self.alarm.authenticate_admin("admin")
+        logger.info(f"Auth result: {result}")
 
-        # Simulate high distance but within grace period
-        for i in range(3):
-            dist = 0.40  # Above threshold
-            result = slot.update_distance(
-                dist=dist,
-                mismatch_threshold=self.mismatch_threshold,
-                recalc_threshold=self.recalc_threshold,
-                grace_period=self.grace_period
-            )
-
-            logger.info(f"Cycle {i + 1}: dist={dist:.3f}, trigger={result['trigger_alarm']}")
-            time.sleep(1)
-
-        logger.info("Grace period test complete")
+        self.alarm.clear()
+        logger.info("✅ Alarms cleared")
 
 
 def create_test_images(output_dir: str = "./test_images"):
-    """
-    Create sample test images for the monitoring system.
-    This creates synthetic images to test the system.
-    """
+    """Create sample test images"""
     output_path = Path(output_dir)
     output_path.mkdir(exist_ok=True)
 
     logger.info(f"Creating test images in {output_dir}")
 
-    # Create empty slot images (gray background)
+    # Empty slots
     for i in range(3):
-        img = np.ones((480, 640, 3), dtype=np.uint8) * 200  # Light gray
+        img = np.ones((480, 640, 3), dtype=np.uint8) * 200
         cv2.imwrite(str(output_path / f"slot{i}_empty.jpg"), img)
 
-    # Create occupied slot images (with a dark rectangle representing phone)
+    # Occupied slots
     for i in range(3):
-        img = np.ones((480, 640, 3), dtype=np.uint8) * 200  # Light gray
-        # Add a "phone" (dark rectangle)
+        img = np.ones((480, 640, 3), dtype=np.uint8) * 200
         cv2.rectangle(img, (200, 150), (440, 330), (50, 50, 50), -1)
         cv2.imwrite(str(output_path / f"slot{i}_phone.jpg"), img)
 
-    # Create different phone images (different position/color)
+    # Different phone
     for i in range(3):
         img = np.ones((480, 640, 3), dtype=np.uint8) * 200
-        # Different phone position
         cv2.rectangle(img, (180, 140), (460, 340), (60, 60, 60), -1)
         cv2.imwrite(str(output_path / f"slot{i}_phone_different.jpg"), img)
 
-    logger.info("Test images created successfully")
+    logger.info("✅ Test images created")
+
+
+def print_setup_instructions():
+    """Print instructions for setting up test data in database"""
+    print("\n" + "=" * 70)
+    print("DATABASE SETUP REQUIRED")
+    print("=" * 70)
+    print("\nBefore running calibration, ensure your database has:")
+    print("\n1. Test student:")
+    print("   INSERT INTO students (sid, last_name, first_name, embed)")
+    print("   VALUES ('E0001', 'Test', 'Student', ARRAY[0.0]);")
+    print("\n2. Test locations:")
+    print("   INSERT INTO locations (lid, x, y) VALUES (0, 1, 1);")
+    print("   INSERT INTO locations (lid, x, y) VALUES (1, 2, 1);")
+    print("   INSERT INTO locations (lid, x, y) VALUES (2, 3, 1);")
+    print("\n3. Test phones:")
+    print("   INSERT INTO phones (pid, sid, model, imei) VALUES")
+    print("   ('87246c44-84bf-4112-a347-d6fe30c18d15', 'E0001', 'Test Phone 1', 'TEST001');")
+    print("   INSERT INTO phones (pid, sid, model, imei) VALUES")
+    print("   ('9f74aca1-556e-4212-aafd-5f1f48db319a', 'E0001', 'Test Phone 2', 'TEST002');")
+    print("\n4. Phone storage (for occupied slots):")
+    print("   INSERT INTO phone_storage (pid, lid, stored_at) VALUES")
+    print("   ('87246c44-84bf-4112-a347-d6fe30c18d15', 0, NOW());")
+    print("   INSERT INTO phone_storage (pid, lid, stored_at) VALUES")
+    print("   ('9f74aca1-556e-4212-aafd-5f1f48db319a', 1, NOW());")
+    print("\n5. Then run calibration to save baselines")
+    print("=" * 70 + "\n")
 
 
 def main():
-    """Run the complete test suite"""
+    """Main test program"""
 
-    # Create test images if they don't exist
+    # Create test images if needed
     if not Path("./test_images").exists():
         create_test_images()
 
     # Initialize test system
-    test_system = TestMonitoringSystem()
+    test = QuickTestSystem()
 
-    # ==========================================
-    # TEST 1: Normal Operation (No Changes)
-    # ==========================================
-    logger.info("\n\n" + "🧪 TEST 1: Normal Operation (No Changes)" + "\n")
+    # Check if we need calibration
+    baselines = test.db.fetch_all_baselines()
 
-    scenario1 = {
-        "slots": {
-            0: {"baseline": "slot0_phone.jpg", "occupied": True, "pid": 101},
-            1: {"baseline": "slot1_phone.jpg", "occupied": True, "pid": 102},
-            2: {"baseline": "slot2_empty.jpg", "occupied": False},
+    if not baselines:
+        logger.info("\n" + "🔧 NO BASELINES FOUND IN DATABASE" + "\n")
+        print_setup_instructions()
+
+        response = input("Have you set up the database? (yes/no): ")
+        if response.lower() != 'yes':
+            logger.info("Please set up database first. Exiting...")
+            return
+
+        # Run calibration with images
+        slot_configs = {
+            0: {"image": "slot0_phone.jpg"},
+            1: {"image": "slot1_phone.jpg"},
+            2: {"image": "slot2_empty.jpg"}
         }
-    }
 
-    test_system.setup_test_scenario(scenario1)
+        test.calibrate_from_images(slot_configs)
+    else:
+        logger.info(f"\n✅ Found {len(baselines)} baselines in database\n")
 
-    test_images1 = {
+    # Initialize monitoring
+    test.initialize_monitoring()
+
+    # ==========================================
+    # TEST 1: Normal Operation
+    # ==========================================
+    logger.info("\n\n" + "🧪 TEST 1: Normal Operation (No Changes)")
+
+    test.run_monitoring_cycle({
         0: "slot0_phone.jpg",
         1: "slot1_phone.jpg",
         2: "slot2_empty.jpg"
-    }
+    })
 
-    pid_map = {0: 101, 1: 102, 2: 103}
-
-    test_system.run_monitoring_cycle(test_images1, pid_map)
-    test_system.print_alarm_status()
+    test.print_alarm_status()
 
     # ==========================================
-    # TEST 2: Phone Removed from Occupied Slot
+    # TEST 2: Phone Removed
     # ==========================================
-    logger.info("\n\n" + "🧪 TEST 2: Phone Removed from Occupied Slot (Should Trigger Alarm)" + "\n")
+    logger.info("\n\n" + "🧪 TEST 2: Phone Removed from Occupied Slot")
 
-    test_images2 = {
+    test.run_monitoring_cycle({
         0: "slot0_phone.jpg",
-        1: "slot1_empty.jpg",  # Phone removed from occupied slot!
+        1: "slot1_empty.jpg",  # Phone removed!
         2: "slot2_empty.jpg"
-    }
+    })
 
-    # Wait for grace period to expire
-    time.sleep(test_system.grace_period + 1)
-
-    test_system.run_monitoring_cycle(test_images2, pid_map)
-    test_system.print_alarm_status()
+    test.print_alarm_status()
 
     # ==========================================
-    # TEST 3: Phone Added to Empty Slot
+    # TEST 3: Phone Added
     # ==========================================
-    logger.info("\n\n" + "🧪 TEST 3: Phone Added to Empty Slot (Should Trigger Alarm)" + "\n")
+    logger.info("\n\n" + "🧪 TEST 3: Phone Added to Empty Slot")
 
-    test_images3 = {
+    test.run_monitoring_cycle({
         0: "slot0_phone.jpg",
         1: "slot1_empty.jpg",
-        2: "slot2_phone.jpg"  # Phone added to empty slot!
-    }
+        2: "slot2_phone.jpg"  # Phone added!
+    })
 
-    time.sleep(test_system.grace_period + 1)
-
-    test_system.run_monitoring_cycle(test_images3, pid_map)
-    test_system.print_alarm_status()
+    test.print_alarm_status()
 
     # ==========================================
-    # TEST 4: Admin Clear Alarms
+    # TEST 4: Admin Clear
     # ==========================================
-    logger.info("\n\n" + "🧪 TEST 4: Admin Clear Alarms" + "\n")
+    logger.info("\n\n" + "🧪 TEST 4: Admin Clear Alarms")
 
-    result = test_system.alarm.authenticate_admin("admin")
-    logger.info(f"Admin auth result: {result}")
-
-    test_system.alarm.clear()
-    test_system.print_alarm_status()
+    test.admin_clear()
+    test.print_alarm_status()
 
     # ==========================================
     # TEST 5: Baseline Adaptation
     # ==========================================
-    logger.info("\n\n" + "🧪 TEST 5: Baseline Adaptation (Lighting Change)" + "\n")
+    logger.info("\n\n" + "🧪 TEST 5: Baseline Adaptation")
 
-    # Simulate gradual lighting change by using slightly different images
-    slot = test_system.slots[0]
+    slot = test.slots[0]
 
     for i in range(6):
-        test_images_adapt = {0: "slot0_phone_different.jpg"}
-        test_system.run_monitoring_cycle(test_images_adapt, {0: 101})
+        test.run_monitoring_cycle({0: "slot0_phone_different.jpg"})
 
-        if slot.last_dist > test_system.recalc_threshold:
-            logger.info(f"Cycle {i + 1}: Distance {slot.last_dist:.4f} - may trigger recalc")
-
-        time.sleep(0.5)
+        if slot.last_dist > test.recalc_threshold:
+            logger.info(f"  Cycle {i + 1}: Distance {slot.last_dist:.6f} - may adapt")
 
     logger.info("\n✅ ALL TESTS COMPLETE")
+
+    # Final summary
+    logger.info("\n" + "=" * 70)
+    logger.info("TEST SUMMARY")
+    logger.info("=" * 70)
+    logger.info(f"Slots monitored: {len(test.slots)}")
+    logger.info(f"Baselines in DB: {len(test.db.fetch_all_baselines())}")
+    logger.info(f"Occupied slots in DB: {len(test.db.fetch_occupied_slots())}")
+    logger.info("\nTo recalibrate:")
+    logger.info("  Run SQL: DELETE FROM slot_baselines;")
+    logger.info("  Then run this script again")
 
 
 if __name__ == "__main__":

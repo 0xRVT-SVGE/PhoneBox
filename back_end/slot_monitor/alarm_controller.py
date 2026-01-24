@@ -14,10 +14,10 @@ class AlarmController:
     def __init__(self):
         self._lock = threading.Lock()
         self.active = False
-        self.mismatches: set[tuple[int, int]] = set()  # (pid, lid)
+        self.mismatches: set[tuple[str, int]] = set()  # (pid, lid)
         self._alarm_start_time = None
 
-    def trigger(self, pid: int, lid: int):
+    def trigger(self, pid: str, lid: int):
         """Trigger alarm for a specific phone/location mismatch."""
         with self._lock:
             if not self.active:

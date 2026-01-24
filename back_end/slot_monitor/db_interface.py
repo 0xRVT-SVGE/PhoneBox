@@ -45,7 +45,7 @@ class SlotMonitorDB:
             put_conn(conn)
 
     @staticmethod
-    def fetch_all_baselines() -> Dict[int, np.ndarray]:
+    def fetch_all_baselines() -> dict[int, np.ndarray]:
         """
         Fetch ALL slot baselines (occupied and empty slots).
 
@@ -88,12 +88,13 @@ class SlotMonitorDB:
 
             with conn.cursor() as cur:
                 cur.execute("""
-                            INSERT INTO slot_baselines (lid, embedding, updated_at)
-                            VALUES (%s, %s, NOW())
-                            ON CONFLICT (lid) DO UPDATE SET embedding  = EXCLUDED.embedding,
-                                                            updated_at = NOW();
+                            INSERT INTO slot_baselines (lid, embedding)
+                            VALUES (%s, %s)
+                            ON CONFLICT (lid) 
+                            DO UPDATE SET 
+                            embedding = EXCLUDED.embedding,
+                            calibrated_at = NOW()
                             """, (lid, emb_bytes))
-
                 conn.commit()
                 logger.debug(f"Saved baseline for slot {lid}")
 

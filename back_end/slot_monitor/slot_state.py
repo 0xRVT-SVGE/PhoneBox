@@ -84,16 +84,15 @@ class SlotState:
         # ----------------------------
         # CASE 2: SUSPICIOUS
         # ----------------------------
+        # Start grace period if not already started
         if self._grace_start_ts is None:
             self._grace_start_ts = now
-            return {
-                "trigger_alarm": False,
-                "stop_alarm": False,
-                "needs_recalc": False,
-            }
 
-        # Grace expired → alarm condition
-        if now - self._grace_start_ts >= grace_period:
+        # Check if grace period has expired
+        grace_elapsed = now - self._grace_start_ts
+
+        if grace_elapsed >= grace_period:
+            # Grace period expired (or was 0) → trigger alarm
             if not self.mismatch:
                 self.mismatch = True
                 return {
@@ -102,6 +101,7 @@ class SlotState:
                     "needs_recalc": False,
                 }
 
+        # Still within grace period
         return {
             "trigger_alarm": False,
             "stop_alarm": False,

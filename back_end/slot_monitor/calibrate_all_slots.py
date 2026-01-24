@@ -7,9 +7,11 @@ Run this during initial setup.
 
 import logging
 import time
+import threading
 import numpy as np
+import cv2
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Tuple, Optional
 
 # Configure logging
 logging.basicConfig(
@@ -18,13 +20,224 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Import slot embedding functions
+from slot_embed import compute_embedding, embedding_distance
 
-def calibrate_all_slots(camera_embedder, db, rois: Dict[int, tuple]):
+
+class SharedFrameBuffer:
+    """
+    Thread-safe shared frame buffer for multi-threaded camera access.
+    """
+
+    def __init__(self):
+        self._frame_lock = threading.Lock()
+        self._latest_frame: Optional[np.ndarray] = None
+        self._frame_event = threading.Event()
+        self._running = False
+        self._capture_thread = None
+
+    def start_capture(self, camera_id: int = 0):
+        """Start background camera capture thread"""
+        self._running = True
+        self._capture_thread = threading.Thread(
+            target=self._capture_loop,
+            args=(camera_id,),
+            daemon=True
+        )
+        self._capture_thread.start()
+
+        # Wait for first frame
+        logger.info("Waiting for first frame...")
+        self._frame_event.wait(timeout=5.0)
+
+        if self._latest_frame is None:
+            raise RuntimeError("Failed to capture initial frame")
+
+        logger.info("✅ Camera capture started")
+
+    def _capture_loop(self, camera_id: int):
+        """Background thread that continuously captures frames"""
+        cap = cv2.VideoCapture(camera_id)
+
+        if not cap.isOpened():
+            logger.error(f"Failed to open camera {camera_id}")
+            return
+
+        # Set camera properties
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+        cap.set(cv2.CAP_PROP_AUTOFOCUS, 1)
+
+        # Warm up camera
+        for _ in range(10):
+            cap.read()
+
+        logger.info(f"Camera {camera_id} initialized")
+
+        while self._running:
+            ret, frame = cap.read()
+
+            if ret and frame is not None:
+                with self._frame_lock:
+                    self._latest_frame = frame.copy()
+                    self._frame_event.set()
+
+            time.sleep(0.01)  # ~100 FPS max
+
+        cap.release()
+        logger.info("Camera capture stopped")
+
+    def get_frame(self) -> Optional[np.ndarray]:
+        """Get the latest frame (thread-safe)"""
+        with self._frame_lock:
+            if self._latest_frame is not None:
+                return self._latest_frame.copy()
+            return None
+
+    def stop_capture(self):
+        """Stop background capture thread"""
+        self._running = False
+        if self._capture_thread is not None:
+            self._capture_thread.join(timeout=2.0)
+        logger.info("Camera released")
+
+
+class CameraEmbedder:
+    """
+    Computes embeddings from shared camera frames for calibration.
+    """
+
+    def __init__(self, frame_buffer: SharedFrameBuffer, rois: Dict[int, Tuple[int, int, int, int]]):
+        """
+        Initialize camera embedder with shared frame buffer.
+
+        Args:
+            frame_buffer: SharedFrameBuffer instance
+            rois: Dict mapping lid -> (x, y, w, h) ROI coordinates
+        """
+        self.frame_buffer = frame_buffer
+        self.rois = rois
+
+        logger.info(f"CameraEmbedder initialized with {len(rois)} ROIs")
+
+    def compute(self, lid: int) -> np.ndarray:
+        """
+        Compute embedding for a specific slot from latest frame.
+
+        Args:
+            lid: Location ID (slot number)
+
+        Returns:
+            96-dimensional normalized embedding vector
+        """
+        if lid not in self.rois:
+            raise ValueError(f"Unknown slot ID: {lid}")
+
+        # Get latest frame from shared buffer
+        frame = self.frame_buffer.get_frame()
+        if frame is None:
+            raise RuntimeError(f"No frame available for slot {lid}")
+
+        # Extract ROI
+        x, y, w, h = self.rois[lid]
+        roi = frame[y:y + h, x:x + w]
+
+        if roi.size == 0:
+            raise ValueError(f"Invalid ROI for slot {lid}: {self.rois[lid]}")
+
+        # Compute embedding
+        return compute_embedding(roi)
+
+    def preview_slots(self, slot_ids: list = None):
+        """
+        Show preview of slots with ROI boxes (for debugging/setup).
+        Press 'q' to quit preview.
+
+        Args:
+            slot_ids: List of specific slots to highlight, or None for all
+        """
+        logger.info("Opening camera preview (press 'q' to quit)...")
+
+        slots_to_show = slot_ids if slot_ids else list(self.rois.keys())
+
+        while True:
+            frame = self.frame_buffer.get_frame()
+            if frame is None:
+                time.sleep(0.1)
+                continue
+
+            # Draw ROI boxes
+            display_frame = frame.copy()
+            for lid in slots_to_show:
+                if lid not in self.rois:
+                    continue
+
+                x, y, w, h = self.rois[lid]
+                cv2.rectangle(display_frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                cv2.putText(display_frame, f"Slot {lid}", (x, y - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+            # Resize for display if too large
+            if display_frame.shape[1] > 1280:
+                scale = 1280 / display_frame.shape[1]
+                new_w = int(display_frame.shape[1] * scale)
+                new_h = int(display_frame.shape[0] * scale)
+                display_frame = cv2.resize(display_frame, (new_w, new_h))
+
+            cv2.imshow('Slot Preview', display_frame)
+
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+
+        cv2.destroyAllWindows()
+
+
+def generate_grid_rois(
+        frame_width: int,
+        frame_height: int,
+        rows: int,
+        cols: int,
+        spacing: int = 10
+) -> Dict[int, Tuple[int, int, int, int]]:
+    """
+    Generate a grid of ROIs for slot positions.
+
+    Args:
+        frame_width: Camera frame width
+        frame_height: Camera frame height
+        rows: Number of rows in grid
+        cols: Number of columns in grid
+        spacing: Spacing between ROIs in pixels
+
+    Returns:
+        Dict mapping lid -> (x, y, w, h)
+    """
+    rois = {}
+
+    # Calculate ROI dimensions
+    roi_w = (frame_width - spacing * (cols + 1)) // cols
+    roi_h = (frame_height - spacing * (rows + 1)) // rows
+
+    lid = 0
+    for row in range(rows):
+        for col in range(cols):
+            x = spacing + col * (roi_w + spacing)
+            y = spacing + row * (roi_h + spacing)
+            rois[lid] = (x, y, roi_w, roi_h)
+            lid += 1
+
+    logger.info(f"Generated {len(rois)} ROIs: {rows}x{cols} grid")
+    logger.info(f"ROI size: {roi_w}x{roi_h}, spacing: {spacing}px")
+
+    return rois
+
+
+def calibrate_all_slots(camera_embedder: CameraEmbedder, db, rois: Dict[int, tuple]):
     """
     Calibrate baselines for ALL slots in the system.
 
     Args:
-        camera_embedder: Embedder instance that can compute(lid)
+        camera_embedder: CameraEmbedder instance that can compute(lid)
         db: SlotMonitorDB instance
         rois: Dict mapping lid -> (x, y, w, h) for all slots
     """
@@ -131,12 +344,12 @@ def calibrate_all_slots(camera_embedder, db, rois: Dict[int, tuple]):
         logger.info("🎉 All slots calibrated successfully!")
 
 
-def recalibrate_specific_slots(camera_embedder, db, slot_lids: list):
+def recalibrate_specific_slots(camera_embedder: CameraEmbedder, db, slot_lids: list):
     """
     Recalibrate specific slots (for maintenance or after phone operations).
 
     Args:
-        camera_embedder: Embedder instance
+        camera_embedder: CameraEmbedder instance
         db: SlotMonitorDB instance
         slot_lids: List of slot IDs to recalibrate
     """
@@ -186,12 +399,12 @@ def recalibrate_specific_slots(camera_embedder, db, slot_lids: list):
             logger.error(f"  ❌ Failed to recalibrate slot {lid}: {e}")
 
 
-def verify_calibration(camera_embedder, db, rois: Dict[int, tuple]):
+def verify_calibration(camera_embedder: CameraEmbedder, db, rois: Dict[int, tuple]):
     """
     Verify that all slots have valid baselines and check current distances.
 
     Args:
-        camera_embedder: Embedder instance
+        camera_embedder: CameraEmbedder instance
         db: SlotMonitorDB instance
         rois: Dict of all slot ROIs
     """
@@ -223,7 +436,7 @@ def verify_calibration(camera_embedder, db, rois: Dict[int, tuple]):
             baseline = baselines[lid]
 
             # Calculate distance
-            dist = float(1.0 - np.dot(current_emb, baseline))
+            dist = embedding_distance(current_emb, baseline)
 
             status = "✅" if dist < 0.15 else "⚠️" if dist < 0.35 else "❌"
             logger.info(f"Slot {lid:3d}: distance={dist:.4f} {status}")
@@ -247,8 +460,6 @@ def verify_calibration(camera_embedder, db, rois: Dict[int, tuple]):
 
 
 if __name__ == "__main__":
-    # Example usage - you need to implement camera_embedder
-
     print("=" * 70)
     print("SLOT CALIBRATION SCRIPT")
     print("=" * 70)
@@ -256,38 +467,85 @@ if __name__ == "__main__":
     print("This script will calibrate baselines for your monitoring system.")
     print("")
     print("Options:")
-    print("  1. Calibrate all slots (initial setup)")
-    print("  2. Recalibrate specific slots (maintenance)")
-    print("  3. Verify current calibration")
-    print("  4. Exit")
+    print("  1. Preview camera and ROIs (setup/debug)")
+    print("  2. Calibrate all slots (initial setup)")
+    print("  3. Recalibrate specific slots (maintenance)")
+    print("  4. Verify current calibration")
+    print("  5. Exit")
     print("")
 
-    choice = input("Enter choice (1-4): ")
+    choice = input("Enter choice (1-5): ")
 
-    if choice not in ['1', '2', '3']:
+    if choice == '5':
         print("Exiting...")
         exit(0)
 
-    # Setup (you need to implement these)
+    # Setup
     print("\nInitializing camera and database...")
 
-    # from slot_camera import SlotCamera, generate_grid_rois
-    # from camera_embedder import CameraEmbedder
-    # from db_interface import SlotMonitorDB
+    frame_buffer = None
 
-    # rois = generate_grid_rois(1920, 1080, rows=4, cols=5, spacing=10)
-    # camera = SlotCamera(0, rois)
-    # embedder = CameraEmbedder(camera)
-    # db = SlotMonitorDB()
+    try:
+        # Import database
+        from db_interface import SlotMonitorDB
 
-    print("⚠️  You need to uncomment and configure the camera setup above")
-    print("See IMPLEMENTATION_GUIDE.md for details")
+        # Camera configuration
+        CAMERA_ID = 0  # Default camera
+        FRAME_WIDTH = 1920
+        FRAME_HEIGHT = 1080
+        GRID_ROWS = 4
+        GRID_COLS = 5
+        SPACING = 10
 
-    # if choice == '1':
-    #     calibrate_all_slots(embedder, db, rois)
-    # elif choice == '2':
-    #     slot_ids = input("Enter slot IDs to recalibrate (comma-separated): ")
-    #     lids = [int(x.strip()) for x in slot_ids.split(',')]
-    #     recalibrate_specific_slots(embedder, db, lids)
-    # elif choice == '3':
-    #     verify_calibration(embedder, db, rois)
+        # Generate ROIs (4x5 grid = 20 slots)
+        rois = generate_grid_rois(FRAME_WIDTH, FRAME_HEIGHT, GRID_ROWS, GRID_COLS, SPACING)
+
+        # Initialize shared frame buffer
+        frame_buffer = SharedFrameBuffer()
+        frame_buffer.start_capture(CAMERA_ID)
+
+        # Initialize camera embedder
+        embedder = CameraEmbedder(frame_buffer, rois)
+
+        # Initialize database
+        db = SlotMonitorDB()
+
+        print("✅ Initialization complete")
+        print("")
+
+        # Execute chosen action
+        if choice == '1':
+            # Preview mode
+            embedder.preview_slots()
+
+        elif choice == '2':
+            # Full calibration
+            calibrate_all_slots(embedder, db, rois)
+
+        elif choice == '3':
+            # Selective recalibration
+            slot_ids = input("Enter slot IDs to recalibrate (comma-separated): ")
+            lids = [int(x.strip()) for x in slot_ids.split(',')]
+            recalibrate_specific_slots(embedder, db, lids)
+
+        elif choice == '4':
+            # Verification
+            verify_calibration(embedder, db, rois)
+
+    except ImportError as e:
+        print(f"❌ Failed to import required modules: {e}")
+        print("\nPlease ensure the following files exist:")
+        print("  - slot_embed.py (embedding functions)")
+        print("  - db_interface.py (database interface)")
+        print("\nSee IMPLEMENTATION_GUIDE.md for setup details")
+
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        import traceback
+
+        traceback.print_exc()
+
+    finally:
+        # Cleanup
+        if frame_buffer is not None:
+            frame_buffer.stop_capture()
