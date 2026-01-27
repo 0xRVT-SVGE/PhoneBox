@@ -119,6 +119,14 @@ CREATE TABLE slot_baselines (
 -- FUNCTIONS
 -- ============================
 
+CREATE OR REPLACE FUNCTION update_modified_column()
+RETURNS TRIGGER AS $$
+BEGIN
+   NEW.modified_at = NOW();
+   RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
 CREATE OR REPLACE FUNCTION phones_defaults()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -164,6 +172,29 @@ BEGIN
     ELSE
         RETURN NEW;
     END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Auto-assign empty lid if not provided
+CREATE OR REPLACE FUNCTION auto_assign_location()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- If lid is NULL, find first available empty location
+    IF NEW.lid IS NULL THEN
+        SELECT l.lid INTO NEW.lid
+        FROM locations l
+        LEFT JOIN phone_storage ps ON l.lid = ps.lid AND ps.retrieved_at IS NULL
+        WHERE ps.lid IS NULL
+        ORDER BY l.lid
+        LIMIT 1;
+
+        -- If no empty location found, raise error
+        IF NEW.lid IS NULL THEN
+            RAISE EXCEPTION 'No empty locations available for phone storage';
+        END IF;
+    END IF;
+
+    RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -220,6 +251,12 @@ CREATE TRIGGER students_before_update
 BEFORE UPDATE ON students
 FOR EACH ROW
 EXECUTE FUNCTION update_modified_column();
+
+-- Auto-assign location trigger
+CREATE TRIGGER phone_storage_before_insert_auto_lid
+BEFORE INSERT ON phone_storage
+FOR EACH ROW
+EXECUTE FUNCTION auto_assign_location();
 
 -- ============================
 -- VIEWS
@@ -338,11 +375,14 @@ $$ LANGUAGE plpgsql;
 
 COMMENT ON TABLE phones IS 'Student phones (not tied to locations)';
 COMMENT ON TABLE locations IS 'Static storage grid';
-COMMENT ON TABLE phone_storage IS 'Junction table tracking which phone is in which location (1 month retention after retrieval)';
+COMMENT ON TABLE phone_storage IS 'Junction table tracking which phone is in which location (1 month retention after retrieval). LID auto-assigned if NULL.';
 COMMENT ON TABLE phone_operations IS 'Audit log of phone operations (1 month retention)';
 COMMENT ON TABLE slot_baselines IS 'Visual baseline embeddings for each storage slot (runtime state tracking in application only)';
 
 COMMENT ON COLUMN phone_storage.retrieved_at IS 'NULL = currently stored, NOT NULL = retrieved';
+COMMENT ON COLUMN phone_storage.lid IS 'Location ID - auto-assigned to first empty slot if NULL on insert';
 
 COMMENT ON INDEX uniq_active_phone_storage IS 'Prevents depositing same phone twice without retrieval';
 COMMENT ON INDEX uniq_active_location IS 'Prevents putting two phones in same location';
+
+COMMENT ON FUNCTION auto_assign_location() IS 'Auto-assigns first available empty location if lid is NULL on phone_storage insert';
