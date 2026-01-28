@@ -21,7 +21,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Import actual system modules
-from slot_state import SlotState
+from slots import SlotState
 from alarm_controller import AlarmController
 from slot_embed import compute_embedding, embedding_distance
 from db_interface import SlotMonitorDB

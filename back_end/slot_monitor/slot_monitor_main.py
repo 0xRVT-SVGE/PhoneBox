@@ -5,8 +5,8 @@ import numpy as np
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict
 
-from .alarm_controller import AlarmController
-from .slot_state import SlotState
+from alarm_controller import AlarmController
+from slots import Slot
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ class SlotMonitor:
         self.interval = interval
 
         # Runtime state
-        self.slots: Dict[int, SlotState] = {}
+        self.slots: Dict[int, Slot] = {}
         self.alarm = AlarmController()
         self.paused_slots: set[int] = set()
 
@@ -98,7 +98,7 @@ class SlotMonitor:
                     mismatches += 1
 
                 # Create slot state
-                state = SlotState(
+                state = Slot(
                     lid=lid,
                     baseline_emb=realtime,
                     is_occupied=is_occupied,
@@ -147,7 +147,7 @@ class SlotMonitor:
             self.slots[lid].reset_baseline(baseline)
             self.slots[lid].is_occupied = is_occupied
         else:
-            self.slots[lid] = SlotState(
+            self.slots[lid] = Slot(
                 lid=lid,
                 baseline_emb=baseline,
                 is_occupied=is_occupied,
