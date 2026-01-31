@@ -67,16 +67,16 @@ class AsyncCameraTestSystem:
             num_workers: int = 4,
 
             # Monitoring config
-            mismatch_threshold: float = 0.35,
+            mismatch_threshold: float = 0.15,
             recalc_threshold: float = 0.05,
             grace_period: float = 5.0,
 
             # DB config
             db_host: str = "localhost",
             db_port: int = 5432,
-            db_name: str = "PhoneBoxDB",
-            db_user: str = "admin",
-            db_password: str = "admin",
+            db_name: str = "phone_monitor",
+            db_user: str = "postgres",
+            db_password: str = "postgres",
     ):
         # Camera configuration
         self.camera_id = camera_id
@@ -217,7 +217,7 @@ class AsyncCameraTestSystem:
             logger.info("System will initialize from current state")
             return
 
-        logger.info(f"Found {len(baselines)} baselines")
+        logger.info(f"Found {len(baselines)} baselines in database")
 
         # Get current frame
         frame = self.frame_buffer.get_frame_sync()
@@ -246,27 +246,48 @@ class AsyncCameraTestSystem:
 
                 if dist > self.mismatch_threshold:
                     logger.warning(
-                        f"⚠️  Slot {lid}: MISMATCH! dist={dist:.4f} "
+                        f"⚠️  Slot {lid}: MISMATCH DETECTED! dist={dist:.4f} "
                         f"(threshold={self.mismatch_threshold})"
                     )
+                    logger.warning(
+                        f"    🚨 SECURITY: Baseline NOT updated - potential theft/swap!"
+                    )
+                    logger.warning(
+                        f"    Manual intervention required to recalibrate slot {lid}"
+                    )
                     mismatches += 1
+                    # ❌ DO NOT UPDATE BASELINE - This is a security feature!
+                    # Updating would accept the theft and disable the alarm
                 else:
                     logger.info(f"✓  Slot {lid}: OK (dist={dist:.4f})")
 
-                # Update baseline
-                current_emb = temp_slot.compute_embedding(frame)
-                updated_baselines[lid] = current_emb
+                    # ✅ Only update baseline if NO mismatch (minor drift correction)
+                    if dist > self.recalc_threshold:
+                        # Small drift detected - safe to update
+                        current_emb = temp_slot.compute_embedding(frame)
+                        updated_baselines[lid] = current_emb
+                        logger.info(f"    → Baseline updated (minor drift correction)")
 
             except Exception as e:
                 logger.error(f"Failed checking slot {lid}: {e}")
 
-        # Save updated baselines (batch operation for performance)
+        # Save updated baselines (only for non-mismatched slots)
         if updated_baselines:
             await self.db.save_baselines_batch(updated_baselines)
-            logger.info(f"✅ Updated {len(updated_baselines)} baselines")
+            logger.info(f"✅ Updated {len(updated_baselines)} baselines (drift correction)")
 
         if mismatches > 0:
-            logger.warning(f"⚠️  {mismatches}/{len(baselines)} slots had mismatches")
+            logger.critical("")
+            logger.critical("=" * 70)
+            logger.critical(f"🚨 SECURITY ALERT: {mismatches} SLOT(S) WITH MISMATCHES")
+            logger.critical("=" * 70)
+            logger.critical("Baselines NOT updated for mismatched slots (security feature)")
+            logger.critical("These slots require manual inspection and recalibration")
+            logger.critical("Possible causes:")
+            logger.critical("  - Phone removed/stolen while system was offline")
+            logger.critical("  - Phone swapped with different device")
+            logger.critical("  - Major lighting changes")
+            logger.critical("=" * 70)
 
     async def _initialize_monitoring(self):
         """Initialize slot states from database"""
@@ -374,28 +395,52 @@ class AsyncCameraTestSystem:
         logger.info("SYSTEM STATUS")
         logger.info("=" * 70)
 
-        # Camera metrics
-        cam_metrics = self.camera.get_metrics()
-        logger.info(f"Camera: {cam_metrics['frame_count']} frames, "
-                    f"{cam_metrics['active_subscribers']} subscribers, "
-                    f"{cam_metrics['notification_latency_ms']:.2f}ms latency")
+        # Camera metrics (with safety check)
+        if self.camera:
+            try:
+                cam_metrics = self.camera.get_metrics()
+                logger.info(f"Camera: {cam_metrics['frame_count']} frames, "
+                            f"{cam_metrics['active_subscribers']} subscribers, "
+                            f"{cam_metrics['notification_latency_ms']:.2f}ms latency")
+            except Exception as e:
+                logger.warning(f"Camera metrics unavailable: {e}")
+        else:
+            logger.info("Camera: Not initialized")
 
-        # Worker metrics
-        worker_metrics = self.worker_pool.get_metrics()
-        logger.info(f"Workers: {worker_metrics['total_frames_processed']} frames processed, "
-                    f"avg_dist={worker_metrics['avg_distance']:.4f}")
-        logger.info(f"Alarms: {worker_metrics['total_alarms']} triggered, "
-                    f"Errors: {worker_metrics['total_errors']}")
+        # Worker metrics (with safety check)
+        if self.worker_pool:
+            try:
+                worker_metrics = self.worker_pool.get_metrics()
+                logger.info(f"Workers: {worker_metrics['total_frames_processed']} frames processed, "
+                            f"avg_dist={worker_metrics['avg_distance']:.4f}")
+                logger.info(f"Alarms: {worker_metrics['total_alarms']} triggered, "
+                            f"Errors: {worker_metrics['total_errors']}")
+            except Exception as e:
+                logger.warning(f"Worker metrics unavailable: {e}")
+        else:
+            logger.info("Workers: Not initialized")
 
-        # DB metrics
-        db_stats = await self.db.get_pool_stats()
-        logger.info(f"Database: {db_stats['free']}/{db_stats['size']} connections free")
+        # DB metrics (with safety check)
+        if self.db:
+            try:
+                db_stats = await self.db.get_pool_stats()
+                logger.info(f"Database: {db_stats.get('free', 0)}/{db_stats.get('size', 0)} connections free")
+            except Exception as e:
+                logger.warning(f"Database metrics unavailable: {e}")
+        else:
+            logger.info("Database: Not initialized")
 
-        # Alarm status
-        alarm_status = self.alarm.get_status()
-        if alarm_status['active']:
-            logger.warning(f"⚠️  ALARM ACTIVE: {alarm_status['mismatch_count']} mismatches, "
-                           f"{alarm_status['duration']:.1f}s")
+        # Alarm status (with safety check)
+        if self.alarm:
+            try:
+                alarm_status = self.alarm.get_status()
+                if alarm_status['active']:
+                    logger.warning(f"⚠️  ALARM ACTIVE: {alarm_status['mismatch_count']} mismatches, "
+                                   f"{alarm_status['duration']:.1f}s")
+            except Exception as e:
+                logger.warning(f"Alarm status unavailable: {e}")
+        else:
+            logger.info("Alarm: Not initialized")
 
     async def shutdown(self):
         """Graceful shutdown"""
@@ -445,14 +490,14 @@ async def main():
         "num_workers": 4,
 
         # Thresholds
-        "mismatch_threshold": 0.35,
-        "recalc_threshold": 0.015,
+        "mismatch_threshold": 0.15,
+        "recalc_threshold": 0.05,
         "grace_period": 5.0,
 
         # Database
         "db_host": "localhost",
         "db_port": 5432,
-        "db_name": "PhoneBoxDB",
+        "db_name": "PhoneBoxDB",  # ← Match your actual database name
         "db_user": "admin",
         "db_password": "admin",
     }
