@@ -22,7 +22,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Import refactored modules
-from slot_camera import SharedFrameBuffer, CameraCapture
+from camera_async import SharedFrameBuffer, CameraCapture
 from slots import Slot, generate_grid_rois
 from alarm_controller import AlarmController
 from db_interface import SlotMonitorDB

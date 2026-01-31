@@ -1,5 +1,5 @@
 # ============================================================
-# FILE: server/slot_monitor/slot.py
+# FILE: server/slot_monitor/slots.py
 # ============================================================
 """
 Unified slot abstraction with state, ROI extraction, and monitoring logic.
