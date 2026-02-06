@@ -24,6 +24,10 @@ import time
 from pathlib import Path
 from typing import Dict, Optional
 
+# DEBUG: Import cv2 for visualization (remove these 2 lines when done debugging)
+import cv2
+import numpy as np
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -74,9 +78,12 @@ class AsyncCameraTestSystem:
             # DB config
             db_host: str = "localhost",
             db_port: int = 5432,
-            db_name: str = "phone_monitor",
-            db_user: str = "postgres",
-            db_password: str = "postgres",
+            db_name: str = "PhoneBoxDB",
+            db_user: str = "admin",
+            db_password: str = "admin",
+
+            # DEBUG: Visualization config (remove this parameter when done debugging)
+            enable_debug_viz: bool = False,
     ):
         # Camera configuration
         self.camera_id = camera_id
@@ -116,6 +123,12 @@ class AsyncCameraTestSystem:
         # Shutdown flag
         self._shutdown_event = asyncio.Event()
 
+        # DEBUG: Visualization state (remove these 4 lines when done debugging)
+        self.enable_debug_viz = enable_debug_viz
+        self.debug_viz_task: Optional[asyncio.Task] = None
+        self.debug_slot_distances: Dict[int, float] = {}
+        self.debug_window_name = "DEBUG: Async Camera Monitor"
+
         logger.info("=" * 70)
         logger.info("ASYNC EVENT-DRIVEN TEST SYSTEM")
         logger.info("=" * 70)
@@ -124,6 +137,9 @@ class AsyncCameraTestSystem:
         logger.info(f"Workers: {num_workers} (async, event-driven)")
         logger.info(f"Thresholds: mismatch={mismatch_threshold}, recalc={recalc_threshold}")
         logger.info(f"Grace period: {grace_period}s")
+        # DEBUG: Log visualization status (remove this line when done debugging)
+        if enable_debug_viz:
+            logger.info("🎥 DEBUG VISUALIZATION ENABLED")
 
     async def setup(self):
         """Initialize all system components"""
@@ -172,16 +188,6 @@ class AsyncCameraTestSystem:
         """Initialize async camera system"""
         logger.info("\nSetting up async camera...")
 
-        # Generate ROIs
-        self.rois = generate_grid_rois(
-            frame_width=self.camera_width,
-            frame_height=self.camera_height,
-            rows=self.grid_rows,
-            cols=self.grid_cols,
-            spacing=10,
-        )
-        logger.info(f"Generated {len(self.rois)} ROIs")
-
         # Create frame buffer
         self.frame_buffer = AsyncFrameBuffer()
         self.frame_buffer.set_event_loop(self.loop)
@@ -201,6 +207,27 @@ class AsyncCameraTestSystem:
             width=self.camera_width,
             height=self.camera_height,
         )
+
+        frame = self.frame_buffer.get_frame_sync()
+
+        # Generate ROIs
+        self.rois = generate_grid_rois(
+            frame_width=self.camera_width,
+            frame_height=self.camera_height,
+            rows=self.grid_rows,
+            cols=self.grid_cols,
+            spacing=10,
+            num_lids = await self.db.get_num_lid(),
+            frame=frame
+        )
+        logger.info("Generated ROIs (lid -> [x1, y1, x2, y2]):")
+
+        for lid in sorted(self.rois.keys()):
+            x1, y1, x2, y2 = self.rois[lid]
+            w = x2 - x1
+            h = y2 - y1
+            logger.info(f"  Slot {lid}: ({x1}, {y1}) -> ({x2}, {y2}) | size={w}x{h}")
+
 
         logger.info("✅ Async camera ready")
 
@@ -323,6 +350,9 @@ class AsyncCameraTestSystem:
             pid = occupied_lids.get(lid, "N/A")
             logger.info(f"  Slot {lid}: {status}" + (f" (PID: {pid})" if is_occupied else ""))
 
+            # DEBUG: Initialize distances (remove this line when done debugging)
+            self.debug_slot_distances[lid] = 0.0
+
         logger.info(f"✅ Initialized {len(self.slots)} slots")
 
     async def _create_workers(self):
@@ -352,6 +382,269 @@ class AsyncCameraTestSystem:
 
         logger.info(f"✅ Worker pool created: {self.num_workers} workers")
 
+    # ========================================================================
+    # DEBUG VISUALIZATION FUNCTIONS
+    # Remove this entire section (from here to the next ===== line) when done
+    # ========================================================================
+
+    def _debug_get_roi_color(self, distance: float) -> tuple:
+        """Get BGR color for ROI based on distance"""
+        if distance >= self.mismatch_threshold:
+            return (0, 0, 255)  # RED
+        elif distance >= self.recalc_threshold:
+            return (0, 165, 255)  # ORANGE
+        else:
+            return (0, 255, 0)  # GREEN
+
+    def _debug_update_distances(self):
+        """Update distance calculations for visualization"""
+        for lid, slot in self.slots.items():
+            self.debug_slot_distances[lid] = slot.last_dist
+
+    def _debug_draw_rois(self, frame: np.ndarray) -> np.ndarray:
+        """Draw ROI rectangles and labels"""
+        display_frame = frame.copy()
+
+        for lid, slot in self.slots.items():
+            x1, y1, w, h = slot.roi_coords
+            x2 = x1 + w
+            y2 = y1 + h
+            distance = self.debug_slot_distances.get(lid, 0.0)
+            color = self._debug_get_roi_color(distance)
+            thickness = 4 if distance >= self.mismatch_threshold else 2
+
+            # Draw rectangle
+            cv2.rectangle(display_frame, (x1, y1), (x2, y2), color, thickness)
+
+            # Prepare labels
+            status = "OCCUPIED" if slot.is_occupied else "EMPTY"
+            label = f"Slot {lid}: {status}"
+            dist_label = f"dist: {distance:.4f}"
+
+            # Draw label background
+            label_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+            dist_size, _ = cv2.getTextSize(dist_label, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
+            label_w = max(label_size[0], dist_size[0]) + 10
+            label_h = label_size[1] + dist_size[1] + 15
+
+            overlay = display_frame.copy()
+            cv2.rectangle(overlay, (x1, y1 - label_h - 5), (x1 + label_w, y1), color, -1)
+            cv2.addWeighted(overlay, 0.7, display_frame, 0.3, 0, display_frame)
+
+            # Draw text
+            cv2.putText(display_frame, label, (x1 + 5, y1 - dist_size[1] - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+            cv2.putText(display_frame, dist_label, (x1 + 5, y1 - 5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
+
+        return display_frame
+
+    def _debug_draw_overlay(self, frame: np.ndarray) -> np.ndarray:
+        """Draw info overlay"""
+        normal = sum(1 for d in self.debug_slot_distances.values() if d < self.recalc_threshold)
+        update = sum(1 for d in self.debug_slot_distances.values()
+                     if self.recalc_threshold <= d < self.mismatch_threshold)
+        mismatch = sum(1 for d in self.debug_slot_distances.values() if d >= self.mismatch_threshold)
+
+        alarm_status = self.alarm.get_status() if self.alarm else {'active': False}
+
+        overlay_lines = [
+            f"Slots: {len(self.slots)} total",
+            f"  Normal: {normal}",
+            f"  Update: {update}",
+            f"  Mismatch: {mismatch}",
+        ]
+
+        if alarm_status['active']:
+            overlay_lines.append(f"ALARM ACTIVE!")
+            overlay_lines.append(f"  Duration: {alarm_status.get('duration', 0):.1f}s")
+
+        # Draw background
+        overlay_h = len(overlay_lines) * 25 + 10
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (10, 10), (280, overlay_h), (0, 0, 0), -1)
+        cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
+
+        # Draw text
+        y_offset = 30
+        for line in overlay_lines:
+            color = (0, 0, 255) if "ALARM" in line or ("Mismatch:" in line and mismatch > 0) else \
+                (0, 165, 255) if "Update:" in line and update > 0 else (255, 255, 255)
+            cv2.putText(frame, line, (20, y_offset), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5, color, 1, cv2.LINE_AA)
+            y_offset += 25
+
+        # Hotkey help
+        help_text = "Hotkeys: [A]dmin Clear | [S]creenshot | [Q]uit"
+        help_y = frame.shape[0] - 15
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (10, help_y - 20), (400, help_y + 5), (0, 0, 0), -1)
+        cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
+        cv2.putText(frame, help_text, (15, help_y), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5, (255, 255, 255), 1, cv2.LINE_AA)
+
+        return frame
+
+    async def _debug_admin_clear(self):
+        """Execute admin clear: ONLY affect mismatched slots"""
+        logger.info("\n" + "=" * 70)
+        logger.info("DEBUG: ADMIN CLEAR (HOTKEY TRIGGERED)")
+        logger.info("=" * 70)
+
+        if not self.alarm:
+            logger.warning("Alarm controller not initialized")
+            return
+
+        # ------------------------------------------------------------------
+        # 1. Authenticate and FETCH mismatches (DO NOT CLEAR YET)
+        # ------------------------------------------------------------------
+        try:
+            auth = self.alarm.authenticate_admin("admin")
+            if not auth["authenticated"]:
+                logger.error("❌ Admin authentication failed")
+                return
+
+            mismatches = auth["mismatches"]  # [(pid, lid), ...]
+            mismatch_lids = {lid for _, lid in mismatches}
+
+            if not mismatch_lids:
+                logger.info("No mismatches to clear")
+                return
+
+            logger.info(f"Admin approved recalibration for slots: {sorted(mismatch_lids)}")
+
+        except Exception as e:
+            logger.error(f"❌ Failed to fetch mismatches: {e}")
+            return
+
+        # ------------------------------------------------------------------
+        # 2. Get frame
+        # ------------------------------------------------------------------
+        frame = self.frame_buffer.get_frame_sync()
+        if frame is None:
+            logger.error("❌ Failed to get frame for baseline recalculation")
+            return
+
+        # ------------------------------------------------------------------
+        # 3. Stop workers (CRITICAL)
+        # ------------------------------------------------------------------
+        logger.info("⏸️  Pausing workers for baseline update...")
+        if self.worker_pool:
+            await self.worker_pool.stop_all()
+
+        updated_baselines = {}
+        recalc_count = 0
+        error_count = 0
+
+        # ------------------------------------------------------------------
+        # 4. Recalculate ONLY mismatched slots
+        # ------------------------------------------------------------------
+        for lid in mismatch_lids:
+            slot = self.slots.get(lid)
+            if slot is None:
+                logger.warning(f"Slot {lid} not found, skipping")
+                continue
+
+            try:
+                new_baseline = slot.compute_embedding(frame)
+                slot.reset_baseline(new_baseline)
+                slot.last_dist = 0.0
+
+                updated_baselines[lid] = new_baseline
+                recalc_count += 1
+
+                logger.info(f"✓ Slot {lid}: Baseline recalculated (mismatch only)")
+
+            except Exception as e:
+                error_count += 1
+                logger.error(f"✗ Slot {lid}: Failed to recalc - {e}")
+
+        # ------------------------------------------------------------------
+        # 5. Persist to DB
+        # ------------------------------------------------------------------
+        if updated_baselines:
+            try:
+                await self.db.save_baselines_batch(updated_baselines)
+                logger.info(f"✅ Saved {len(updated_baselines)} baselines to database")
+            except Exception as e:
+                logger.error(f"❌ DB save failed: {e}")
+                logger.warning("⚠️  Memory updated, DB NOT updated")
+
+        # ------------------------------------------------------------------
+        # 6. Restart workers
+        # ------------------------------------------------------------------
+        logger.info("▶️  Restarting workers...")
+        if self.worker_pool:
+            await self.worker_pool.start_all()
+
+        # ------------------------------------------------------------------
+        # 7. NOW clear the alarm (after successful handling)
+        # ------------------------------------------------------------------
+        self.alarm.clear()
+        logger.info("✅ Mismatches cleared")
+
+        # ------------------------------------------------------------------
+        # Summary
+        # ------------------------------------------------------------------
+        logger.info("\n" + "=" * 70)
+        logger.info("ADMIN CLEAR COMPLETE (MISMATCH-ONLY)")
+        logger.info("=" * 70)
+        logger.info(f"  Slots recalibrated: {recalc_count}")
+        logger.info(f"  Baselines saved: {len(updated_baselines)}")
+        if error_count:
+            logger.warning(f"  Errors: {error_count}")
+        logger.info("=" * 70)
+
+    async def _debug_visualization_loop(self):
+        """Main debug visualization loop"""
+        try:
+            cv2.namedWindow(self.debug_window_name, cv2.WINDOW_NORMAL)
+            cv2.resizeWindow(self.debug_window_name, 1280, 720)
+            logger.info("🎥 DEBUG: Visualization window opened")
+            logger.info("   Hotkeys: A=Admin Clear, S=Screenshot, Q=Quit")
+
+            while not self._shutdown_event.is_set():
+                frame = self.frame_buffer.get_frame_sync()
+                if frame is None:
+                    await asyncio.sleep(0.01)
+                    continue
+
+                # Update distances
+                self._debug_update_distances()
+
+                # Draw ROIs and overlay
+                display_frame = self._debug_draw_rois(frame)
+                display_frame = self._debug_draw_overlay(display_frame)
+
+                # Show frame
+                cv2.imshow(self.debug_window_name, display_frame)
+
+                # Handle keyboard
+                key = cv2.waitKey(1) & 0xFF
+
+                if key == ord('q') or key == ord('Q') or key == 27:
+                    logger.info("DEBUG: Quit key pressed")
+                    self._shutdown_event.set()
+                elif key == ord('a') or key == ord('A'):
+                    await self._debug_admin_clear()
+                elif key == ord('s') or key == ord('S'):
+                    timestamp = time.strftime("%Y%m%d_%H%M%S")
+                    filename = f"debug_screenshot_{timestamp}.png"
+                    cv2.imwrite(filename, display_frame)
+                    logger.info(f"📸 DEBUG: Screenshot saved: {filename}")
+
+                await asyncio.sleep(0.01)
+
+        except Exception as e:
+            logger.error(f"DEBUG: Visualization error: {e}", exc_info=True)
+        finally:
+            cv2.destroyAllWindows()
+            logger.info("🎥 DEBUG: Visualization window closed")
+
+    # ========================================================================
+    # END OF DEBUG VISUALIZATION FUNCTIONS
+    # ========================================================================
+
     async def run(self):
         """Main monitoring loop"""
         logger.info("\n" + "=" * 70)
@@ -367,6 +660,10 @@ class AsyncCameraTestSystem:
         # Status reporting task
         status_task = asyncio.create_task(self._status_reporter())
 
+        # DEBUG: Start visualization if enabled (remove these 3 lines when done debugging)
+        if self.enable_debug_viz:
+            self.debug_viz_task = asyncio.create_task(self._debug_visualization_loop())
+
         try:
             # Wait for shutdown signal
             await self._shutdown_event.wait()
@@ -379,6 +676,14 @@ class AsyncCameraTestSystem:
                 await status_task
             except asyncio.CancelledError:
                 pass
+
+            # DEBUG: Stop visualization (remove these 5 lines when done debugging)
+            if self.debug_viz_task:
+                self.debug_viz_task.cancel()
+                try:
+                    await self.debug_viz_task
+                except asyncio.CancelledError:
+                    pass
 
     async def _status_reporter(self):
         """Periodic status reporting"""
@@ -500,6 +805,9 @@ async def main():
         "db_name": "PhoneBoxDB",  # ← Match your actual database name
         "db_user": "admin",
         "db_password": "admin",
+
+        # DEBUG: Enable visualization (remove this line when done debugging)
+        "enable_debug_viz": True,  # Set to False to disable, or remove entirely
     }
 
     # Create system

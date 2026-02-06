@@ -39,6 +39,10 @@ class AlarmController:
                 self._alarm_start_time = None
                 logger.info(f"ALARM CLEARED after {duration:.1f}s")
 
+    def _get_mismatches_list(self):
+        mismatches_as_strings = [(str(pid), lid) for pid, lid in self.mismatches]
+        return sorted(mismatches_as_strings)  # Now safely sorted
+
     def authenticate_admin(self, password: str) -> dict:
         """
         Admin authentication to view mismatches.
@@ -55,7 +59,7 @@ class AlarmController:
                 logger.info("Admin authenticated, viewing mismatches")
                 return {
                     "authenticated": True,
-                    "mismatches": sorted(self.mismatches)
+                    "mismatches": self._get_mismatches_list()
                 }
         return {
             "authenticated": False,

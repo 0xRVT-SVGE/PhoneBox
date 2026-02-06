@@ -13,8 +13,8 @@ import numpy as np
 from typing import List, Dict
 from dataclasses import dataclass, field
 
-from slots import Slot
-from alarm_controller import AlarmController
+from ..slot_monitor.slots import Slot
+from ..slot_monitor.alarm_controller import AlarmController
 
 logger = logging.getLogger(__name__)
 
@@ -361,3 +361,5 @@ class WorkerPool:
             "total_errors": total_errors,
             "workers": [w.get_metrics() for w in self.workers],
         }
+
+# TODO: edit for the slot scanning

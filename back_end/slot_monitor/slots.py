@@ -330,38 +330,131 @@ class Slot:
 # HELPER FUNCTIONS
 # ------------------------------------------------------------
 
+import cv2
+import json
+import os
+from typing import Dict, Tuple, Optional
+
+ROI_FILE = "rois_saved.json"
+
+
 def generate_grid_rois(
-        frame_width: int,
-        frame_height: int,
-        rows: int,
-        cols: int,
-        spacing: int = 10,
-) -> dict[int, Tuple[int, int, int, int]]:
-    """
-    Generate ROI coordinates for a grid layout.
+    frame_width: int,
+    frame_height: int,
+    rows: int,
+    cols: int,
+    spacing: int = 0,
+    num_lids: Optional[int] = None,
+    frame: Optional[any] = None
+) -> Dict[int, Tuple[int, int, int, int]]:
 
-    Args:
-        frame_width: Camera frame width
-        frame_height: Camera frame height
-        rows: Number of rows in grid
-        cols: Number of columns in grid
-        spacing: Pixels to leave as margin between cells
+    def default_grid_rois(n_lids: int) -> list[list[int]]:
+        rois = []
+        total_spacing_x = spacing * (cols + 1)
+        total_spacing_y = spacing * (rows + 1)
+        cell_w = (frame_width - total_spacing_x) // cols
+        cell_h = (frame_height - total_spacing_y) // rows
 
-    Returns:
-        Dict mapping lid -> (x, y, w, h)
-    """
-    rois = {}
-    cell_h = frame_height // rows
-    cell_w = frame_width // cols
+        lid = 0
+        for r in range(rows):
+            for c in range(cols):
+                if lid >= n_lids:
+                    return rois
+                x = spacing + c * (cell_w + spacing)
+                y = spacing + r * (cell_h + spacing)
+                rois.append([x, y, cell_w, cell_h])
+                lid += 1
+        return rois
 
-    for i in range(rows):
-        for j in range(cols):
-            x1 = j * cell_w + spacing // 2
-            y1 = i * cell_h + spacing // 2
-            x2 = (j + 1) * cell_w - spacing // 2
-            y2 = (i + 1) * cell_h - spacing // 2
+    if num_lids is None:
+        num_lids = rows * cols
 
-            lid = i * cols + j
-            rois[lid] = (x1, y1, x2 - x1, y2 - y1)  # (x, y, w, h)
+    # ---- Load or initialize ROIs ----
+    if os.path.exists(ROI_FILE):
+        try:
+            with open(ROI_FILE, "r") as f:
+                rois_list = json.load(f)
 
-    return rois
+            if len(rois_list) != num_lids:
+                print("Saved ROI count mismatch, regenerating grid")
+                rois_list = default_grid_rois(num_lids)
+
+        except Exception:
+            rois_list = default_grid_rois(num_lids)
+    else:
+        rois_list = default_grid_rois(num_lids)
+
+    # ---- Visualization setup ----
+    if frame is None:
+        frame = np.full((frame_height, frame_width, 3), 255, dtype=np.uint8)
+
+    current = 0
+    dragging = None
+    RESIZE_MARGIN = 10
+
+    def redraw():
+        temp = frame.copy()
+        for i, (x, y, w, h) in enumerate(rois_list):
+            color = (0, 0, 255) if i == current else (0, 255, 0)
+            cv2.rectangle(temp, (x, y), (x + w, y + h), color, 2)
+            cv2.putText(temp, f"LID {i}", (x, y - 5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+        cv2.imshow("ROI Editor", temp)
+
+    def mouse_cb(event, mx, my, *_):
+        nonlocal dragging
+        x, y, w, h = rois_list[current]
+        near_br = (x + w - RESIZE_MARGIN <= mx <= x + w and
+                   y + h - RESIZE_MARGIN <= my <= y + h)
+
+        if event == cv2.EVENT_LBUTTONDOWN:
+            if near_br:
+                dragging = ("resize", mx, my)
+            elif x <= mx <= x + w and y <= my <= y + h:
+                dragging = ("move", mx - x, my - y)
+
+        elif event == cv2.EVENT_MOUSEMOVE and dragging:
+            if dragging[0] == "move":
+                dx, dy = dragging[1:]
+                rois_list[current][0] = max(0, min(mx - dx, frame_width - w))
+                rois_list[current][1] = max(0, min(my - dy, frame_height - h))
+            else:
+                rois_list[current][2] = max(10, min(mx - x, frame_width - x))
+                rois_list[current][3] = max(10, min(my - y, frame_height - y))
+            redraw()
+
+        elif event == cv2.EVENT_LBUTTONUP:
+            dragging = None
+
+    cv2.namedWindow("ROI Editor")
+    cv2.setMouseCallback("ROI Editor", mouse_cb)
+    redraw()
+
+    while True:
+        key = cv2.waitKey(1) & 0xFF
+
+        if key in (ord('x'), ord('X')):
+            break
+        elif key in (ord('e'), ord('E')):
+            current = (current + 1) % num_lids
+            redraw()
+        elif key in (ord('a'), ord('A')):
+            current = (current - 1) % num_lids
+            redraw()
+        elif key in (ord('r'), ord('R')):
+            rois_list = default_grid_rois(num_lids)
+            current = 0
+            redraw()
+
+    cv2.destroyWindow("ROI Editor")
+
+    if len(rois_list) != num_lids:
+        raise RuntimeError(
+            f"ROI count mismatch: expected {num_lids}, got {len(rois_list)}"
+        )
+
+    with open(ROI_FILE, "w") as f:
+        json.dump(rois_list, f, indent=2)
+
+    return {i: tuple(r) for i, r in enumerate(rois_list)}
+

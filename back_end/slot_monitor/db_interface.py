@@ -363,6 +363,13 @@ class AsyncSlotMonitorDB:
     # OCCUPANCY QUERIES
     # ------------------------------------------------------------
 
+    async def get_num_lid(self) -> int:
+        """Return the number of available lid (max lid + 1)"""
+        query = "SELECT COALESCE(MAX(lid), 0) + 1 FROM locations;"
+        num_lid = await self._pool.fetchval(query)
+        return num_lid or 1
+
+
     async def fetch_occupied_slots(self) -> List[Tuple[int, str]]:
         """
         Fetch all currently occupied slots (async).
