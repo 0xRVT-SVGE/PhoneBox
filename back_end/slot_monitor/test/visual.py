@@ -21,7 +21,6 @@ import logging
 import signal
 import sys
 import time
-from pathlib import Path
 from typing import Dict, Optional
 
 # DEBUG: Import cv2 for visualization (remove these 2 lines when done debugging)
@@ -36,8 +35,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Import async modules
-from camera_async import AsyncFrameBuffer, AsyncCameraCapture
-from worker_async import AsyncMonitorWorker, WorkerPool
+from back_end.slot_monitor.camera.camera_async import AsyncFrameBuffer, AsyncCameraCapture
+from worker_async import WorkerPool
 from slots import Slot, generate_grid_rois  # Note: slot.py not slots.py
 from alarm_controller import AlarmController
 from db_interface import AsyncSlotMonitorDB  # Note: merged db_interface not db_async

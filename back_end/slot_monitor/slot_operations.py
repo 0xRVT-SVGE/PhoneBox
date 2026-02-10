@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 class SlotOperations:
     """
-    Handle deposit/withdrawal operations.
+    Handle deposit/withdrawal DATABASE operations.
     Coordinates between DB, monitor, and embedder.
     """
 
@@ -37,82 +37,49 @@ class SlotOperations:
     # DEPOSIT OPERATION
     # ------------------------------------------------------------
 
-    def deposit_phone(
-            self,
-            pid: int,
-            lid: int,
-            wait_for_stable: float = 3.0
-    ) -> Dict:
+    def deposit_phone_db(self, pid: int, lid: int) -> Dict:
         """
-        Deposit a phone into a storage location.
+        Create database record for phone deposit.
+
+        ASSUMES:
+        - PID is already validated
+        - Slot is already verified empty
+        - Phone is already physically placed
+        - Baseline will be captured separately
 
         Args:
-            pid: Phone ID
-            lid: Location ID
-            wait_for_stable: Seconds to wait after placing phone
+            pid: Phone ID (already validated)
+            lid: Location ID (already verified empty)
 
         Returns:
-            {"status": "success" | "error", "message": str, ...}
+            {"status": "success" | "error", "message": str, "storage_id": int}
         """
-        if not self.monitor or not self.embedder:
-            return {
-                "status": "error",
-                "message": "Monitor or embedder not available"
-            }
-
         conn = get_conn()
         try:
             with conn.cursor() as cur:
-                # Verify phone exists and is not stored
+                # Double-check preconditions
                 cur.execute("""
-                            SELECT EXISTS(SELECT 1
-                                          FROM phones
-                                          WHERE pid = %s),
+                            SELECT EXISTS(SELECT 1 FROM phones WHERE pid = %s),
                                    EXISTS(SELECT 1
                                           FROM phone_storage
                                           WHERE pid = %s
+                                            AND retrieved_at IS NULL),
+                                   EXISTS(SELECT 1
+                                          FROM phone_storage
+                                          WHERE lid = %s
                                             AND retrieved_at IS NULL);
-                            """, (pid, pid))
+                            """, (pid, pid, lid))
 
-                phone_exists, already_stored = cur.fetchone()
+                phone_exists, already_stored, slot_occupied = cur.fetchone()
 
                 if not phone_exists:
-                    return {"status": "error", "message": "Phone not found"}
+                    return {"status": "error", "message": "Phone not found in database"}
 
                 if already_stored:
                     return {"status": "error", "message": "Phone already in storage"}
 
-                # Verify location is empty
-                cur.execute("""
-                            SELECT EXISTS(SELECT 1
-                                          FROM phone_storage
-                                          WHERE lid = %s
-                                            AND retrieved_at IS NULL);
-                            """, (lid,))
-
-                if cur.fetchone()[0]:
-                    return {
-                        "status": "error",
-                        "message": f"Location {lid} already occupied"
-                    }
-
-                logger.info(f"Starting deposit: PID={pid} at LID={lid}")
-
-                # Pause monitoring
-                self.monitor.pause_slot(lid)
-
-                # Wait for operator to place phone and remove hand
-                logger.info(f"Waiting {wait_for_stable}s for stabilization...")
-                time.sleep(wait_for_stable)
-
-                # Capture new baseline
-                baseline_emb = self._capture_baseline(lid)
-                if baseline_emb is None:
-                    self.monitor.resume_slot(lid, np.zeros(512), False)  # Resume empty
-                    return {
-                        "status": "error",
-                        "message": "Failed to capture baseline"
-                    }
+                if slot_occupied:
+                    return {"status": "error", "message": f"Location {lid} already occupied"}
 
                 # Create storage record
                 cur.execute("""
@@ -124,13 +91,10 @@ class SlotOperations:
                 storage_id = cur.fetchone()[0]
                 conn.commit()
 
-                # Resume monitoring with new baseline (occupied)
-                self.monitor.resume_slot(lid, baseline_emb, is_occupied=True)
-
-                logger.info(f"Phone {pid} deposited successfully at location {lid}")
+                logger.info(f"Deposit DB record created: PID={pid}, LID={lid}, storage_id={storage_id}")
                 return {
                     "status": "success",
-                    "message": "Phone deposited successfully",
+                    "message": "Deposit recorded successfully",
                     "pid": pid,
                     "lid": lid,
                     "storage_id": storage_id
@@ -138,10 +102,7 @@ class SlotOperations:
 
         except Exception as e:
             conn.rollback()
-            logger.error(f"Failed to deposit phone {pid}: {e}")
-            if 'lid' in locals():
-                # Resume monitoring in error case
-                self.monitor.resume_slot(lid, np.zeros(512), False)
+            logger.error(f"Failed to create deposit record for PID {pid}: {e}")
             return {"status": "error", "message": str(e)}
         finally:
             put_conn(conn)
@@ -150,27 +111,21 @@ class SlotOperations:
     # WITHDRAWAL OPERATION
     # ------------------------------------------------------------
 
-    def withdraw_phone(
-            self,
-            pid: int,
-            wait_for_removal: float = 3.0
-    ) -> Dict:
+    def withdraw_phone_db(self, pid: int) -> Dict:
         """
-        Withdraw a phone from storage.
+        Mark phone as retrieved in database.
+
+        ASSUMES:
+        - PID is already validated
+        - Phone is already physically removed
+        - Baseline will be recaptured separately
 
         Args:
-            pid: Phone ID
-            wait_for_removal: Seconds to wait after removing phone
+            pid: Phone ID (already validated)
 
         Returns:
-            {"status": "success" | "error", "message": str, ...}
+            {"status": "success" | "error", "message": str, "lid": int}
         """
-        if not self.monitor or not self.embedder:
-            return {
-                "status": "error",
-                "message": "Monitor or embedder not available"
-            }
-
         conn = get_conn()
         try:
             with conn.cursor() as cur:
@@ -192,24 +147,6 @@ class SlotOperations:
 
                 storage_id, lid = result
 
-                logger.info(f"Starting withdrawal: PID={pid} from LID={lid}")
-
-                # Pause monitoring
-                self.monitor.pause_slot(lid)
-
-                # Wait for operator to remove phone and hand
-                logger.info(f"Waiting {wait_for_removal}s for removal...")
-                time.sleep(wait_for_removal)
-
-                # Capture new baseline (empty slot)
-                baseline_emb = self._capture_baseline(lid)
-                if baseline_emb is None:
-                    self.monitor.resume_slot(lid, np.zeros(512), True)  # Resume as occupied
-                    return {
-                        "status": "error",
-                        "message": "Failed to capture baseline"
-                    }
-
                 # Update storage record
                 cur.execute("""
                             UPDATE phone_storage
@@ -219,13 +156,10 @@ class SlotOperations:
 
                 conn.commit()
 
-                # Remove from monitoring (slot now empty)
-                self.monitor.remove_slot(lid)
-
-                logger.info(f"Phone {pid} withdrawn successfully from location {lid}")
+                logger.info(f"Withdrawal DB record updated: PID={pid}, LID={lid}, storage_id={storage_id}")
                 return {
                     "status": "success",
-                    "message": "Phone withdrawn successfully",
+                    "message": "Withdrawal recorded successfully",
                     "pid": pid,
                     "lid": lid,
                     "storage_id": storage_id
@@ -233,22 +167,83 @@ class SlotOperations:
 
         except Exception as e:
             conn.rollback()
-            logger.error(f"Failed to withdraw phone {pid}: {e}")
-            if 'lid' in locals():
-                # Resume monitoring in error case
-                self.monitor.resume_slot(lid, np.zeros(512), True)
+            logger.error(f"Failed to update withdrawal record for PID {pid}: {e}")
             return {"status": "error", "message": str(e)}
         finally:
             put_conn(conn)
 
     # ------------------------------------------------------------
-    # HELPER METHODS
+    # BASELINE MANAGEMENT (unchanged)
     # ------------------------------------------------------------
+
+    def capture_and_save_baseline(
+            self,
+            lid: int,
+            is_occupied: bool,
+            wait_for_stable: float = 3.0
+    ) -> Dict:
+        """
+        Capture new baseline for a slot and update monitoring.
+
+        Used after deposit/withdrawal to update the slot's expected state.
+
+        Args:
+            lid: Location ID
+            is_occupied: True if phone was just deposited, False if just removed
+            wait_for_stable: Seconds to wait before capturing baseline
+
+        Returns:
+            {"status": "success" | "error", "baseline": np.ndarray | None}
+        """
+        if not self.monitor or not self.embedder:
+            return {
+                "status": "error",
+                "message": "Monitor or embedder not available"
+            }
+
+        try:
+            logger.info(f"Capturing baseline for LID={lid}, occupied={is_occupied}")
+
+            # Pause monitoring during baseline capture
+            self.monitor.pause_slot(lid)
+
+            # Wait for stabilization
+            logger.info(f"Waiting {wait_for_stable}s for stabilization...")
+            time.sleep(wait_for_stable)
+
+            # Capture new baseline
+            baseline_emb = self._capture_baseline(lid)
+            if baseline_emb is None:
+                # Resume with default state on failure
+                self.monitor.resume_slot(lid, np.zeros(512), is_occupied)
+                return {
+                    "status": "error",
+                    "message": "Failed to capture baseline"
+                }
+
+            # Save to database
+            from back_end.slot_monitor.db_interface import SlotMonitorDB
+            SlotMonitorDB.save_baseline(lid, baseline_emb)
+
+            # Resume monitoring with new baseline
+            self.monitor.resume_slot(lid, baseline_emb, is_occupied=is_occupied)
+
+            logger.info(f"Baseline captured and saved for LID={lid}")
+            return {
+                "status": "success",
+                "message": "Baseline captured successfully",
+                "baseline": baseline_emb
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to capture baseline for LID {lid}: {e}")
+            # Resume monitoring in error case
+            self.monitor.resume_slot(lid, np.zeros(512), is_occupied)
+            return {"status": "error", "message": str(e)}
 
     def _capture_baseline(self, lid: int) -> Optional[np.ndarray]:
         """
         Capture stable baseline embedding for a slot.
-
         Takes multiple samples and averages them.
         """
         try:
@@ -276,7 +271,7 @@ class SlotOperations:
             return None
 
     # ------------------------------------------------------------
-    # STATUS QUERIES
+    # STATUS QUERIES (unchanged)
     # ------------------------------------------------------------
 
     def get_slot_status(self, lid: int) -> Dict:

@@ -335,7 +335,7 @@ import json
 import os
 from typing import Dict, Tuple, Optional
 
-ROI_FILE = "rois_saved.json"
+ROI_FILE = "test/rois_saved.json"
 
 
 def generate_grid_rois(

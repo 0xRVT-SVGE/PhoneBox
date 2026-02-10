@@ -189,6 +189,46 @@ class SlotMonitorDB:
         finally:
             put_conn(conn)
 
+    @staticmethod
+    def pid_exists(pid: int) -> bool:
+        """
+        Check if a phone PID exists in the database.
+
+        Args:
+            pid: Phone ID
+
+        Returns:
+            True if phone exists, False otherwise
+        """
+        conn = get_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT EXISTS (SELECT 1 FROM phones WHERE pid = %s);",
+                    (pid,)
+                )
+                return cur.fetchone()[0]
+        except Exception as e:
+            logger.error(f"Failed to check PID existence for {pid}: {e}")
+            return False
+        finally:
+            put_conn(conn)
+
+    def pid_exists(pid: int) -> bool:
+        """
+        Check if a phone PID exists in the database.
+        """
+        conn = get_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT EXISTS (SELECT 1 FROM phones WHERE pid = %s);",
+                    (pid,)
+                )
+                return cur.fetchone()[0]
+        finally:
+            put_conn(conn)
+
 
 # ============================================================
 # ASYNC DATABASE INTERFACE (Real-time Monitoring)
@@ -369,6 +409,31 @@ class AsyncSlotMonitorDB:
         num_lid = await self._pool.fetchval(query)
         return num_lid or 1
 
+    async def get_next_free_lid(self) -> Optional[int]:
+        """
+        Return the next available (free) LID for phone storage.
+
+        Returns:
+            lid if available, None if storage is full
+        """
+        if self._pool is None:
+            raise RuntimeError("Database not connected")
+
+        return await self._pool.fetchval(
+            """
+            SELECT l.lid
+            FROM locations l
+            WHERE NOT EXISTS (
+                SELECT 1 FROM phone_storage ps
+                WHERE ps.lid = l.lid
+                  AND ps.retrieved_at IS NULL
+            )
+            ORDER BY l.lid
+            FOR UPDATE SKIP LOCKED
+            LIMIT 1;
+
+            """
+        )
 
     async def fetch_occupied_slots(self) -> List[Tuple[int, str]]:
         """
@@ -433,6 +498,34 @@ class AsyncSlotMonitorDB:
             else:
                 self._pid_cache[lid] = None
                 return None
+
+    async def get_lid_for_pid(self, pid: str) -> Optional[int]:
+        """
+        Get location ID for a stored phone (async).
+
+        Used during withdrawal to resolve expected LID.
+
+        Args:
+            pid: Phone ID
+
+        Returns:
+            lid if phone is currently stored, otherwise None
+        """
+        if self._pool is None:
+            raise RuntimeError("Database not connected")
+
+        row = await self._pool.fetchrow(
+            """
+            SELECT lid
+            FROM phone_storage
+            WHERE pid = $1
+              AND retrieved_at IS NULL
+            LIMIT 1
+            """,
+            pid
+        )
+
+        return row["lid"] if row else None
 
     async def is_slot_occupied(self, lid: int) -> bool:
         """Check if a slot is currently occupied (async)"""
