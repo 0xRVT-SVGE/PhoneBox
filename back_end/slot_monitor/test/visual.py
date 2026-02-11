@@ -36,10 +36,10 @@ logger = logging.getLogger(__name__)
 
 # Import async modules
 from back_end.slot_monitor.camera.camera_async import AsyncFrameBuffer, AsyncCameraCapture
-from worker_async import WorkerPool
-from slots import Slot, generate_grid_rois  # Note: slot.py not slots.py
-from alarm_controller import AlarmController
-from db_interface import AsyncSlotMonitorDB  # Note: merged db_interface not db_async
+from back_end.slot_monitor.worker_async import WorkerPool
+from back_end.slot_monitor.slots import Slot, generate_grid_rois  # Note: slot.py not slots.py
+from back_end.slot_monitor.alarm_controller import AlarmController
+from back_end.slot_monitor.db_interface import AsyncSlotMonitorDB  # Note: merged db_interface not db_async
 
 
 class AsyncCameraTestSystem:

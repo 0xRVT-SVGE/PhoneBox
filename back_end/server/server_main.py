@@ -1,5 +1,5 @@
 # ============================================================
-# FILE: back_end/server/server_main.py (CLEAN)
+# FILE: back_end/server/server_main.py (DVW INTEGRATED)
 # ============================================================
 
 import threading
@@ -10,6 +10,9 @@ from back_end.server.webrtc_handler import webrtc_bp, async_loop
 from back_end.scanner_loop import scanner_loop
 from back_end.scanner_state import scanner_state
 from back_end.scanner_worker import scan_worker, start_scan, stop_scan
+
+# DVW System imports
+from back_end.slot_monitor.ops_handler import register_dvw_handlers
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +32,10 @@ def _start_async_loop(loop):
     loop.run_forever()
 
 
-# --- WebSocket Events ---
+# ============================================================
+# LEGACY WEBSOCKET EVENTS (Keep for backward compatibility)
+# ============================================================
+
 @socketio.on("toggle_scan")
 def handle_toggle_scan(_):
     """Handle barcode scanner toggle"""
@@ -58,140 +64,10 @@ def handle_get_status(_):
     scanner_state._emit_socket()
 
 
-# --- WebSocket Events (Slot Operations) ---
-@socketio.on("deposit_phone")
-def handle_deposit_phone(data):
-    """Handle phone deposit via WebSocket"""
-    pid = data.get("pid")
-    if not pid:
-        socketio.emit("phone_operation_result", {
-            "status": "error",
-            "message": "Missing pid"
-        })
-        return
+# ============================================================
+# MAIN
+# ============================================================
 
-    slot_ops = get_slot_operations()
-    if not slot_ops:
-        socketio.emit("phone_operation_result", {
-            "status": "error",
-            "message": "Slot operations not available"
-        })
-        return
-
-    logger.info(f"WebSocket: Deposit request for phone {pid}")
-    result = slot_ops.deposit_phone(pid)
-
-    if result['status'] == 'success':
-        socketio.emit("slot_state_changed", {
-            "lid": result.get("lid"),
-            "action": "deposit",
-            "pid": pid
-        }, broadcast=True)
-
-    socketio.emit("phone_operation_result", result)
-
-
-@socketio.on("withdraw_phone")
-def handle_withdraw_phone(data):
-    """Handle phone withdrawal via WebSocket"""
-    pid = data.get("pid")
-    if not pid:
-        socketio.emit("phone_operation_result", {
-            "status": "error",
-            "message": "Missing pid"
-        })
-        return
-
-    slot_ops = get_slot_operations()
-    if not slot_ops:
-        socketio.emit("phone_operation_result", {
-            "status": "error",
-            "message": "Slot operations not available"
-        })
-        return
-
-    logger.info(f"WebSocket: Withdraw request for phone {pid}")
-    result = slot_ops.withdraw_phone(pid)
-
-    if result['status'] == 'success':
-        socketio.emit("slot_state_changed", {
-            "lid": result.get("lid"),
-            "action": "withdraw",
-            "pid": pid
-        }, broadcast=True)
-
-    socketio.emit("phone_operation_result", result)
-
-
-@socketio.on("get_slot_status")
-def handle_get_slot_status(data):
-    """Get specific slot status"""
-    lid = data.get("lid")
-    if lid is None:
-        socketio.emit("slot_status", {"status": "error", "message": "Missing lid"})
-        return
-
-    slot_ops = get_slot_operations()
-    if not slot_ops:
-        socketio.emit("slot_status", {"status": "error", "message": "Slot operations not available"})
-        return
-
-    result = slot_ops.get_slot_status(lid)
-    socketio.emit("slot_status", result)
-
-
-@socketio.on("get_all_slots")
-def handle_get_all_slots(_):
-    """Get all slots status"""
-    slot_ops = get_slot_operations()
-    if not slot_ops:
-        socketio.emit("all_slots_status", {"status": "error", "message": "Slot operations not available"})
-        return
-
-    result = slot_ops.get_all_slots()
-    socketio.emit("all_slots_status", result)
-
-
-@socketio.on("get_problem_slots")
-def handle_get_problem_slots(_):
-    """Get problem slots"""
-    slot_ops = get_slot_operations()
-    if not slot_ops:
-        socketio.emit("problem_slots_list", {"status": "error", "message": "Slot operations not available"})
-        return
-
-    result = slot_ops.get_problem_slots()
-    socketio.emit("problem_slots_list", result)
-
-
-@socketio.on("get_anomalies")
-def handle_get_anomalies(data):
-    """Get anomalies"""
-    hours = data.get("hours", 24)
-    severity = data.get("severity")
-
-    slot_ops = get_slot_operations()
-    if not slot_ops:
-        socketio.emit("anomalies_list", {"status": "error", "message": "Slot operations not available"})
-        return
-
-    result = slot_ops.get_anomalies(hours, severity)
-    socketio.emit("anomalies_list", result)
-
-
-@socketio.on("get_system_health")
-def handle_get_system_health(_):
-    """Get system health"""
-    slot_ops = get_slot_operations()
-    if not slot_ops:
-        socketio.emit("system_health", {"status": "error", "message": "Slot operations not available"})
-        return
-
-    result = slot_ops.get_system_health()
-    socketio.emit("system_health", result)
-
-
-# --- Main ---
 if __name__ == "__main__":
     logger.info("=" * 60)
     logger.info("Starting server threads...")
@@ -209,16 +85,26 @@ if __name__ == "__main__":
     scanner_thread = threading.Thread(target=lambda: scanner_loop(debugwindow, debugroi), daemon=True, name="ScannerLoop")
     scanner_thread.start()
 
+    # Initialize slot operations (needed for DVW)
+    slot_ops = get_slot_operations()
+    if not slot_ops:
+        logger.error("❌ Slot operations not available - DVW system disabled")
+    else:
+        # Register DVW handlers
+        logger.info("Registering DVW WebSocket handlers...")
+        register_dvw_handlers(socketio, slot_ops)
+        logger.info("✅ DVW system registered")
+
     # Start slot monitor
     slot_monitor = get_slot_monitor()
     if slot_monitor:
         slot_monitor.start()
-        logger.info("Slot monitoring active")
+        logger.info("✅ Slot monitoring active")
+    else:
+        logger.warning("⚠️  Slot monitor not available")
 
     logger.info("=" * 60)
     logger.info("Starting Flask-SocketIO on 0.0.0.0:5000")
     logger.info("=" * 60)
 
     socketio.run(app, host="0.0.0.0", port=5000, allow_unsafe_werkzeug=True)
-
-# TODO: edit for the slot-scanning
