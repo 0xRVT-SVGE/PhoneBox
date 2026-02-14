@@ -53,8 +53,8 @@ class _ScanSuccessPageState extends State<ScanSuccessPage> {
     final pid = p["pid"];
     final model = p["model"] ?? "Unknown Model";
     final isStored = p["is_stored"] == true ? "Stored" : "With Student";
-    final location = p["location"] != null
-    ? "line= ${p['location'][0]}, column= ${p['location'][1]}"
+    final location = (p["x"] != null && p["y"] != null)
+    ? "line= ${p['x']}, column= ${p['y']}"
     : "N/A";
 
     return Card(

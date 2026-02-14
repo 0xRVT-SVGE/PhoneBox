@@ -3,7 +3,7 @@ from flask import Blueprint, jsonify, request
 from back_end.Database.phones import (
     create_phone, get_phones, list_phones, update_phone, delete_phone,
     phones_not_stored, phones_by_condition, phone_stats, reassign_phone,
-    get_phone_storage_history, get_phone_with_slot_status, get_phone_operation_history
+    get_phone_storage_history, get_phone_operation_history
 )
 
 phones_bp = Blueprint("phones", __name__)
@@ -77,12 +77,6 @@ def route_reassign_phone(pid):
 def route_phone_storage_history(pid):
     """Get storage history for a phone"""
     return handle_response(get_phone_storage_history(pid))
-
-
-@phones_bp.route("/<pid>/status", methods=["GET"])
-def route_phone_with_slot_status(pid):
-    """Get phone with current slot monitoring status"""
-    return handle_response(get_phone_with_slot_status(pid))
 
 
 @phones_bp.route("/<pid>/operations", methods=["GET"])

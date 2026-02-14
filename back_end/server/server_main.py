@@ -88,20 +88,20 @@ if __name__ == "__main__":
     # Initialize slot operations (needed for DVW)
     slot_ops = get_slot_operations()
     if not slot_ops:
-        logger.error("❌ Slot operations not available - DVW system disabled")
+        logger.error("Slot operations not available - DVW system disabled")
     else:
         # Register DVW handlers
         logger.info("Registering DVW WebSocket handlers...")
         register_dvw_handlers(socketio, slot_ops)
-        logger.info("✅ DVW system registered")
+        logger.info("DVW system registered")
 
     # Start slot monitor
     slot_monitor = get_slot_monitor()
     if slot_monitor:
         slot_monitor.start()
-        logger.info("✅ Slot monitoring active")
+        logger.info("Slot monitoring active")
     else:
-        logger.warning("⚠️  Slot monitor not available")
+        logger.warning("Slot monitor not available")
 
     logger.info("=" * 60)
     logger.info("Starting Flask-SocketIO on 0.0.0.0:5000")

@@ -300,7 +300,7 @@ class AsyncSlotMonitorDB:
         )
 
         logger.info(
-            f"✅ AsyncPG pool created: {self.min_pool_size}-{self.max_pool_size} "
+            f"AsyncPG pool created: {self.min_pool_size}-{self.max_pool_size} "
             f"connections to {self.host}:{self.port}/{self.database}"
         )
 

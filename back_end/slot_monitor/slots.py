@@ -10,7 +10,7 @@ import time
 import logging
 import numpy as np
 from typing import Optional, Tuple
-from slot_embed import compute_embedding, embedding_distance
+from back_end.slot_monitor.slot_embed import compute_embedding, embedding_distance
 
 logger = logging.getLogger(__name__)
 
@@ -335,7 +335,7 @@ import json
 import os
 from typing import Dict, Tuple, Optional
 
-ROI_FILE = "test/rois_saved.json"
+ROI_FILE = "D:/Programming/PythonProject/back_end/slot_monitor/tools/rois_saved.json"
 
 
 def generate_grid_rois(

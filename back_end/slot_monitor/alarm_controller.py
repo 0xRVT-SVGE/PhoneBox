@@ -16,6 +16,13 @@ class AlarmController:
         self.active = False
         self.mismatches: set[tuple[str, int]] = set()  # (pid, lid)
         self._alarm_start_time = None
+        self.socketio = None
+
+    def set_socketio(self, socketio):
+        """Set SocketIO reference for emitting alarm events."""
+        with self._lock:
+            self.socketio = socketio
+            logger.info("SocketIO attached to AlarmController")
 
     def trigger(self, pid: str, lid: int):
         """Trigger alarm for a specific phone/location mismatch."""
@@ -93,11 +100,11 @@ class AlarmController:
     def _start_alarm_sound(self):
         """Start physical alarm (buzzer, LED, etc.)."""
         # TODO: Implement actual hardware control
-        print("🚨 ALARM ON 🚨")
+        print("ALARM ON")
         logger.warning("Physical alarm started")
 
     def _stop_alarm_sound(self):
         """Stop physical alarm."""
         # TODO: Implement actual hardware control
-        print("✅ ALARM OFF")
+        print("ALARM OFF")
         logger.info("Physical alarm stopped")

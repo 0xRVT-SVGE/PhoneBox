@@ -23,8 +23,8 @@ import asyncio
 from flask_socketio import emit, SocketIO
 from typing import Optional
 
-from back_end.slot_monitor.operation_context import op_ctx
-from back_end.slot_monitor.qr_scanner import scan_and_validate_pid
+from back_end.slot_monitor.services.operation_context import op_ctx
+from back_end.slot_monitor.camera.qr_pid_reader import scan_and_validate_pid
 from back_end.slot_monitor.slot_operations import SlotOperations
 from back_end.slot_monitor.db_interface import SlotMonitorDB
 
@@ -115,8 +115,7 @@ class DVWSocketHandler:
                                      LEFT JOIN phone_storage ps ON l.lid = ps.lid
                                 AND ps.retrieved_at IS NULL
                             WHERE ps.pid IS NULL
-                            ORDER BY l.lid
-                            LIMIT 1;
+                            ORDER BY l.lid LIMIT 1;
                             """)
 
                 row = cur.fetchone()
@@ -196,8 +195,7 @@ class DVWSocketHandler:
                             SELECT lid
                             FROM phone_storage
                             WHERE pid = %s
-                              AND retrieved_at IS NULL
-                            LIMIT 1;
+                              AND retrieved_at IS NULL LIMIT 1;
                             """, (pid,))
 
                 row = cur.fetchone()
@@ -331,10 +329,10 @@ class DVWSocketHandler:
             return
 
         state = op_ctx.get_state()
-        logger.info(f"📷 QR scan triggered for {state['op_type']} operation")
+        logger.info(f"QR scan triggered for {state['op_type']} operation")
 
         # Scan and validate QR code
-        scan_result = scan_and_validate_pid(camera_index=0)
+        scan_result = scan_and_validate_pid(camera_index=2)
 
         if scan_result["status"] != "success":
             emit("operation_error", scan_result)
@@ -347,7 +345,7 @@ class DVWSocketHandler:
         # CRITICAL: Verify PID match
         if scanned_pid != expected_pid:
             logger.error(
-                f"❌ PID mismatch: expected {expected_pid}, scanned {scanned_pid}"
+                f"PID mismatch: expected {expected_pid}, scanned {scanned_pid}"
             )
             emit("operation_error", {
                 "status": "error",
@@ -358,8 +356,8 @@ class DVWSocketHandler:
             self._cleanup_failed_operation(state)
             return
 
-        # PID VERIFIED ✅ - Proceed with operation
-        logger.info(f"✅ PID verified: {scanned_pid}")
+        # PID VERIFIED - Proceed with operation
+        logger.info(f"PID verified: {scanned_pid}")
 
         if state["op_type"] == "deposit":
             self._complete_deposit(state)
@@ -419,7 +417,7 @@ class DVWSocketHandler:
         })
 
         op_ctx.clear()
-        logger.info(f"✅ Deposit completed: PID={pid}, LID={lid}")
+        logger.info(f"Deposit completed: PID={pid}, LID={lid}")
 
     def _complete_withdraw(self, state: dict):
         """Complete withdrawal operation after QR verification."""
@@ -468,7 +466,7 @@ class DVWSocketHandler:
         })
 
         op_ctx.clear()
-        logger.info(f"✅ Withdrawal completed: PID={pid}, LID={lid}")
+        logger.info(f"Withdrawal completed: PID={pid}, LID={lid}")
 
     def _complete_verify(self, state: dict):
         """Complete verification operation after QR scan."""
@@ -530,7 +528,7 @@ class DVWSocketHandler:
         })
 
         op_ctx.clear()
-        logger.info(f"✅ Verification completed: PID={pid}, {original_lid} → {target_lid}")
+        logger.info(f"Verification completed: PID={pid}, {original_lid} → {target_lid}")
 
     # ============================================================
     # ERROR CLEANUP
@@ -598,4 +596,4 @@ def register_dvw_handlers(socketio: SocketIO, slot_operations: SlotOperations):
     def on_qr_scanned(data):
         handler.handle_qr_scanned(data)
 
-    logger.info("✅ DVW WebSocket handlers registered")
+    logger.info("DVW WebSocket handlers registered")

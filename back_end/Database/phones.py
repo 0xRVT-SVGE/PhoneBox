@@ -49,10 +49,11 @@ def get_phones(sid):
                                ps.stored_at,
                                l.x,
                                l.y,
-                               CASE WHEN ps.pid IS NOT NULL THEN TRUE ELSE FALSE END as is_stored
+                               (ps.pid IS NOT NULL) AS is_stored
                         FROM phones p
-                                 LEFT JOIN phone_storage ps ON p.pid = ps.pid AND ps.retrieved_at IS NULL
-                                 LEFT JOIN locations l ON ps.lid = l.lid
+                        LEFT JOIN phone_storage ps
+                               ON ps.pid = p.pid AND ps.retrieved_at IS NULL
+                        LEFT JOIN locations l ON l.lid = ps.lid
                         WHERE p.sid = %s;
                         """, (sid,))
             rows = cur.fetchall()
@@ -90,10 +91,11 @@ def list_phones():
                                ps.stored_at,
                                l.x,
                                l.y,
-                               CASE WHEN ps.pid IS NOT NULL THEN TRUE ELSE FALSE END as is_stored
+                               (ps.pid IS NOT NULL) AS is_stored
                         FROM phones p
-                                 LEFT JOIN phone_storage ps ON p.pid = ps.pid AND ps.retrieved_at IS NULL
-                                 LEFT JOIN locations l ON ps.lid = l.lid
+                        LEFT JOIN phone_storage ps
+                               ON ps.pid = p.pid AND ps.retrieved_at IS NULL
+                        LEFT JOIN locations l ON l.lid = ps.lid
                         ORDER BY p.sid;
                         """)
             rows = cur.fetchall()
@@ -158,10 +160,11 @@ def delete_phone(pid):
         with conn.cursor() as cur:
             # Check if phone is currently stored
             cur.execute("""
-                        SELECT lid
+                        SELECT 1
                         FROM phone_storage
                         WHERE pid = %s
                           AND retrieved_at IS NULL
+                        LIMIT 1;
                         """, (pid,))
 
             if cur.fetchone():
@@ -200,8 +203,12 @@ def phones_not_stored():
             cur.execute("""
                         SELECT p.*
                         FROM phones p
-                                 LEFT JOIN phone_storage ps ON p.pid = ps.pid AND ps.retrieved_at IS NULL
-                        WHERE ps.pid IS NULL
+                        WHERE NOT EXISTS (
+                            SELECT 1
+                            FROM phone_storage ps
+                            WHERE ps.pid = p.pid
+                              AND ps.retrieved_at IS NULL
+                        )
                         ORDER BY p.sid;
                         """)
             rows = cur.fetchall()
@@ -228,12 +235,14 @@ def phones_by_condition(cond):
             cur.execute("""
                         SELECT p.*,
                                ps.lid,
+                               ps.stored_at,
                                l.x,
                                l.y,
-                               CASE WHEN ps.pid IS NOT NULL THEN TRUE ELSE FALSE END as is_stored
+                               (ps.pid IS NOT NULL) AS is_stored
                         FROM phones p
-                                 LEFT JOIN phone_storage ps ON p.pid = ps.pid AND ps.retrieved_at IS NULL
-                                 LEFT JOIN locations l ON ps.lid = l.lid
+                        LEFT JOIN phone_storage ps
+                               ON ps.pid = p.pid AND ps.retrieved_at IS NULL
+                        LEFT JOIN locations l ON l.lid = ps.lid
                         WHERE p.cond = %s
                         ORDER BY p.sid;
                         """, (cond,))
@@ -268,13 +277,26 @@ def phone_stats():
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                        SELECT COUNT(*)                                   AS total,
-                               COUNT(ps.pid)                              AS stored,
-                               COUNT(*) - COUNT(ps.pid)                   AS not_stored,
+                        SELECT COUNT(*) AS total,
+                               COUNT(*) FILTER (
+                                   WHERE EXISTS (
+                                       SELECT 1
+                                       FROM phone_storage ps
+                                       WHERE ps.pid = p.pid
+                                         AND ps.retrieved_at IS NULL
+                                   )
+                               ) AS stored,
+                               COUNT(*) FILTER (
+                                   WHERE NOT EXISTS (
+                                       SELECT 1
+                                       FROM phone_storage ps
+                                       WHERE ps.pid = p.pid
+                                         AND ps.retrieved_at IS NULL
+                                   )
+                               ) AS not_stored,
                                COUNT(*) FILTER (WHERE p.cond = 'Damaged') AS damaged,
-                               COUNT(*) FILTER (WHERE p.cond = 'Broken')  AS broken
-                        FROM phones p
-                                 LEFT JOIN phone_storage ps ON p.pid = ps.pid AND ps.retrieved_at IS NULL;
+                               COUNT(*) FILTER (WHERE p.cond = 'Broken') AS broken
+                        FROM phones p;
                         """)
             result = cur.fetchone()
             columns = [desc[0] for desc in cur.description]
@@ -337,51 +359,6 @@ def get_phone_storage_history(pid):
             return {"status": "success", "data": data}, 200
     finally:
         put_conn(conn)
-
-
-def get_phone_with_slot_status(pid):
-    """Get phone details with current slot monitoring status"""
-    conn = get_conn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                        SELECT p.*,
-                               ps.lid,
-                               ps.stored_at,
-                               l.x,
-                               l.y,
-                               s.binary_state,
-                               s.tx_state,
-                               s.last_distance,
-                               s.last_change_ts
-                        FROM phones p
-                                 LEFT JOIN phone_storage ps ON p.pid = ps.pid AND ps.retrieved_at IS NULL
-                                 LEFT JOIN locations l ON ps.lid = l.lid
-                                 LEFT JOIN slot_current_state s ON l.lid = s.lid
-                        WHERE p.pid = %s;
-                        """, (pid,))
-            row = cur.fetchone()
-
-            if not row:
-                return {"status": "error", "message": "Phone not found"}, 404
-
-            columns = [desc[0] for desc in cur.description]
-            data = dict(zip(columns, row))
-
-            # Convert datetime fields
-            if data.get('stored_at'):
-                data['stored_at'] = data['stored_at'].isoformat()
-            if data.get('last_change_ts'):
-                data['last_change_ts'] = data['last_change_ts'].isoformat()
-            if data.get('created_at'):
-                data['created_at'] = data['created_at'].isoformat()
-            if data.get('modified_at'):
-                data['modified_at'] = data['modified_at'].isoformat()
-
-            return {"status": "success", "data": data}, 200
-    finally:
-        put_conn(conn)
-
 
 def get_phone_operation_history(pid, limit=50):
     """Get operation history for a phone from audit log"""

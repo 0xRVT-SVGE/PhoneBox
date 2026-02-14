@@ -1,5 +1,5 @@
 # ============================================================
-# FILE: back_end/server/app.py
+# FILE: back_end/server/app.py (HYBRID - COMPLETE VERSION)
 # ============================================================
 """
 Flask application factory with integrated slot monitoring.
@@ -55,7 +55,7 @@ def create_app():
     # ============================================================
     app.register_blueprint(students_bp, url_prefix="/api/students")
     app.register_blueprint(phones_bp, url_prefix="/api/phones")
-    logger.info("✅ API blueprints registered")
+    logger.info("API blueprints registered")
 
     # ============================================================
     # CREATE SOCKETIO
@@ -67,7 +67,7 @@ def create_app():
         logger=True,
         engineio_logger=False
     )
-    logger.info("✅ SocketIO initialized")
+    logger.info("SocketIO initialized")
 
     # ============================================================
     # INITIALIZE SLOT MONITORING
@@ -158,12 +158,12 @@ def _initialize_monitoring(socketio):
             embedder=None  # Will be set after monitor starts
         )
 
-        logger.info("✅ Monitoring system initialized (not started yet)")
-        logger.info("   → Monitor will be started in server_main.py")
-        logger.info("   → Components will be connected via set_monitor_components()")
+        logger.info("Monitoring system initialized (not started yet)")
+        logger.info("Monitor will be started in server_main.py")
+        logger.info("Components will be connected via set_monitor_components()")
 
     except Exception as e:
-        logger.error(f"❌ Failed to initialize monitoring: {e}", exc_info=True)
+        logger.error(f"Failed to initialize monitoring: {e}", exc_info=True)
         _slot_monitor = None
         _slot_operations = None
 
@@ -217,10 +217,10 @@ def set_monitor_components(monitor, embedder):
     if _slot_operations:
         _slot_operations.set_monitor(monitor)
         _slot_operations.set_embedder(embedder)
-        logger.info("✅ Monitor and embedder attached to slot operations")
-        logger.info("   → DVW operations can now pause monitoring and capture baselines")
+        logger.info("Monitor and embedder attached to slot operations")
+        logger.info("DVW operations can now pause monitoring and capture baselines")
     else:
-        logger.warning("⚠️  Slot operations not initialized, cannot set components")
+        logger.warning("Slot operations not initialized, cannot set components")
 
 
 def get_monitor_status():
@@ -255,4 +255,4 @@ def shutdown_monitoring():
     logger.info("Shutting down monitoring system...")
     _slot_monitor = None
     _slot_operations = None
-    logger.info("✅ Monitoring system shutdown complete")
+    logger.info("Monitoring system shutdown complete")

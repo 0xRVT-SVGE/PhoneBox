@@ -68,7 +68,7 @@ def read_pid_from_camera(
 
                 if data.isdigit():
                     pid = int(data)
-                    logger.info(f"PID scanned: {pid}")
+                    logger.info(f"✅ PID scanned: {pid}")
                     return pid
                 else:
                     logger.warning(f"Invalid QR format: {data}")

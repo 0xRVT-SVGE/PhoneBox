@@ -164,7 +164,7 @@ class AsyncCameraTestSystem:
         # Create worker pool
         await self._create_workers()
 
-        logger.info("✅ System setup complete")
+        logger.info("System setup complete")
 
     async def _setup_database(self):
         """Initialize async database connection"""
@@ -175,7 +175,7 @@ class AsyncCameraTestSystem:
 
         # Test connection
         if await self.db.test_connection():
-            logger.info("✅ Database connected")
+            logger.info("Database connected")
         else:
             raise RuntimeError("Database connection failed")
 
@@ -228,7 +228,7 @@ class AsyncCameraTestSystem:
             logger.info(f"  Slot {lid}: ({x1}, {y1}) -> ({x2}, {y2}) | size={w}x{h}")
 
 
-        logger.info("✅ Async camera ready")
+        logger.info("Async camera ready")
 
     async def _check_baselines(self):
         """Check existing baselines against current state"""
@@ -282,12 +282,12 @@ class AsyncCameraTestSystem:
                         f"    Manual intervention required to recalibrate slot {lid}"
                     )
                     mismatches += 1
-                    # ❌ DO NOT UPDATE BASELINE - This is a security feature!
+                    # DO NOT UPDATE BASELINE - This is a security feature!
                     # Updating would accept the theft and disable the alarm
                 else:
                     logger.info(f"✓  Slot {lid}: OK (dist={dist:.4f})")
 
-                    # ✅ Only update baseline if NO mismatch (minor drift correction)
+                    # Only update baseline if NO mismatch (minor drift correction)
                     if dist > self.recalc_threshold:
                         # Small drift detected - safe to update
                         current_emb = temp_slot.compute_embedding(frame)
@@ -300,7 +300,7 @@ class AsyncCameraTestSystem:
         # Save updated baselines (only for non-mismatched slots)
         if updated_baselines:
             await self.db.save_baselines_batch(updated_baselines)
-            logger.info(f"✅ Updated {len(updated_baselines)} baselines (drift correction)")
+            logger.info(f"Updated {len(updated_baselines)} baselines (drift correction)")
 
         if mismatches > 0:
             logger.critical("")
@@ -352,7 +352,7 @@ class AsyncCameraTestSystem:
             # DEBUG: Initialize distances (remove this line when done debugging)
             self.debug_slot_distances[lid] = 0.0
 
-        logger.info(f"✅ Initialized {len(self.slots)} slots")
+        logger.info(f"Initialized {len(self.slots)} slots")
 
     async def _create_workers(self):
         """Create async worker pool"""
@@ -379,7 +379,7 @@ class AsyncCameraTestSystem:
             grace_period=self.grace_period,
         )
 
-        logger.info(f"✅ Worker pool created: {self.num_workers} workers")
+        logger.info(f"Worker pool created: {self.num_workers} workers")
 
     # ========================================================================
     # DEBUG VISUALIZATION FUNCTIONS
@@ -500,7 +500,7 @@ class AsyncCameraTestSystem:
         try:
             auth = self.alarm.authenticate_admin("admin")
             if not auth["authenticated"]:
-                logger.error("❌ Admin authentication failed")
+                logger.error("Admin authentication failed")
                 return
 
             mismatches = auth["mismatches"]  # [(pid, lid), ...]
@@ -513,7 +513,7 @@ class AsyncCameraTestSystem:
             logger.info(f"Admin approved recalibration for slots: {sorted(mismatch_lids)}")
 
         except Exception as e:
-            logger.error(f"❌ Failed to fetch mismatches: {e}")
+            logger.error(f"Failed to fetch mismatches: {e}")
             return
 
         # ------------------------------------------------------------------
@@ -521,7 +521,7 @@ class AsyncCameraTestSystem:
         # ------------------------------------------------------------------
         frame = self.frame_buffer.get_frame_sync()
         if frame is None:
-            logger.error("❌ Failed to get frame for baseline recalculation")
+            logger.error("Failed to get frame for baseline recalculation")
             return
 
         # ------------------------------------------------------------------
@@ -564,9 +564,9 @@ class AsyncCameraTestSystem:
         if updated_baselines:
             try:
                 await self.db.save_baselines_batch(updated_baselines)
-                logger.info(f"✅ Saved {len(updated_baselines)} baselines to database")
+                logger.info(f"Saved {len(updated_baselines)} baselines to database")
             except Exception as e:
-                logger.error(f"❌ DB save failed: {e}")
+                logger.error(f"DB save failed: {e}")
                 logger.warning("⚠️  Memory updated, DB NOT updated")
 
         # ------------------------------------------------------------------
@@ -580,7 +580,7 @@ class AsyncCameraTestSystem:
         # 7. NOW clear the alarm (after successful handling)
         # ------------------------------------------------------------------
         self.alarm.clear()
-        logger.info("✅ Mismatches cleared")
+        logger.info("Mismatches cleared")
 
         # ------------------------------------------------------------------
         # Summary
@@ -767,7 +767,7 @@ class AsyncCameraTestSystem:
         # Final status
         await self._print_status()
 
-        logger.info("\n✅ Shutdown complete")
+        logger.info("\nShutdown complete")
 
     def signal_handler(self, signum, frame):
         """Handle shutdown signals"""

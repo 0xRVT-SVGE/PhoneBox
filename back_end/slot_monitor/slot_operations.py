@@ -1,3 +1,21 @@
+# ============================================================
+# FILE: server/slot_monitor/slot_operations.py (REFACTORED)
+# ============================================================
+"""
+Slot operations - DATABASE MUTATIONS ONLY.
+
+Changes from original:
+- Removed QR scanning logic (moved to qr_scanner.py)
+- Removed wait times (handled by socket_handlers.py)
+- Pure DB operations only
+- Assumes PID is already validated
+
+Methods:
+- deposit_phone_db(): Create storage record
+- withdraw_phone_db(): Mark phone as retrieved
+- Baseline management methods remain unchanged
+"""
+
 import logging
 import time
 from typing import Dict, Optional
@@ -11,6 +29,11 @@ class SlotOperations:
     """
     Handle deposit/withdrawal DATABASE operations.
     Coordinates between DB, monitor, and embedder.
+
+    IMPORTANT: This class does NOT handle:
+    - QR scanning (see qr_scanner.py)
+    - PID validation (see qr_scanner.py)
+    - WebSocket events (see socket_handlers.py)
     """
 
     def __init__(self, monitor=None, embedder=None):
@@ -34,7 +57,7 @@ class SlotOperations:
         logger.info("Embedder attached to SlotOperations")
 
     # ------------------------------------------------------------
-    # DEPOSIT OPERATION
+    # DEPOSIT OPERATION (DB ONLY)
     # ------------------------------------------------------------
 
     def deposit_phone_db(self, pid: int, lid: int) -> Dict:
@@ -84,14 +107,13 @@ class SlotOperations:
                 # Create storage record
                 cur.execute("""
                             INSERT INTO phone_storage (pid, lid, stored_at)
-                            VALUES (%s, %s, NOW())
-                            RETURNING id;
+                            VALUES (%s, %s, NOW()) RETURNING id;
                             """, (pid, lid))
 
                 storage_id = cur.fetchone()[0]
                 conn.commit()
 
-                logger.info(f"Deposit DB record created: PID={pid}, LID={lid}, storage_id={storage_id}")
+                logger.info(f"✅ Deposit DB record created: PID={pid}, LID={lid}, storage_id={storage_id}")
                 return {
                     "status": "success",
                     "message": "Deposit recorded successfully",
@@ -108,7 +130,7 @@ class SlotOperations:
             put_conn(conn)
 
     # ------------------------------------------------------------
-    # WITHDRAWAL OPERATION
+    # WITHDRAWAL OPERATION (DB ONLY)
     # ------------------------------------------------------------
 
     def withdraw_phone_db(self, pid: int) -> Dict:
@@ -156,7 +178,7 @@ class SlotOperations:
 
                 conn.commit()
 
-                logger.info(f"Withdrawal DB record updated: PID={pid}, LID={lid}, storage_id={storage_id}")
+                logger.info(f"✅ Withdrawal DB record updated: PID={pid}, LID={lid}, storage_id={storage_id}")
                 return {
                     "status": "success",
                     "message": "Withdrawal recorded successfully",
@@ -228,7 +250,7 @@ class SlotOperations:
             # Resume monitoring with new baseline
             self.monitor.resume_slot(lid, baseline_emb, is_occupied=is_occupied)
 
-            logger.info(f"Baseline captured and saved for LID={lid}")
+            logger.info(f"✅ Baseline captured and saved for LID={lid}")
             return {
                 "status": "success",
                 "message": "Baseline captured successfully",
@@ -341,7 +363,7 @@ class SlotOperations:
                                 AND ps.retrieved_at IS NULL
                             WHERE ps.pid IS NULL
                             ORDER BY l.lid
-                            LIMIT %s;
+                                LIMIT %s;
                             """, (limit,))
 
                 rows = cur.fetchall()

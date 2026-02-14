@@ -115,7 +115,7 @@ class AsyncFrameBuffer:
             raise RuntimeError("Failed to capture initial frame within 5 seconds")
 
         logger.info(
-            f"✅ Async camera {camera_id} started ({width}x{height} @ {fps}fps)"
+            f"Async camera {camera_id} started ({width}x{height} @ {fps}fps)"
         )
 
     def _capture_loop(self, camera_id: int, width: int, height: int, fps: int):
