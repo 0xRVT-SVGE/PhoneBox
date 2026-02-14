@@ -783,8 +783,8 @@ class _StudentPhonesPageState extends State<StudentPhonesPage> {
     final bool stored = p["is_stored"] == true;
     final String statusText = stored ? "Stored" : "With Student";
 
-    String location = p['location'] != null
-        ? "[${p['location'][0]}, ${p['location'][1]}]"
+    final location = (p["x"] != null && p["y"] != null)
+        ? "line= ${p['x']}, column= ${p['y']}"
         : "N/A";
 
     return Card(
