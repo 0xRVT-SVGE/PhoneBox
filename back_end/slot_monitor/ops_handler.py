@@ -1,27 +1,10 @@
 # ============================================================
-# FILE: server/socket_handlers.py
+# FILE: back_end/slot_monitor/ops_handler.py
 # ============================================================
-"""
-WebSocket handlers for Deposit/Withdraw/Verification operations.
-
-Flow:
-1. User initiates operation → handler starts operation context
-2. Handler resolves LID and pauses alarms
-3. User performs physical action (place/remove phone)
-4. User scans QR code
-5. Handler validates PID match
-6. Handler completes DB mutation and baseline capture
-7. Handler resumes alarms and clears context
-
-Events:
-- Client → Server: "deposit", "withdraw", "verify", "qr_scanned"
-- Server → Client: operation_result, operation_error, waiting_for_qr, etc.
-"""
 
 import logging
-import asyncio
 from flask_socketio import emit, SocketIO
-from typing import Optional
+from flask import request
 
 from back_end.slot_monitor.services.operation_context import op_ctx
 from back_end.slot_monitor.camera.qr_pid_reader import scan_and_validate_pid
@@ -30,554 +13,297 @@ from back_end.slot_monitor.db_interface import SlotMonitorDB
 
 logger = logging.getLogger(__name__)
 
+# Seconds the handler waits for the user to scan a QR code.
+# Must stay well under OperationContext.ACTION_TIMEOUT (30 s).
+QR_SCAN_TIMEOUT = 15.0
+
 
 class DVWSocketHandler:
-    """
-    Handles Deposit/Withdraw/Verification operations via WebSocket.
-
-    Dependencies:
-    - slot_operations: SlotOperations instance
-    - socketio: Flask-SocketIO instance
-    """
 
     def __init__(self, slot_operations: SlotOperations, socketio: SocketIO):
         self.slot_ops = slot_operations
         self.socketio = socketio
-        logger.info("DVWSocketHandler initialized")
 
     # ============================================================
-    # DEPOSIT OPERATION
+    # DEPOSIT
     # ============================================================
 
     def handle_deposit(self, data: dict):
-        """
-        Handle deposit request.
-
-        Flow:
-        1. Validate PID exists
-        2. Find next free LID
-        3. Pause alarms on target LID
-        4. Start operation context
-        5. Wait for user to scan QR and place phone
-
-        Args:
-            data: {"pid": int}
-        """
+        client_id = request.sid
         pid = data.get("pid")
-        if pid is None:
-            emit("operation_error", {
-                "status": "error",
-                "message": "missing_pid"
-            })
+        if not pid:
+            emit("operation_error", {"status": "error", "message": "missing_pid"})
             return
 
-        logger.info(f"📥 Deposit request: PID={pid}")
+        pid = str(pid)  # normalise — all PIDs are str throughout the system
 
-        # Validate PID exists
         if not SlotMonitorDB.pid_exists(pid):
-            emit("operation_error", {
-                "status": "error",
-                "message": "pid_not_found",
-                "pid": pid
-            })
+            emit("operation_error", {"status": "error", "message": "pid_not_found", "pid": pid})
             return
 
-        # Check if phone is already stored
-        conn = SlotMonitorDB.get_conn()
-        try:
-            with conn.cursor() as cur:
-                cur.execute("""
-                            SELECT EXISTS(SELECT 1
-                                          FROM phone_storage
-                                          WHERE pid = %s
-                                            AND retrieved_at IS NULL);
-                            """, (pid,))
-                already_stored = cur.fetchone()[0]
-
-            if already_stored:
-                emit("operation_error", {
-                    "status": "error",
-                    "message": "phone_already_stored",
-                    "pid": pid
-                })
-                return
-
-        finally:
-            SlotMonitorDB.put_conn(conn)
-
-        # Find next free location
-        conn = SlotMonitorDB.get_conn()
-        try:
-            with conn.cursor() as cur:
-                cur.execute("""
-                            SELECT l.lid
-                            FROM locations l
-                                     LEFT JOIN phone_storage ps ON l.lid = ps.lid
-                                AND ps.retrieved_at IS NULL
-                            WHERE ps.pid IS NULL
-                            ORDER BY l.lid LIMIT 1;
-                            """)
-
-                row = cur.fetchone()
-                if not row:
-                    emit("operation_error", {
-                        "status": "error",
-                        "message": "no_free_slots"
-                    })
-                    return
-
-                lid = row[0]
-
-        finally:
-            SlotMonitorDB.put_conn(conn)
-
-        # Pause alarms on target slot
-        if self.slot_ops.monitor:
-            self.slot_ops.monitor.pause_slot(lid)
-            logger.info(f"⏸️  Alarms paused for LID={lid}")
-
-        # Start operation context
-        try:
-            op_ctx.start("deposit", pid=pid, lid=lid)
-        except RuntimeError as e:
-            emit("operation_error", {
-                "status": "error",
-                "message": "operation_already_active"
-            })
-            # Resume alarms on error
-            if self.slot_ops.monitor:
-                self.slot_ops.monitor.resume_slot(lid, None, False)
+        if SlotMonitorDB.is_phone_stored(pid):
+            emit("operation_error", {"status": "error", "message": "phone_already_stored", "pid": pid})
             return
 
-        # Notify client
+        lid = SlotMonitorDB.get_next_free_lid()
+        if lid is None:
+            emit("operation_error", {"status": "error", "message": "no_free_slots"})
+            return
+
+        self._pause_slot(lid)
+
+        try:
+            op_ctx.start(client_id, "deposit", pid=pid, lid=lid)
+        except RuntimeError:
+            emit("operation_error", {"status": "error", "message": "operation_already_active"})
+            self._restore_slot(lid, is_occupied=False)
+            return
+
         emit("deposit_waiting_for_qr", {
             "status": "waiting",
             "pid": pid,
             "lid": lid,
-            "message": f"Please scan QR code for PID {pid}, then place phone in slot {lid}"
+            "message": f"Scan QR for phone {pid}, then place it in slot {lid}",
         })
 
-        logger.info(f"Deposit operation started: PID={pid}, LID={lid}")
-
     # ============================================================
-    # WITHDRAW OPERATION
+    # WITHDRAW
     # ============================================================
 
     def handle_withdraw(self, data: dict):
-        """
-        Handle withdrawal request.
-
-        Flow:
-        1. Validate PID exists and is stored
-        2. Find current LID
-        3. Pause alarms on source LID
-        4. Start operation context
-        5. Wait for user to remove phone and scan QR
-
-        Args:
-            data: {"pid": int}
-        """
+        client_id = request.sid
         pid = data.get("pid")
-        if pid is None:
-            emit("operation_error", {
-                "status": "error",
-                "message": "missing_pid"
-            })
+        if not pid:
+            emit("operation_error", {"status": "error", "message": "missing_pid"})
             return
 
-        logger.info(f"📤 Withdraw request: PID={pid}")
+        pid = str(pid)
 
-        # Get current storage location
-        conn = SlotMonitorDB.get_conn()
-        try:
-            with conn.cursor() as cur:
-                cur.execute("""
-                            SELECT lid
-                            FROM phone_storage
-                            WHERE pid = %s
-                              AND retrieved_at IS NULL LIMIT 1;
-                            """, (pid,))
-
-                row = cur.fetchone()
-                if not row:
-                    emit("operation_error", {
-                        "status": "error",
-                        "message": "phone_not_in_storage",
-                        "pid": pid
-                    })
-                    return
-
-                lid = row[0]
-
-        finally:
-            SlotMonitorDB.put_conn(conn)
-
-        # Pause alarms on source slot
-        if self.slot_ops.monitor:
-            self.slot_ops.monitor.pause_slot(lid)
-            logger.info(f"⏸️  Alarms paused for LID={lid}")
-
-        # Start operation context
-        try:
-            op_ctx.start("withdraw", pid=pid, lid=lid)
-        except RuntimeError as e:
-            emit("operation_error", {
-                "status": "error",
-                "message": "operation_already_active"
-            })
-            # Resume alarms on error
-            if self.slot_ops.monitor:
-                self.slot_ops.monitor.resume_slot(lid, None, True)
+        lid = SlotMonitorDB.get_lid_for_pid(pid)
+        if lid is None:
+            emit("operation_error", {"status": "error", "message": "phone_not_in_storage", "pid": pid})
             return
 
-        # Notify client
+        self._pause_slot(lid)
+
+        try:
+            op_ctx.start(client_id, "withdraw", pid=pid, lid=lid)
+        except RuntimeError:
+            emit("operation_error", {"status": "error", "message": "operation_already_active"})
+            self._restore_slot(lid, is_occupied=True)
+            return
+
         emit("withdraw_waiting_for_action", {
             "status": "waiting",
             "pid": pid,
             "lid": lid,
-            "message": f"Please remove phone PID {pid} from slot {lid}, then scan QR code"
+            "message": f"Remove phone {pid} from slot {lid}, then scan its QR code",
         })
 
-        logger.info(f"Withdraw operation started: PID={pid}, LID={lid}")
-
     # ============================================================
-    # VERIFICATION OPERATION
+    # VERIFY
     # ============================================================
 
     def handle_verify(self, data: dict):
-        """
-        Handle verification request (alarm clearance).
-
-        Flow:
-        1. System detected mismatch on a slot
-        2. Admin must remove phone, scan QR, and replace in calculated slot
-        3. Validate PID matches expected
-        4. Update storage location if needed
-
-        Args:
-            data: {"pid": int, "original_lid": int, "target_lid": int}
-        """
+        client_id = request.sid
         pid = data.get("pid")
         original_lid = data.get("original_lid")
-        target_lid = data.get("target_lid")
 
-        if pid is None or original_lid is None or target_lid is None:
+        if not pid or original_lid is None:
+            emit("operation_error", {"status": "error", "message": "missing_parameters"})
+            return
+
+        pid = str(pid)
+
+        target_lid = SlotMonitorDB.get_lid_for_pid(pid)
+        if target_lid is None:
             emit("operation_error", {
                 "status": "error",
-                "message": "missing_parameters"
+                "message": "phone_not_registered_to_any_slot",
+                "pid": pid,
             })
             return
 
-        logger.info(f"🔍 Verify request: PID={pid}, from LID={original_lid} to LID={target_lid}")
+        self._pause_slot(original_lid)
+        if target_lid != original_lid:
+            self._pause_slot(target_lid)
 
-        # Pause alarms on both slots
-        if self.slot_ops.monitor:
-            self.slot_ops.monitor.pause_slot(original_lid)
-            self.slot_ops.monitor.pause_slot(target_lid)
-            logger.info(f"⏸️  Alarms paused for LID={original_lid} and LID={target_lid}")
-
-        # Start operation context
         try:
-            op_ctx.start(
-                "verify",
-                pid=pid,
-                lid=target_lid,
-                original_lid=original_lid
-            )
-        except RuntimeError as e:
-            emit("operation_error", {
-                "status": "error",
-                "message": "operation_already_active"
-            })
-            # Resume alarms on error
-            if self.slot_ops.monitor:
-                self.slot_ops.monitor.resume_slot(original_lid, None, True)
-                self.slot_ops.monitor.resume_slot(target_lid, None, False)
+            op_ctx.start(client_id, "verify", pid=pid, lid=target_lid, original_lid=original_lid)
+        except RuntimeError:
+            emit("operation_error", {"status": "error", "message": "operation_already_active"})
+            self._restore_slot(original_lid, is_occupied=True)
+            if target_lid != original_lid:
+                self._restore_slot(target_lid, is_occupied=False)
             return
 
-        # Notify client
+        same_slot = target_lid == original_lid
         emit("verify_waiting_for_action", {
             "status": "waiting",
             "pid": pid,
             "original_lid": original_lid,
             "target_lid": target_lid,
-            "message": f"Please remove phone from slot {original_lid}, scan QR, then place in slot {target_lid}"
+            "same_slot": same_slot,
+            "message": (
+                f"Take phone {pid} from slot {original_lid}, scan QR, place back in same slot."
+                if same_slot else
+                f"Take phone {pid} from slot {original_lid}, scan QR, place in slot {target_lid}."
+            ),
         })
 
-        logger.info(f"Verify operation started: PID={pid}, {original_lid} → {target_lid}")
-
     # ============================================================
-    # QR SCANNED (Universal Handler)
+    # QR SCANNED
     # ============================================================
 
     def handle_qr_scanned(self, data: dict):
-        """
-        Handle QR code scan event.
+        client_id = request.sid
 
-        Validates scanned PID matches expected PID, then completes the operation.
-
-        This is called AFTER user has performed the physical action:
-        - Deposit: Phone is already placed
-        - Withdraw: Phone is already removed
-        - Verify: Phone is already moved
-        """
-        if not op_ctx.is_active():
-            emit("operation_error", {
-                "status": "error",
-                "message": "no_active_operation"
-            })
+        if not op_ctx.is_active(client_id):
+            emit("operation_error", {"status": "error", "message": "no_active_operation"})
             return
 
-        state = op_ctx.get_state()
-        logger.info(f"QR scan triggered for {state['op_type']} operation")
+        op = op_ctx.get(client_id)
 
-        # Scan and validate QR code
-        scan_result = scan_and_validate_pid(camera_index=2)
-
+        scan_result = scan_and_validate_pid(camera_index=2, timeout_sec=QR_SCAN_TIMEOUT)
         if scan_result["status"] != "success":
             emit("operation_error", scan_result)
-            self._cleanup_failed_operation(state)
+            op_ctx.clear(client_id)
             return
 
-        scanned_pid = scan_result["pid"]
-        expected_pid = state["expected_pid"]
-
-        # CRITICAL: Verify PID match
-        if scanned_pid != expected_pid:
-            logger.error(
-                f"PID mismatch: expected {expected_pid}, scanned {scanned_pid}"
-            )
+        scanned_pid = scan_result["pid"]   # str, consistent with op.pid
+        if scanned_pid != op.pid:
             emit("operation_error", {
                 "status": "error",
                 "message": "pid_mismatch",
-                "expected_pid": expected_pid,
-                "scanned_pid": scanned_pid
+                "expected_pid": op.pid,
+                "scanned_pid": scanned_pid,
             })
-            self._cleanup_failed_operation(state)
+            op_ctx.clear(client_id)
             return
 
-        # PID VERIFIED - Proceed with operation
-        logger.info(f"PID verified: {scanned_pid}")
+        op_ctx.qr_scanned(client_id)
 
-        if state["op_type"] == "deposit":
-            self._complete_deposit(state)
-
-        elif state["op_type"] == "withdraw":
-            self._complete_withdraw(state)
-
-        elif state["op_type"] == "verify":
-            self._complete_verify(state)
+        dispatch = {
+            "deposit": self._complete_deposit,
+            "withdraw": self._complete_withdraw,
+            "verify": self._complete_verify,
+        }
+        dispatch[op.op_type](op)
 
     # ============================================================
-    # OPERATION COMPLETION HANDLERS
+    # COMPLETION HANDLERS
     # ============================================================
 
-    def _complete_deposit(self, state: dict):
-        """Complete deposit operation after QR verification."""
-        pid = state["expected_pid"]
-        lid = state["expected_lid"]
+    def _complete_deposit(self, op):
+        pid, lid, client_id = op.pid, op.lid, op.client_id
 
-        logger.info(f"Completing deposit: PID={pid}, LID={lid}")
-
-        # Step 1: Create DB record
-        db_result = self.slot_ops.deposit_phone_db(pid, lid)
-        if db_result["status"] != "success":
-            emit("deposit_result", db_result)
-            self._cleanup_failed_operation(state)
-            return
-
-        # Step 2: Capture new baseline (phone is in slot)
+        # Capture baseline first — confirms phone was actually placed
         baseline_result = self.slot_ops.capture_and_save_baseline(
-            lid=lid,
-            is_occupied=True,
-            wait_for_stable=2.0
+            lid=lid, is_occupied=True, wait_for_stable=2.0
         )
-
         if baseline_result["status"] != "success":
             emit("deposit_result", {
                 "status": "error",
-                "message": "deposit_successful_but_baseline_failed",
-                "pid": pid,
-                "lid": lid
+                "message": "baseline_capture_failed",
+                "pid": pid, "lid": lid,
             })
-            # Still resume monitoring with default baseline
-            if self.slot_ops.monitor:
-                import numpy as np
-                self.slot_ops.monitor.resume_slot(lid, np.zeros(512), True)
-            op_ctx.clear()
+            op_ctx.clear(client_id)
             return
 
-        # Step 3: Success - alarms resumed by baseline capture
+        db_result = self.slot_ops.deposit_phone_db(pid, lid)
+        if db_result["status"] != "success":
+            emit("deposit_result", db_result)
+            op_ctx.clear(client_id)
+            return
+
+        self._resume_slot(lid)
+        op_ctx.complete(client_id)
         emit("deposit_result", {
             "status": "success",
-            "message": "Phone deposited successfully",
-            "pid": pid,
-            "lid": lid,
-            "storage_id": db_result.get("storage_id")
+            "pid": pid, "lid": lid,
+            "storage_id": db_result.get("storage_id"),
         })
 
-        op_ctx.clear()
-        logger.info(f"Deposit completed: PID={pid}, LID={lid}")
+    def _complete_withdraw(self, op):
+        pid, lid, client_id = op.pid, op.lid, op.client_id
 
-    def _complete_withdraw(self, state: dict):
-        """Complete withdrawal operation after QR verification."""
-        pid = state["expected_pid"]
-        lid = state["expected_lid"]
-
-        logger.info(f"Completing withdrawal: PID={pid}, LID={lid}")
-
-        # Step 1: Update DB record
         db_result = self.slot_ops.withdraw_phone_db(pid)
         if db_result["status"] != "success":
             emit("withdraw_result", db_result)
-            self._cleanup_failed_operation(state)
+            op_ctx.clear(client_id)
             return
 
-        # Step 2: Capture new baseline (slot is now empty)
-        baseline_result = self.slot_ops.capture_and_save_baseline(
-            lid=lid,
-            is_occupied=False,
-            wait_for_stable=2.0
+        # Capture empty-slot baseline; also sets slot.is_occupied = False
+        self.slot_ops.capture_and_save_baseline(
+            lid=lid, is_occupied=False, wait_for_stable=2.0
         )
 
-        if baseline_result["status"] != "success":
-            emit("withdraw_result", {
-                "status": "error",
-                "message": "withdrawal_successful_but_baseline_failed",
-                "pid": pid,
-                "lid": lid
-            })
-            # Remove from monitoring
-            if self.slot_ops.monitor:
-                self.slot_ops.monitor.remove_slot(lid)
-            op_ctx.clear()
-            return
-
-        # Step 3: Success - remove from monitoring
-        if self.slot_ops.monitor:
-            self.slot_ops.monitor.remove_slot(lid)
-
+        # Operation succeeded — lift pause without resetting slot state
+        self._resume_slot(lid)
+        op_ctx.complete(client_id)
         emit("withdraw_result", {
             "status": "success",
-            "message": "Phone withdrawn successfully",
-            "pid": pid,
-            "lid": lid,
-            "storage_id": db_result.get("storage_id")
+            "pid": pid, "lid": lid,
+            "storage_id": db_result.get("storage_id"),
         })
 
-        op_ctx.clear()
-        logger.info(f"Withdrawal completed: PID={pid}, LID={lid}")
-
-    def _complete_verify(self, state: dict):
-        """Complete verification operation after QR scan."""
-        pid = state["expected_pid"]
-        original_lid = state["original_lid"]
-        target_lid = state["expected_lid"]
-
-        logger.info(f"Completing verification: PID={pid}, {original_lid} → {target_lid}")
-
-        # Step 1: Update storage record to new location
-        conn = SlotMonitorDB.get_conn()
-        try:
-            with conn.cursor() as cur:
-                cur.execute("""
-                            UPDATE phone_storage
-                            SET lid = %s
-                            WHERE pid = %s
-                              AND retrieved_at IS NULL;
-                            """, (target_lid, pid))
-                conn.commit()
-
-        except Exception as e:
-            conn.rollback()
-            logger.error(f"Failed to update storage location: {e}")
-            emit("verify_result", {
-                "status": "error",
-                "message": "database_update_failed"
-            })
-            self._cleanup_failed_operation(state)
-            return
-        finally:
-            SlotMonitorDB.put_conn(conn)
-
-        # Step 2: Capture baseline for original slot (now empty)
-        baseline_original = self.slot_ops.capture_and_save_baseline(
-            lid=original_lid,
-            is_occupied=False,
-            wait_for_stable=1.5
+    def _complete_verify(self, op):
+        pid, original_lid, target_lid, client_id = (
+            op.pid, op.original_lid, op.lid, op.client_id
         )
+        same_slot = original_lid == target_lid
 
-        # Step 3: Capture baseline for target slot (now occupied)
-        baseline_target = self.slot_ops.capture_and_save_baseline(
-            lid=target_lid,
-            is_occupied=True,
-            wait_for_stable=1.5
+        if not same_slot:
+            if not SlotMonitorDB.update_storage_lid(pid, target_lid):
+                emit("verify_result", {"status": "error", "message": "database_update_failed"})
+                op_ctx.clear(client_id)
+                return
+
+        # Capture baseline for target slot (phone is now here)
+        self.slot_ops.capture_and_save_baseline(
+            lid=target_lid, is_occupied=True, wait_for_stable=1.5
         )
+        self._resume_slot(target_lid)
 
-        # Step 4: Resume monitoring (remove original, monitor target)
-        if self.slot_ops.monitor:
-            self.slot_ops.monitor.remove_slot(original_lid)
-            # Target slot monitoring resumed by capture_and_save_baseline
+        if not same_slot:
+            # Original slot is now empty
+            self.slot_ops.capture_and_save_baseline(
+                lid=original_lid, is_occupied=False, wait_for_stable=1.5
+            )
+            self._resume_slot(original_lid)
 
+        op_ctx.complete(client_id)
         emit("verify_result", {
             "status": "success",
-            "message": "Phone verified and relocated successfully",
             "pid": pid,
             "original_lid": original_lid,
-            "target_lid": target_lid
+            "target_lid": target_lid,
         })
 
-        op_ctx.clear()
-        logger.info(f"Verification completed: PID={pid}, {original_lid} → {target_lid}")
-
     # ============================================================
-    # ERROR CLEANUP
+    # SLOT HELPERS
     # ============================================================
 
-    def _cleanup_failed_operation(self, state: dict):
-        """Resume alarms and clear context on operation failure."""
-        op_type = state["op_type"]
-        lid = state["expected_lid"]
-        original_lid = state.get("original_lid")
+    def _pause_slot(self, lid: int):
+        if self.slot_ops.monitor and self.slot_ops.monitor.worker_pool:
+            self.slot_ops.monitor.worker_pool.pause_slot(lid)
 
-        logger.warning(f"Cleaning up failed {op_type} operation")
+    def _resume_slot(self, lid: int):
+        """Lift pause — slot state is already correct (successful operation)."""
+        if self.slot_ops.monitor and self.slot_ops.monitor.worker_pool:
+            self.slot_ops.monitor.worker_pool.resume_slot(lid)
 
-        if self.slot_ops.monitor:
-            import numpy as np
-
-            if op_type == "deposit":
-                # Resume as empty (deposit failed)
-                self.slot_ops.monitor.resume_slot(lid, np.zeros(512), False)
-
-            elif op_type == "withdraw":
-                # Resume as occupied (withdrawal failed)
-                self.slot_ops.monitor.resume_slot(lid, np.zeros(512), True)
-
-            elif op_type == "verify":
-                # Resume both slots to previous states
-                self.slot_ops.monitor.resume_slot(original_lid, np.zeros(512), True)
-                self.slot_ops.monitor.resume_slot(lid, np.zeros(512), False)
-
-        op_ctx.clear()
+    def _restore_slot(self, lid: int, is_occupied: bool):
+        """Lift pause and reset slot state (failed/cancelled operation)."""
+        if self.slot_ops.monitor and self.slot_ops.monitor.worker_pool:
+            self.slot_ops.monitor.worker_pool.restore_slot(lid, is_occupied)
 
 
 # ============================================================
-# FLASK-SOCKETIO REGISTRATION
+# REGISTRATION
 # ============================================================
 
 def register_dvw_handlers(socketio: SocketIO, slot_operations: SlotOperations):
-    """
-    Register DVW WebSocket handlers with Flask-SocketIO.
-
-    Usage:
-        from socket_handlers import register_dvw_handlers
-
-        app = Flask(__name__)
-        socketio = SocketIO(app)
-        slot_ops = SlotOperations(monitor, embedder)
-
-        register_dvw_handlers(socketio, slot_ops)
-    """
     handler = DVWSocketHandler(slot_operations, socketio)
 
     @socketio.on("deposit")
@@ -595,5 +321,39 @@ def register_dvw_handlers(socketio: SocketIO, slot_operations: SlotOperations):
     @socketio.on("qr_scanned")
     def on_qr_scanned(data):
         handler.handle_qr_scanned(data)
+
+    @socketio.on("get_alarm_status")
+    def on_get_alarm_status(data):
+        client_id = request.sid
+        alarm = slot_operations.monitor.alarm if slot_operations.monitor else None
+        if alarm is None:
+            emit("alarm_status", {"active": False}, to=client_id)
+            return
+        status = alarm.get_status()
+        if status["active"]:
+            with alarm._lock:
+                mismatches = [[p, l] for p, l in alarm.mismatches]
+            emit("alarm_status", {
+                "active": True,
+                "mismatch_count": len(mismatches),
+                "mismatches": mismatches,
+            }, to=client_id)
+        else:
+            emit("alarm_status", {"active": False}, to=client_id)
+
+    @socketio.on("alarm_acknowledge")
+    def on_alarm_acknowledge(data):
+        client_id = request.sid
+        alarm = slot_operations.monitor.alarm if slot_operations.monitor else None
+        if alarm is None:
+            emit("operation_error", {"status": "error", "message": "alarm_not_available"}, to=client_id)
+            return
+        password = data.get("password", "")
+        result = alarm.authenticate_admin(password)
+        if result["authenticated"]:
+            alarm.clear()
+            emit("alarm_acknowledge_result", {"status": "success"}, to=client_id)
+        else:
+            emit("alarm_acknowledge_result", {"status": "error", "message": "wrong_password"}, to=client_id)
 
     logger.info("DVW WebSocket handlers registered")

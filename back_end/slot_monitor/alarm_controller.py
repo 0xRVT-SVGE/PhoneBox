@@ -26,29 +26,65 @@ class AlarmController:
 
     def trigger(self, pid: str, lid: int):
         """Trigger alarm for a specific phone/location mismatch."""
+        pid = str(pid)  # guard against UUID objects from the worker
         with self._lock:
             if not self.active:
                 self._start_alarm_sound()
                 self.active = True
                 self._alarm_start_time = time.time()
                 logger.warning("ALARM ACTIVATED")
+                if self.socketio:
+                    self.socketio.emit("alarm_triggered", {
+                        "mismatch_count": 1,
+                        "mismatches": [[pid, lid]],
+                    })
 
             self.mismatches.add((pid, lid))
             logger.warning(f"Mismatch added: PID={pid}, LID={lid}")
+            if self.socketio:
+                self.socketio.emit("alarm_updated", {
+                    "mismatch_count": len(self.mismatches),
+                    "mismatches": [[p, l] for p, l in self.mismatches],
+                })
 
-    def stop_if_clear(self, any_mismatch_left: bool):
-        """Stop alarm if no mismatches remain."""
+    def resolve(self, pid: str, lid: int):
+        """
+        Remove a specific mismatch and stop the alarm if none remain.
+
+        Called by the worker when a slot's distance drops back below
+        the mismatch threshold (slot.update() returns stop_alarm=True).
+        """
         with self._lock:
-            if self.active and not any_mismatch_left:
+            self.mismatches.discard((pid, lid))
+            logger.info(f"Mismatch resolved: PID={pid}, LID={lid}")
+            if self.active and not self.mismatches:
                 self._stop_alarm_sound()
                 duration = time.time() - self._alarm_start_time if self._alarm_start_time else 0
                 self.active = False
                 self._alarm_start_time = None
                 logger.info(f"ALARM CLEARED after {duration:.1f}s")
+                if self.socketio:
+                    self.socketio.emit("alarm_cleared", {})
+
+    def stop_if_clear(self):
+        """
+        Stop the alarm if the internal mismatch set is empty.
+
+        Used as a safety valve; prefer resolve() for per-slot clearing.
+        """
+        with self._lock:
+            if self.active and not self.mismatches:
+                self._stop_alarm_sound()
+                duration = time.time() - self._alarm_start_time if self._alarm_start_time else 0
+                self.active = False
+                self._alarm_start_time = None
+                logger.info(f"ALARM CLEARED after {duration:.1f}s")
+                if self.socketio:
+                    self.socketio.emit("alarm_cleared", {})
 
     def _get_mismatches_list(self):
         mismatches_as_strings = [(str(pid), lid) for pid, lid in self.mismatches]
-        return sorted(mismatches_as_strings)  # Now safely sorted
+        return sorted(mismatches_as_strings)
 
     def authenticate_admin(self, password: str) -> dict:
         """
@@ -83,6 +119,8 @@ class AlarmController:
                 self.active = False
                 self._alarm_start_time = None
             logger.info(f"Cleared {count} mismatches")
+            if self.socketio:
+                self.socketio.emit("alarm_cleared", {})
 
     def get_status(self) -> dict:
         """Get current alarm status."""

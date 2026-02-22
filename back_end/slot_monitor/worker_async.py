@@ -1,17 +1,15 @@
 # ============================================================
-# FILE: back_end/slot_monitor/worker_async.py (DVW COMPATIBLE)
+# FILE: back_end/slot_monitor/worker_async.py
 # ============================================================
 """
 Async event-driven monitoring workers with DVW support.
-
-NEW: Supports pausing individual slots during DVW operations.
 """
 
 import asyncio
 import logging
 import time
 import numpy as np
-from typing import List, Dict
+from typing import List, Dict, Optional
 from dataclasses import dataclass
 
 from back_end.slot_monitor.slots import Slot
@@ -33,25 +31,26 @@ class WorkerMetrics:
 
     @property
     def avg_distance(self) -> float:
-        if self.frames_processed == 0:
-            return 0.0
-        return self.total_distance / self.frames_processed
+        return self.total_distance / self.frames_processed if self.frames_processed else 0.0
 
     @property
     def avg_processing_ms(self) -> float:
-        if self.frames_processed == 0:
-            return 0.0
-        return (self.total_processing_time / self.frames_processed) * 1000
+        return (self.total_processing_time / self.frames_processed) * 1000 if self.frames_processed else 0.0
 
 
 class AsyncMonitorWorker:
     """
     Async worker with DVW support.
 
-    NEW FEATURES:
-    - pause_slot(lid): Temporarily skip monitoring a slot
-    - resume_slot(lid): Resume monitoring
-    - Supports slot operations during DVW
+    Slot control:
+        pause_slot(lid)                  — suspend monitoring during a DVW operation
+        resume_slot(lid)                 — lift pause after SUCCESSFUL operation
+                                           (slot state already correct, baseline already captured)
+        restore_slot(lid, is_occupied)   — lift pause after FAILED/TIMED-OUT operation
+                                           (resets is_occupied + mismatch + grace timer;
+                                            distances_history is intentionally preserved so
+                                            the alarm system can re-trigger naturally if the
+                                            physical state warrants it)
     """
 
     def __init__(
@@ -76,7 +75,7 @@ class AsyncMonitorWorker:
 
         # Runtime state
         self._running = False
-        self._task: asyncio.Task = None
+        self._task: Optional[asyncio.Task] = None
 
         # Metrics
         self.metrics = WorkerMetrics(worker_id=worker_id)
@@ -84,25 +83,75 @@ class AsyncMonitorWorker:
         # Subscriber ID
         self._subscriber_id = f"worker-{worker_id}"
 
-        # DVW: Paused slots (lid -> True/False)
-        self._paused_slots = {}
+        # lid → True means monitoring is suspended for that slot
+        self._paused_slots: Dict[int, bool] = {}
 
-        slot_ids = [s.lid for s in slots]
-        logger.info(f"AsyncWorker {worker_id} initialized: {len(slots)} slots {slot_ids}")
+        # O(1) lid → Slot lookup
+        self._slot_map: Dict[int, Slot] = {s.lid: s for s in slots}
+
+        logger.info(f"AsyncWorker {worker_id} initialized: slots={[s.lid for s in slots]}")
+
+    # --------------------------------------------------------
+    # DVW SLOT CONTROL
+    # --------------------------------------------------------
 
     def pause_slot(self, lid: int):
-        """Pause monitoring for a specific slot (DVW operation)"""
+        """Suspend monitoring for a slot during a DVW operation."""
         self._paused_slots[lid] = True
-        logger.info(f"Worker {self.worker_id}: Slot {lid} paused")
+        logger.info(f"Worker {self.worker_id}: slot {lid} paused")
 
     def resume_slot(self, lid: int):
-        """Resume monitoring for a specific slot"""
+        """
+        Lift pause after a SUCCESSFUL operation.
+
+        The slot's is_occupied and baseline are already correct because
+        the operation updated them. Do not touch slot state here.
+        """
         self._paused_slots.pop(lid, None)
-        logger.info(f"Worker {self.worker_id}: Slot {lid} resumed")
+        logger.info(f"Worker {self.worker_id}: slot {lid} resumed")
+
+    def restore_slot(self, lid: int, is_occupied: bool):
+        """
+        Lift pause after a FAILED or TIMED-OUT operation.
+
+        Resets:
+            is_occupied      → recorded pre-operation value
+            mismatch         → False (cleared so alarm logic starts clean)
+            _grace_start_ts  → None  (stale timer would fire immediately)
+
+        Does NOT clear distances_history — history is preserved so the
+        monitoring loop can re-trigger an alarm naturally if the physical
+        state of the slot still warrants it (e.g. phone was taken during
+        a failed verify, slot really is empty, alarm should re-fire).
+
+        Args:
+            lid:         Location ID of the slot to restore.
+            is_occupied: The occupancy the slot had before the operation.
+        """
+        self._paused_slots.pop(lid, None)
+
+        slot = self._slot_map.get(lid)
+        if slot is None:
+            logger.warning(
+                f"Worker {self.worker_id}: cannot restore slot {lid} — not in this worker"
+            )
+            return
+
+        slot.is_occupied = is_occupied
+        slot.mismatch = False
+        slot._grace_start_ts = None
+        # distances_history intentionally NOT cleared — see docstring
+        logger.info(
+            f"Worker {self.worker_id}: slot {lid} restored (is_occupied={is_occupied})"
+        )
 
     def is_slot_paused(self, lid: int) -> bool:
         """Check if slot is paused"""
         return self._paused_slots.get(lid, False)
+
+    # --------------------------------------------------------
+    # LIFECYCLE
+    # --------------------------------------------------------
 
     async def start(self):
         """Start worker task"""
@@ -132,6 +181,10 @@ class AsyncMonitorWorker:
                 pass
 
         logger.info(f"AsyncWorker {self.worker_id} stopped")
+
+    # --------------------------------------------------------
+    # MONITORING LOOP
+    # --------------------------------------------------------
 
     async def _monitor_loop(self):
         """Main monitoring loop (event-driven)"""
@@ -171,13 +224,11 @@ class AsyncMonitorWorker:
         """
         Process a single slot.
 
-        NEW: Skips processing if slot is paused (DVW operation)
+        Skips processing if slot is paused (DVW operation in progress).
         """
-        # DVW: Skip if slot is paused
         if self.is_slot_paused(slot.lid):
             return
 
-        # Compute embedding and distance
         result = slot.update(
             frame=frame,
             mismatch_threshold=self.mismatch_threshold,
@@ -188,43 +239,39 @@ class AsyncMonitorWorker:
         dist = result["distance"]
         self.metrics.total_distance += dist
 
-        # Get phone ID
         pid = await self.db.get_pid_for_lid(slot.lid)
         if pid is None:
             pid = f"unknown-{slot.lid}"
 
-        # Handle alarms
         if result["trigger_alarm"]:
             self.alarm.trigger(pid, slot.lid)
             self.metrics.alarms_triggered += 1
             logger.critical(
-                f"Worker {self.worker_id}: ALARM! "
-                f"LID={slot.lid}, PID={pid}, dist={dist:.4f}"
+                f"Worker {self.worker_id}: ALARM! LID={slot.lid} PID={pid} dist={dist:.4f}"
             )
 
         if result["stop_alarm"]:
-            any_mismatch = any(s.mismatch for s in self.slots)
-            self.alarm.stop_if_clear(any_mismatch)
-            logger.info(f"Worker {self.worker_id}: Alarm cleared for LID={slot.lid}")
+            # resolve() removes this specific (pid, lid) pair and stops the
+            # alarm only if no other mismatches remain across the entire set.
+            self.alarm.resolve(pid, slot.lid)
+            logger.info(f"Worker {self.worker_id}: mismatch resolved for LID={slot.lid}")
 
         if result["needs_recalc"]:
-            logger.info(
-                f"Worker {self.worker_id}: Baseline adaptation "
-                f"LID={slot.lid}, dist={dist:.4f}"
-            )
             slot.adapt_baseline(result["embedding"])
             await self.db.save_baseline(slot.lid, result["embedding"])
             self.metrics.baselines_adapted += 1
+            logger.info(
+                f"Worker {self.worker_id}: baseline adapted LID={slot.lid} dist={dist:.4f}"
+            )
 
     def _log_metrics(self):
         """Log performance metrics"""
         logger.info(
-            f"Worker {self.worker_id} metrics: "
-            f"frames={self.metrics.frames_processed}, "
-            f"avg_dist={self.metrics.avg_distance:.4f}, "
-            f"avg_time={self.metrics.avg_processing_ms:.2f}ms, "
-            f"alarms={self.metrics.alarms_triggered}, "
-            f"paused={len(self._paused_slots)}, "
+            f"Worker {self.worker_id}: frames={self.metrics.frames_processed} "
+            f"avg_dist={self.metrics.avg_distance:.4f} "
+            f"avg_time={self.metrics.avg_processing_ms:.2f}ms "
+            f"alarms={self.metrics.alarms_triggered} "
+            f"paused={len(self._paused_slots)} "
             f"errors={self.metrics.errors}"
         )
 
@@ -244,9 +291,10 @@ class AsyncMonitorWorker:
 
 class WorkerPool:
     """
-    Manages async workers with DVW support.
+    Manages a pool of AsyncMonitorWorker instances.
 
-    NEW: pause_slot/resume_slot propagate to correct worker.
+    All slot control calls (pause / resume / restore) route through here.
+    WorkerPool finds the owning worker by lid and delegates.
     """
 
     def __init__(
@@ -262,9 +310,7 @@ class WorkerPool:
     ):
         self.num_workers = num_workers
         self.workers: List[AsyncMonitorWorker] = []
-
-        # LID -> worker_id mapping (for DVW operations)
-        self._slot_to_worker = {}
+        self._slot_to_worker: Dict[int, int] = {}
 
         self._distribute_slots(
             slots=slots,
@@ -275,95 +321,74 @@ class WorkerPool:
             recalc_threshold=recalc_threshold,
             grace_period=grace_period,
         )
+        logger.info(f"WorkerPool created: {num_workers} workers, {len(slots)} slots")
 
-        logger.info(f"WorkerPool created: {num_workers} workers")
-
-    def _distribute_slots(
-            self,
-            slots: List[Slot],
-            frame_buffer,
-            db,
-            alarm,
-            mismatch_threshold,
-            recalc_threshold,
-            grace_period,
-    ):
-        """Distribute slots evenly across workers"""
+    def _distribute_slots(self, slots, frame_buffer, db, alarm,
+                          mismatch_threshold, recalc_threshold, grace_period):
         slot_list = sorted(slots, key=lambda s: s.lid)
         slots_per_worker = len(slot_list) // self.num_workers
         remainder = len(slot_list) % self.num_workers
-
-        start_idx = 0
+        start = 0
         for i in range(self.num_workers):
             count = slots_per_worker + (1 if i < remainder else 0)
-            end_idx = start_idx + count
-            worker_slots = slot_list[start_idx:end_idx]
-
-            # Track which worker owns which slot
+            worker_slots = slot_list[start:start + count]
             for slot in worker_slots:
                 self._slot_to_worker[slot.lid] = i
-
-            worker = AsyncMonitorWorker(
-                worker_id=i,
-                slots=worker_slots,
-                frame_buffer=frame_buffer,
-                db=db,
-                alarm=alarm,
+            self.workers.append(AsyncMonitorWorker(
+                worker_id=i, slots=worker_slots, frame_buffer=frame_buffer,
+                db=db, alarm=alarm,
                 mismatch_threshold=mismatch_threshold,
                 recalc_threshold=recalc_threshold,
                 grace_period=grace_period,
-            )
-            self.workers.append(worker)
+            ))
+            start += count
 
-            start_idx = end_idx
+    def _get_worker(self, lid: int) -> Optional[AsyncMonitorWorker]:
+        idx = self._slot_to_worker.get(lid)
+        if idx is None:
+            logger.warning(f"WorkerPool: slot {lid} not found in any worker")
+            return None
+        return self.workers[idx]
 
     def pause_slot(self, lid: int):
-        """Pause monitoring for a slot (DVW operation)"""
-        worker_id = self._slot_to_worker.get(lid)
-        if worker_id is not None and worker_id < len(self.workers):
-            self.workers[worker_id].pause_slot(lid)
-        else:
-            logger.warning(f"Cannot pause slot {lid}: worker not found")
+        w = self._get_worker(lid)
+        if w:
+            w.pause_slot(lid)
 
     def resume_slot(self, lid: int):
-        """Resume monitoring for a slot"""
-        worker_id = self._slot_to_worker.get(lid)
-        if worker_id is not None and worker_id < len(self.workers):
-            self.workers[worker_id].resume_slot(lid)
-        else:
-            logger.warning(f"Cannot resume slot {lid}: worker not found")
+        """Lift pause after successful operation — slot state already correct."""
+        w = self._get_worker(lid)
+        if w:
+            w.resume_slot(lid)
 
-    def remove_slot(self, lid: int):
-        """Remove slot from monitoring (after withdrawal)"""
-        # Same as resume for now, but semantically different
-        self.resume_slot(lid)
+    def restore_slot(self, lid: int, is_occupied: bool):
+        """
+        Lift pause after failed/timed-out operation.
+        Resets is_occupied, mismatch, and grace timer.
+        Preserves distances_history so alarm can re-trigger naturally.
+        """
+        w = self._get_worker(lid)
+        if w:
+            w.restore_slot(lid, is_occupied)
 
     async def start_all(self):
-        """Start all workers"""
         logger.info("Starting worker pool...")
-        tasks = [worker.start() for worker in self.workers]
-        await asyncio.gather(*tasks)
+        await asyncio.gather(*[w.start() for w in self.workers])
         logger.info(f"{len(self.workers)} workers started")
 
     async def stop_all(self):
-        """Stop all workers"""
         logger.info("Stopping worker pool...")
-        tasks = [worker.stop() for worker in self.workers]
-        await asyncio.gather(*tasks)
+        await asyncio.gather(*[w.stop() for w in self.workers])
         logger.info(f"{len(self.workers)} workers stopped")
 
     def get_metrics(self) -> Dict:
-        """Get aggregated metrics"""
         total_frames = sum(w.metrics.frames_processed for w in self.workers)
         total_distance = sum(w.metrics.total_distance for w in self.workers)
-        total_alarms = sum(w.metrics.alarms_triggered for w in self.workers)
-        total_errors = sum(w.metrics.errors for w in self.workers)
-
         return {
             "num_workers": len(self.workers),
             "total_frames_processed": total_frames,
-            "avg_distance": total_distance / total_frames if total_frames > 0 else 0.0,
-            "total_alarms": total_alarms,
-            "total_errors": total_errors,
+            "avg_distance": total_distance / total_frames if total_frames else 0.0,
+            "total_alarms": sum(w.metrics.alarms_triggered for w in self.workers),
+            "total_errors": sum(w.metrics.errors for w in self.workers),
             "workers": [w.get_metrics() for w in self.workers],
         }

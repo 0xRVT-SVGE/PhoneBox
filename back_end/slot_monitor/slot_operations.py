@@ -1,19 +1,16 @@
 # ============================================================
-# FILE: server/slot_monitor/slot_operations.py (REFACTORED)
+# FILE: back_end/slot_monitor/slot_operations.py
 # ============================================================
 """
 Slot operations - DATABASE MUTATIONS ONLY.
 
-Changes from original:
-- Removed QR scanning logic (moved to qr_scanner.py)
-- Removed wait times (handled by socket_handlers.py)
-- Pure DB operations only
-- Assumes PID is already validated
-
 Methods:
-- deposit_phone_db(): Create storage record
-- withdraw_phone_db(): Mark phone as retrieved
-- Baseline management methods remain unchanged
+- deposit_phone_db():          Create storage record
+- withdraw_phone_db():         Mark phone as retrieved
+- capture_and_save_baseline(): Capture frame, compute embedding, persist to DB,
+                                update in-memory slot state.
+                                Callers own pause/resume — this method does NOT
+                                touch the worker's paused_slots set.
 """
 
 import logging
@@ -28,22 +25,21 @@ logger = logging.getLogger(__name__)
 class SlotOperations:
     """
     Handle deposit/withdrawal DATABASE operations.
-    Coordinates between DB, monitor, and embedder.
+    Coordinates between DB, monitor frame buffer, and slot map.
 
     IMPORTANT: This class does NOT handle:
-    - QR scanning (see qr_scanner.py)
-    - PID validation (see qr_scanner.py)
-    - WebSocket events (see socket_handlers.py)
+    - QR scanning (see qr_pid_reader.py)
+    - PID validation (see qr_pid_reader.py)
+    - WebSocket events (see ops_handler.py)
+    - Slot pause/resume lifecycle (see ops_handler.py)
     """
 
-    def __init__(self, monitor=None, embedder=None):
+    def __init__(self, monitor=None):
         """
         Args:
-            monitor: SlotMonitor instance
-            embedder: Embedder instance for computing baselines
+            monitor: HeadlessSlotMonitor instance (provides worker_pool + frame_buffer)
         """
         self.monitor = monitor
-        self.embedder = embedder
         logger.info("SlotOperations initialized")
 
     def set_monitor(self, monitor):
@@ -51,16 +47,11 @@ class SlotOperations:
         self.monitor = monitor
         logger.info("Monitor attached to SlotOperations")
 
-    def set_embedder(self, embedder):
-        """Set embedder reference after initialization."""
-        self.embedder = embedder
-        logger.info("Embedder attached to SlotOperations")
-
     # ------------------------------------------------------------
     # DEPOSIT OPERATION (DB ONLY)
     # ------------------------------------------------------------
 
-    def deposit_phone_db(self, pid: int, lid: int) -> Dict:
+    def deposit_phone_db(self, pid: str, lid: int) -> Dict:
         """
         Create database record for phone deposit.
 
@@ -68,10 +59,10 @@ class SlotOperations:
         - PID is already validated
         - Slot is already verified empty
         - Phone is already physically placed
-        - Baseline will be captured separately
+        - Baseline will be captured separately via capture_and_save_baseline()
 
         Args:
-            pid: Phone ID (already validated)
+            pid: Phone ID (already validated, str)
             lid: Location ID (already verified empty)
 
         Returns:
@@ -80,7 +71,6 @@ class SlotOperations:
         conn = get_conn()
         try:
             with conn.cursor() as cur:
-                # Double-check preconditions
                 cur.execute("""
                             SELECT EXISTS(SELECT 1 FROM phones WHERE pid = %s),
                                    EXISTS(SELECT 1
@@ -104,7 +94,6 @@ class SlotOperations:
                 if slot_occupied:
                     return {"status": "error", "message": f"Location {lid} already occupied"}
 
-                # Create storage record
                 cur.execute("""
                             INSERT INTO phone_storage (pid, lid, stored_at)
                             VALUES (%s, %s, NOW()) RETURNING id;
@@ -113,7 +102,7 @@ class SlotOperations:
                 storage_id = cur.fetchone()[0]
                 conn.commit()
 
-                logger.info(f"✅ Deposit DB record created: PID={pid}, LID={lid}, storage_id={storage_id}")
+                logger.info(f"Deposit DB record created: PID={pid}, LID={lid}, storage_id={storage_id}")
                 return {
                     "status": "success",
                     "message": "Deposit recorded successfully",
@@ -133,14 +122,14 @@ class SlotOperations:
     # WITHDRAWAL OPERATION (DB ONLY)
     # ------------------------------------------------------------
 
-    def withdraw_phone_db(self, pid: int) -> Dict:
+    def withdraw_phone_db(self, pid: str) -> Dict:
         """
         Mark phone as retrieved in database.
 
         ASSUMES:
         - PID is already validated
         - Phone is already physically removed
-        - Baseline will be recaptured separately
+        - Baseline will be recaptured separately via capture_and_save_baseline()
 
         Args:
             pid: Phone ID (already validated)
@@ -151,7 +140,6 @@ class SlotOperations:
         conn = get_conn()
         try:
             with conn.cursor() as cur:
-                # Get active storage record
                 cur.execute("""
                             SELECT ps.id, ps.lid
                             FROM phone_storage ps
@@ -178,7 +166,7 @@ class SlotOperations:
 
                 conn.commit()
 
-                logger.info(f"✅ Withdrawal DB record updated: PID={pid}, LID={lid}, storage_id={storage_id}")
+                logger.info(f"Withdrawal DB record updated: PID={pid}, LID={lid}, storage_id={storage_id}")
                 return {
                     "status": "success",
                     "message": "Withdrawal recorded successfully",
@@ -195,7 +183,7 @@ class SlotOperations:
             put_conn(conn)
 
     # ------------------------------------------------------------
-    # BASELINE MANAGEMENT (unchanged)
+    # BASELINE MANAGEMENT
     # ------------------------------------------------------------
 
     def capture_and_save_baseline(
@@ -205,95 +193,100 @@ class SlotOperations:
             wait_for_stable: float = 3.0
     ) -> Dict:
         """
-        Capture new baseline for a slot and update monitoring.
+        Capture a new baseline for a slot, persist it to DB, and update the
+        in-memory slot state (baseline embedding + is_occupied).
 
-        Used after deposit/withdrawal to update the slot's expected state.
+        IMPORTANT: This method does NOT pause or resume the slot.
+        The caller (ops_handler) owns the pause/resume lifecycle and must
+        ensure the slot is already paused before calling this.
 
         Args:
-            lid: Location ID
-            is_occupied: True if phone was just deposited, False if just removed
-            wait_for_stable: Seconds to wait before capturing baseline
+            lid:            Location ID
+            is_occupied:    True if phone was just deposited, False if just removed
+            wait_for_stable: Seconds to wait before capturing (lets vibrations settle)
 
         Returns:
-            {"status": "success" | "error", "baseline": np.ndarray | None}
+            {"status": "success" | "error", "message": str, "baseline": np.ndarray | None}
         """
-        if not self.monitor or not self.embedder:
-            return {
-                "status": "error",
-                "message": "Monitor or embedder not available"
-            }
+        if not self.monitor:
+            return {"status": "error", "message": "Monitor not available"}
+
+        worker = self.monitor.worker_pool._get_worker(lid)
+        if worker is None:
+            return {"status": "error", "message": f"No worker found for slot {lid}"}
+
+        slot = worker._slot_map.get(lid)
+        if slot is None:
+            return {"status": "error", "message": f"Slot {lid} not in worker map"}
 
         try:
-            logger.info(f"Capturing baseline for LID={lid}, occupied={is_occupied}")
-
-            # Pause monitoring during baseline capture
-            self.monitor.pause_slot(lid)
-
-            # Wait for stabilization
-            logger.info(f"Waiting {wait_for_stable}s for stabilization...")
+            logger.info(f"Capturing baseline for LID={lid} (is_occupied={is_occupied}, wait={wait_for_stable}s)")
             time.sleep(wait_for_stable)
 
-            # Capture new baseline
-            baseline_emb = self._capture_baseline(lid)
+            baseline_emb = self._capture_baseline(slot)
             if baseline_emb is None:
-                # Resume with default state on failure
-                self.monitor.resume_slot(lid, np.zeros(512), is_occupied)
-                return {
-                    "status": "error",
-                    "message": "Failed to capture baseline"
-                }
+                return {"status": "error", "message": "Failed to capture baseline"}
 
-            # Save to database
+            # Persist to DB
             from back_end.slot_monitor.db_interface import SlotMonitorDB
             SlotMonitorDB.save_baseline(lid, baseline_emb)
 
-            # Resume monitoring with new baseline
-            self.monitor.resume_slot(lid, baseline_emb, is_occupied=is_occupied)
+            # Update in-memory slot state — reset_baseline clears history/mismatch/grace
+            slot.reset_baseline(baseline_emb)
+            slot.is_occupied = is_occupied
 
-            logger.info(f"✅ Baseline captured and saved for LID={lid}")
+            logger.info(f"Baseline captured and saved for LID={lid}")
             return {
                 "status": "success",
                 "message": "Baseline captured successfully",
-                "baseline": baseline_emb
+                "baseline": baseline_emb,
             }
 
         except Exception as e:
             logger.error(f"Failed to capture baseline for LID {lid}: {e}")
-            # Resume monitoring in error case
-            self.monitor.resume_slot(lid, np.zeros(512), is_occupied)
             return {"status": "error", "message": str(e)}
 
-    def _capture_baseline(self, lid: int) -> Optional[np.ndarray]:
+    def _capture_baseline(self, slot) -> Optional[np.ndarray]:
         """
-        Capture stable baseline embedding for a slot.
-        Takes multiple samples and averages them.
+        Capture a stable baseline embedding for a slot.
+
+        Takes 3 samples from the live frame buffer using the slot's own
+        ROI extractor and averages them.
+
+        Args:
+            slot: Slot instance (provides compute_embedding)
+
+        Returns:
+            Normalised float32 embedding, or None on failure
         """
         try:
             embeddings = []
-
             for i in range(3):
-                emb = self.embedder.compute(lid)
-                embeddings.append(emb)
-
-                if i < 2:  # Don't sleep after last capture
+                frame = self.monitor.frame_buffer.get_frame_sync()
+                if frame is None:
+                    logger.warning("Frame buffer returned None during baseline capture")
+                    continue
+                embeddings.append(slot.compute_embedding(frame))
+                if i < 2:
                     time.sleep(0.2)
 
-            # Average and normalize
+            if not embeddings:
+                logger.error("No frames captured for baseline")
+                return None
+
             avg_emb = np.mean(embeddings, axis=0)
             norm = np.linalg.norm(avg_emb)
-
             if norm > 1e-8:
                 avg_emb = avg_emb / norm
 
-            logger.debug(f"Captured baseline for slot {lid}")
             return avg_emb.astype(np.float32)
 
         except Exception as e:
-            logger.error(f"Failed to capture baseline for slot {lid}: {e}")
+            logger.error(f"Failed to capture baseline for slot {slot.lid}: {e}")
             return None
 
     # ------------------------------------------------------------
-    # STATUS QUERIES (unchanged)
+    # STATUS QUERIES
     # ------------------------------------------------------------
 
     def get_slot_status(self, lid: int) -> Dict:
@@ -322,15 +315,17 @@ class SlotOperations:
 
                 lid, pid, imei, model, stored_at, retrieved_at = row
 
-                # Get monitoring state if slot is being monitored
                 monitor_state = None
-                if self.monitor and lid in self.monitor.slots:
-                    slot = self.monitor.slots[lid]
-                    monitor_state = {
-                        "last_distance": slot.last_dist,
-                        "mismatch": slot.mismatch,
-                        "is_occupied": slot.is_occupied
-                    }
+                if self.monitor and self.monitor.worker_pool:
+                    worker = self.monitor.worker_pool._get_worker(lid)
+                    if worker:
+                        slot = worker._slot_map.get(lid)
+                        if slot:
+                            monitor_state = {
+                                "last_distance": slot.last_dist,
+                                "mismatch": slot.mismatch,
+                                "is_occupied": slot.is_occupied,
+                            }
 
                 return {
                     "status": "success",
@@ -340,9 +335,9 @@ class SlotOperations:
                         "pid": pid,
                         "imei": imei,
                         "model": model,
-                        "stored_at": stored_at.isoformat() if stored_at else None
+                        "stored_at": stored_at.isoformat() if stored_at else None,
                     } if pid else None,
-                    "monitoring": monitor_state
+                    "monitoring": monitor_state,
                 }
 
         except Exception as e:

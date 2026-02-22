@@ -1,6 +1,7 @@
 import threading
 from queue import Queue
 import time
+from flask_socketio import emit as _emit
 
 class ScannerState:
     def __init__(self):
@@ -101,23 +102,70 @@ class ScannerState:
     def register_callback(self, callback):
         self._scan_callbacks.append(callback)
 
-    def emit_scan_status(self):
-        if self._socketio is not None:
-            try:
-                # Use start_background_task for thread safety
-                self._socketio.start_background_task(self._emit_socket)
-            except Exception:
-                pass
+    # In scanner_state.py
 
-        # Call all local callbacks
+    def emit_to_client(self, client_id):
+        """
+        Emit to a specific client by WebSocket connection ID.
+
+        Note: Does NOT trigger callbacks - those are for local display only.
+        """
+        if self._socketio is None or client_id is None:
+            return
+        self._socketio.emit("scan_status", self._get_status_data(), to=client_id, namespace="/")
+
+    def emit_to_requester(self):
+        """
+        Emit to the requesting client (uses Flask-SocketIO context).
+
+        Note: Does NOT trigger callbacks - those are for local display only.
+        """
+        _emit("scan_status", self._get_status_data())
+
+    def emit_scan_status(self):
+        """
+        Emit to all connected clients (broadcast) AND trigger local callbacks.
+
+        This is used when state changes that should update both:
+        1. All WebSocket clients (network)
+        2. Local display overlay (callbacks)
+        """
+        # Network: Emit to all WebSocket clients
+        if self._socketio is not None:
+            self._socketio.start_background_task(self._emit_socket)
+
+        # Local: Trigger display callbacks
         for cb in self._scan_callbacks:
             try:
                 cb(self._scan_results.copy())
             except Exception:
                 pass
 
-    def _emit_socket(self):
-        self._socketio.emit("scan_status", {
+    def emit_with_callbacks(self, client_id=None):
+        """
+        Emit to client(s) AND trigger local callbacks.
+
+        Use this when you want both network updates and local display updates.
+
+        Args:
+            client_id: Specific client to emit to (None = broadcast)
+        """
+        # Network: Emit to specific client or broadcast
+        if client_id:
+            self.emit_to_client(client_id)
+        else:
+            if self._socketio is not None:
+                self._socketio.start_background_task(self._emit_socket)
+
+        # Local: Trigger display callbacks
+        for cb in self._scan_callbacks:
+            try:
+                cb(self._scan_results.copy())
+            except Exception:
+                pass
+
+    def _get_status_data(self):
+        return {
             "running": self._scan_request["running"],
             "authorized": self._auth_status["authorized"],
             "user": self._auth_status["user"],
@@ -125,7 +173,12 @@ class ScannerState:
             "barcode_verified": self._scan_results["barcode_verified"],
             "current_name": self._scan_results["current_name"],
             "badge_timeout_exceeded": self._scan_results["badge_timeout_exceeded"],
-        }, namespace="/")
+        }
+
+    def _emit_socket(self):
+        if self._socketio is None:
+            return
+        self._socketio.emit("scan_status", self._get_status_data(), namespace="/")
 
     # ---- Preview async methods ----
     def request_preview(self):

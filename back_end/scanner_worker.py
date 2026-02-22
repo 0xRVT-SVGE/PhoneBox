@@ -1,4 +1,15 @@
+# ============================================================
+# FILE: back_end/scanner_worker.py
+# ============================================================
+"""
+Scan worker — face + barcode verification.
+
+Shutdown ownership: scanner_loop calls stop_scan() when it exits.
+This module does not need to know about the global stop_event.
+"""
+
 import time
+import threading
 import cv2
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor
@@ -6,7 +17,6 @@ from deepface import DeepFace
 from pyzbar.pyzbar import decode, ZBarSymbol
 import requests
 from back_end.scanner_state import scanner_state
-import threading
 
 API_BASE = "http://127.0.0.1:5000/api/students"
 SIMILARITY_THRESHOLD = 0.5
@@ -15,10 +25,15 @@ SCALED_WIDTH = 720
 FACE_INTERVAL = 0.5
 BARCODE_INTERVAL = 0.5
 
+_client_id = None
 _executor = ThreadPoolExecutor(max_workers=1)
-_scan_start_event = threading.Event()  # Start scan signal
-_scan_stop_event = threading.Event()  # Stop scan signal
+_scan_start_event = threading.Event()
+_scan_stop_event = threading.Event()
 
+
+# ============================================================
+# UTILITIES
+# ============================================================
 
 def l2_normalize(vec):
     norm = np.linalg.norm(vec)
@@ -51,8 +66,7 @@ def fetch_student_by_sid(sid):
         if r.status_code == 200:
             wrapper = r.json()
             student = wrapper["data"]
-            embed = student.get("embed", None)
-            student["embed"] = parse_pg_array(embed)
+            student["embed"] = parse_pg_array(student.get("embed"))
             return student
     except Exception:
         pass
@@ -64,7 +78,7 @@ def _deepface_represent(resized):
         img_path=resized,
         model_name="SFace",
         detector_backend="opencv",
-        enforce_detection=False
+        enforce_detection=False,
     )
 
 
@@ -77,14 +91,23 @@ def emit_if_changed(new_auth, new_results):
         scanner_state.scan_results.update(new_results)
         changed = True
     if changed:
-        scanner_state.emit_scan_status()
+        scanner_state.emit_with_callbacks(_client_id)
 
+
+# ============================================================
+# SCAN SESSION
+# ============================================================
 
 def run_scan_session():
     """Execute a single scan session until completion or stop signal."""
     emit_if_changed(
         {"authorized": False, "user": None},
-        {"face_verified": False, "barcode_verified": False, "current_name": "Idle"}
+        {
+            "face_verified": False,
+            "barcode_verified": False,
+            "current_name": "Idle",
+            "badge_timeout_exceeded": False
+        },
     )
 
     face_ok = False
@@ -98,14 +121,16 @@ def run_scan_session():
     sid = None
 
     while not _scan_stop_event.is_set():
-        # Block until frame or stop event - only wakes when needed
         task = scanner_state.task_queue.get()
 
-        # Check if we got woken by stop event
         if _scan_stop_event.is_set():
             break
 
         frame, roi_coords, timestamp = task
+
+        # Sentinel value from stop_scan()
+        if frame is None:
+            break
 
         # --- BARCODE DETECTION ---
         if timestamp - last_barcode_scan > BARCODE_INTERVAL:
@@ -113,8 +138,10 @@ def run_scan_session():
             roi = frame[roi_coords[1]:roi_coords[3], roi_coords[0]:roi_coords[2]]
 
             if student is None:
-                decoded = decode(cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY), symbols=[ZBarSymbol.CODE128])
-
+                decoded = decode(
+                    cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY),
+                    symbols=[ZBarSymbol.CODE128]
+                )
                 if decoded:
                     sid = decoded[0].data.decode("utf-8").strip()
                     student = fetch_student_by_sid(sid)
@@ -151,8 +178,13 @@ def run_scan_session():
             try:
                 results = face_future.result(timeout=0)
                 if results:
-                    largest = max(results, key=lambda f: f["facial_area"]["w"] * f["facial_area"]["h"])
-                    live_embed = l2_normalize(np.array(largest["embedding"], dtype=np.float32))
+                    largest = max(
+                        results,
+                        key=lambda f: f["facial_area"]["w"] * f["facial_area"]["h"],
+                    )
+                    live_embed = l2_normalize(
+                        np.array(largest["embedding"], dtype=np.float32)
+                    )
                     sim = float(np.dot(live_embed, scanner_state.current_embed))
                     if sim >= SIMILARITY_THRESHOLD:
                         face_ok = True
@@ -171,43 +203,72 @@ def run_scan_session():
 
         emit_if_changed(
             scanner_state.auth_status,
-            {"face_verified": face_ok, "barcode_verified": barcode_ok, "current_name": name}
+            {
+                "face_verified": face_ok,
+                "barcode_verified": barcode_ok,
+                "current_name": name,
+                "badge_timeout_exceeded": timeout
+            },
         )
 
     # Session complete
     scanner_state.scan_request["running"] = False
     emit_if_changed(
         {"authorized": face_ok and barcode_ok, "user": sid},
-        {"face_verified": face_ok, "barcode_verified": barcode_ok, "current_name": name,
-         "badge_timeout_exceeded": timeout}
+        {
+            "face_verified": face_ok,
+            "barcode_verified": barcode_ok,
+            "current_name": name,
+            "badge_timeout_exceeded": timeout
+        },
     )
-    print("finished")
 
+
+# ============================================================
+# PERSISTENT WORKER  (runs for the lifetime of the process)
+# ============================================================
 
 def scan_worker():
-    """Persistent worker that waits for start event."""
-    while True:
-        # Block indefinitely on event - TRUE 0% CPU usage
-        _scan_start_event.wait()
-        _scan_start_event.clear()
-        _scan_stop_event.clear()  # Reset stop signal
+    """
+    Persistent worker that waits for scan sessions.
 
-        # Run the scan session
+    Lifetime: same as the process — started once by server_main,
+    exits naturally when the process exits (daemon thread).
+
+    Shutdown: scanner_loop calls stop_scan() which unblocks any
+    blocking queue.get() via a sentinel and sets _scan_stop_event.
+    The worker then falls through and waits on _scan_start_event again,
+    where it will block until the process dies (daemon thread).
+    """
+    while True:
+        _scan_start_event.wait()   # 0% CPU while idle
+        _scan_start_event.clear()
+        _scan_stop_event.clear()
+
         run_scan_session()
 
-        # Clean up after session
         scanner_state.current_embed = None
         scanner_state.current_student = None
 
 
-def start_scan():
-    """Trigger a scan session."""
+# ============================================================
+# PUBLIC CONTROL API
+# ============================================================
+
+def start_scan(client_id: str):
+    """Start a scan session for the given WebSocket client."""
+    global _client_id
+    _client_id = client_id
     _scan_stop_event.clear()
     _scan_start_event.set()
 
 
 def stop_scan():
-    """Stop the current scan session."""
+    """
+    Stop the current scan session.
+
+    Called by scanner_loop when it exits — not by server_main directly.
+    Puts a sentinel into the task queue to unblock any blocking get().
+    """
     _scan_stop_event.set()
-    # Put dummy frame to unblock queue.get() if it's waiting
     scanner_state.task_queue.put((None, None, None))

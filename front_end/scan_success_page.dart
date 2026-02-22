@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'api_service.dart';
+import 'socket_service.dart'; // ADD THIS IMPORT
 
 class ScanSuccessPage extends StatefulWidget {
   final String sid;
@@ -18,11 +19,49 @@ class ScanSuccessPage extends StatefulWidget {
 class _ScanSuccessPageState extends State<ScanSuccessPage> {
   bool _loading = true;
   List<dynamic> _phones = [];
+  String _depositStatus = "Not started";
+  String? _testPid;
+
+  final _socketService = SocketService(); // This should work now with import
 
   @override
   void initState() {
     super.initState();
     _loadPhones();
+    _setupSocketListeners();
+  }
+
+  void _setupSocketListeners() {
+    _socketService.connect(
+      onDepositWaiting: (data) {
+        print("📥 Flutter received: deposit_waiting_for_qr");
+        print("Data: $data");
+        if (!mounted) return;
+        setState(() {
+          _depositStatus = "Waiting for QR scan\nLID: ${data['lid']}";
+        });
+      },
+      onDepositResult: (data) {
+        print("📥 Flutter received: deposit_result");
+        print("Data: $data");
+        if (!mounted) return;
+        setState(() {
+          if (data['status'] == 'success') {
+            _depositStatus = "✅ Success!\nLID: ${data['lid']}";
+          } else {
+            _depositStatus = "❌ Failed: ${data['message']}";
+          }
+        });
+      },
+      onOperationError: (data) {
+        print("❌ Flutter received: operation_error");
+        print("Data: $data");
+        if (!mounted) return;
+        setState(() {
+          _depositStatus = "❌ Error: ${data['message']}";
+        });
+      },
+    );
   }
 
   Future<void> _loadPhones() async {
@@ -32,21 +71,41 @@ class _ScanSuccessPageState extends State<ScanSuccessPage> {
     setState(() {
       _phones = data ?? [];
       _loading = false;
+      // Set first phone as test PID if available
+      if (_phones.isNotEmpty) {
+        _testPid = _phones[0]['pid'];
+      }
     });
   }
 
-  Future<void> _takePhone(String pid) async {
-    final ok = await ApiService.takePhone(pid);
-    if (ok == true && mounted) {
-      _loadPhones();
+  // TEST METHOD - Trigger deposit via WebSocket
+  void _testDepositWebSocket() {
+    if (_testPid == null) {
+      setState(() => _depositStatus = "No phones available to test");
+      return;
     }
+
+    print("🧪 TEST: Starting deposit test for PID: $_testPid");
+    setState(() => _depositStatus = "Testing deposit...");
+    _socketService.deposit(_testPid!);
+  }
+
+  // TEST METHOD - Simulate QR scan
+  void _testQRScan() {
+    print("🧪 TEST: Simulating QR scan");
+    _socketService.qrScanned();
+  }
+
+  Future<void> _takePhone(String pid) async {
+    // Use WebSocket instead
+    print("📤 Withdrawing phone: $pid");
+    _socketService.withdraw(pid);
   }
 
   Future<void> _putPhone(String pid) async {
-    final ok = await ApiService.putPhone(pid);
-    if (ok == true && mounted) {
-      _loadPhones();
-    }
+    // Use WebSocket instead
+    print("📥 Depositing phone: $pid");
+    _socketService.deposit(pid);
   }
 
   Widget _buildPhoneCard(Map<String, dynamic> p) {
@@ -54,8 +113,8 @@ class _ScanSuccessPageState extends State<ScanSuccessPage> {
     final model = p["model"] ?? "Unknown Model";
     final isStored = p["is_stored"] == true ? "Stored" : "With Student";
     final location = (p["x"] != null && p["y"] != null)
-    ? "line= ${p['x']}, column= ${p['y']}"
-    : "N/A";
+        ? "line= ${p['x']}, column= ${p['y']}"
+        : "N/A";
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -67,8 +126,9 @@ class _ScanSuccessPageState extends State<ScanSuccessPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text("$model", style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+                  Text(model, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 4),
+                  Text("PID: $pid", style: const TextStyle(fontSize: 12, color: Colors.grey)),
                   Text("Location: $location"),
                   Text("Status: $isStored"),
                 ],
@@ -111,14 +171,64 @@ class _ScanSuccessPageState extends State<ScanSuccessPage> {
           onPressed: () => Navigator.pop(context),
         ),
       ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : _phones.isEmpty
-          ? const Center(child: Text("No phones found"))
-          : ListView.builder(
-        itemCount: _phones.length,
-        itemBuilder: (context, index) => _buildPhoneCard(_phones[index]),
+      body: Column(
+        children: [
+          // TEST SECTION - Remove this after testing
+          Container(
+            color: Colors.yellow[100],
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              children: [
+                const Text(
+                  "🧪 WebSocket Test Section",
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  _depositStatus,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 14),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    ElevatedButton(
+                      onPressed: _testDepositWebSocket,
+                      style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+                      child: const Text("Test Deposit"),
+                    ),
+                    ElevatedButton(
+                      onPressed: _testQRScan,
+                      style: ElevatedButton.styleFrom(backgroundColor: Colors.purple),
+                      child: const Text("Simulate QR"),
+                    ),
+                  ],
+                ),
+                const Divider(thickness: 2),
+              ],
+            ),
+          ),
+
+          // PHONE LIST
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : _phones.isEmpty
+                ? const Center(child: Text("No phones found"))
+                : ListView.builder(
+              itemCount: _phones.length,
+              itemBuilder: (context, index) => _buildPhoneCard(_phones[index]),
+            ),
+          ),
+        ],
       ),
     );
+  }
+
+  @override
+  void dispose() {
+    _socketService.clearOperationCallbacks();
+    super.dispose();
   }
 }

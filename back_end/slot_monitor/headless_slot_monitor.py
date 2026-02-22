@@ -1,26 +1,26 @@
-#!/usr/bin/env python3
+# ============================================================
+# FILE: back_end/slot_monitor/headless_slot_monitor.py
+# ============================================================
 """
-Headless Async Slot Monitor (Production Mode)
+Headless Async Slot Monitor (Production Mode).
 
 No visualization window - runs as background service.
 All monitoring via logs and WebSocket events.
+Shutdown ownership: HeadlessSlotMonitor owns worker_pool, frame_buffer,
+and db. When stop_event is set it shuts all of them down before returning.
+server_main only needs to call monitor.start() and monitor.join().
 """
 
 import asyncio
 import logging
+import math
 import signal
 import sys
-import time
+import threading
 from typing import Dict, Optional
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
 
-# Import async modules
 from back_end.slot_monitor.camera.camera_async import AsyncFrameBuffer, AsyncCameraCapture
 from back_end.slot_monitor.worker_async import WorkerPool
 from back_end.slot_monitor.slots import Slot, generate_grid_rois
@@ -34,11 +34,20 @@ class HeadlessSlotMonitor:
 
     Designed to run as a background service.
     Integrates with Flask-SocketIO for remote monitoring.
+
+    Owns:
+    - AsyncSlotMonitorDB  (connects on start, closes on shutdown)
+    - AsyncFrameBuffer    (starts capture on start, stops on shutdown)
+    - WorkerPool          (starts workers on run, stops on shutdown)
+
+    Shutdown:
+        Set the stop_event passed in from server_main.
+        The background thread watches it and triggers full async cleanup.
     """
 
     def __init__(
             self,
-            # Camera config
+            stop_event: threading.Event,
             camera_id: int = 1,  # Bottom camera (slot monitoring)
             camera_width: int = 1280,
             camera_height: int = 720,
@@ -66,6 +75,8 @@ class HeadlessSlotMonitor:
             # SocketIO (optional - for remote monitoring)
             socketio=None,
     ):
+        self._stop_event = stop_event
+
         # Camera configuration
         self.camera_id = camera_id
         self.camera_width = camera_width
@@ -88,8 +99,6 @@ class HeadlessSlotMonitor:
             "user": db_user,
             "password": db_password,
         }
-
-        # SocketIO for remote monitoring
         self.socketio = socketio
 
         # System components
@@ -103,53 +112,47 @@ class HeadlessSlotMonitor:
 
         # Event loop
         self.loop: Optional[asyncio.AbstractEventLoop] = None
-
-        # Shutdown flag
-        self._shutdown_event = asyncio.Event()
+        self._thread: Optional[threading.Thread] = None
 
         logger.info("=" * 70)
         logger.info("HEADLESS SLOT MONITOR (PRODUCTION MODE)")
         logger.info("=" * 70)
         logger.info(f"Camera: {camera_id} ({camera_width}x{camera_height} @ {camera_fps}fps)")
-        logger.info(f"Workers: {num_workers} (async, event-driven)")
-        logger.info(f"Thresholds: mismatch={mismatch_threshold}, recalc={recalc_threshold}")
+        logger.info(f"Workers: {num_workers} | Thresholds: mismatch={mismatch_threshold}, recalc={recalc_threshold}")
 
-    async def setup(self):
-        """Initialize all system components"""
-        logger.info("\n" + "=" * 70)
-        logger.info("SYSTEM SETUP")
+    # ============================================================
+    # SETUP
+    # ============================================================
+
+    async def _setup(self):
         logger.info("=" * 70)
-
+        logger.info("SLOT MONITOR SETUP")
+        logger.info("=" * 70)
         self.loop = asyncio.get_running_loop()
-
         await self._setup_database()
         await self._setup_camera()
         await self._check_baselines()
         await self._initialize_monitoring()
         await self._create_workers()
 
-        logger.info("System setup complete")
+        # Wire WorkerPool into op_ctx now that it is guaranteed to exist.
+        # Done here (inside the async thread) rather than in server_main because
+        # start() returns before this point is reached.
+        from back_end.slot_monitor.services.operation_context import op_ctx
+        op_ctx.set_worker_pool(self.worker_pool)
+
+        logger.info("Setup complete")
 
     async def _setup_database(self):
-        """Initialize async database connection"""
-        logger.info("Setting up async database...")
-
+        logger.info("Connecting to database...")
         self.db = AsyncSlotMonitorDB(**self.db_config)
         await self.db.connect()
-
-        if await self.db.test_connection():
-            logger.info("Database connected")
-        else:
+        if not await self.db.is_healthy():
             raise RuntimeError("Database connection failed")
-
-        stats = await self.db.get_pool_stats()
-        logger.info(f"   Pool: {stats['min']}-{stats['max']} connections")
+        logger.info(f"Database ready (pool: {self.db.min_pool_size}-{self.db.max_pool_size})")
 
     async def _setup_camera(self):
-        """Initialize async camera system"""
-        logger.info("\nSetting up async camera...")
-
-        # Create frame buffer
+        logger.info("Setting up camera...")
         self.frame_buffer = AsyncFrameBuffer()
         self.frame_buffer.set_event_loop(self.loop)
 
@@ -177,15 +180,11 @@ class HeadlessSlotMonitor:
         # Get grid config from DB if not specified
         if self.grid_rows is None or self.grid_cols is None:
             num_lids = await self.db.get_num_lid()
-            # Auto-calculate grid dimensions
-            import math
             cols = math.ceil(math.sqrt(num_lids))
             rows = math.ceil(num_lids / cols)
-            self.grid_rows = rows
-            self.grid_cols = cols
-            logger.info(f"Auto-calculated grid: {rows}x{cols} for {num_lids} slots")
+            self.grid_rows, self.grid_cols = rows, cols
+            logger.info(f"Auto grid: {rows}x{cols} for {num_lids} slots")
 
-        # Generate ROIs
         self.rois = generate_grid_rois(
             frame_width=self.camera_width,
             frame_height=self.camera_height,
@@ -193,125 +192,78 @@ class HeadlessSlotMonitor:
             cols=self.grid_cols,
             spacing=10,
             num_lids=await self.db.get_num_lid(),
-            frame=frame
+            frame=frame,
         )
-
-        logger.info(f"Generated {len(self.rois)} ROIs")
-        logger.info("Async camera ready")
+        logger.info(f"Camera ready — {len(self.rois)} ROIs generated")
 
     async def _check_baselines(self):
-        """Check existing baselines"""
-        logger.info("\n" + "=" * 70)
-        logger.info("CHECKING BASELINES")
-        logger.info("=" * 70)
-
+        logger.info("Checking baselines...")
         baselines = await self.db.fetch_all_baselines()
-
         if not baselines:
-            logger.warning("No baselines found - system will initialize from current state")
+            logger.warning("No baselines found — will initialize from current state")
             return
-
-        logger.info(f"Found {len(baselines)} baselines in database")
 
         frame = self.frame_buffer.get_frame_sync()
         if frame is None:
-            logger.error("Failed to get frame")
+            logger.error("No frame available for baseline check")
             return
 
         mismatches = 0
-        updated_baselines = {}
-
+        updated = {}
         for lid, baseline in baselines.items():
             if lid not in self.rois:
                 continue
-
             try:
-                temp_slot = Slot(
-                    lid=lid,
-                    roi_coords=self.rois[lid],
-                    baseline_emb=baseline,
-                    is_occupied=False,
-                )
-
-                dist = temp_slot.compute_distance(frame)
-
+                temp = Slot(lid=lid, roi_coords=self.rois[lid], baseline_emb=baseline, is_occupied=False)
+                dist = temp.compute_distance(frame)
                 if dist > self.mismatch_threshold:
-                    logger.warning(
-                        f"Slot {lid}: MISMATCH (dist={dist:.4f}) - manual intervention required"
-                    )
+                    logger.warning(f"  Slot {lid}: MISMATCH (dist={dist:.4f})")
                     mismatches += 1
                 else:
-                    logger.info(f"✓  Slot {lid}: OK (dist={dist:.4f})")
-
+                    logger.info(f"  Slot {lid}: OK (dist={dist:.4f})")
                     if dist > self.recalc_threshold:
-                        current_emb = temp_slot.compute_embedding(frame)
-                        updated_baselines[lid] = current_emb
-
+                        updated[lid] = temp.compute_embedding(frame)
             except Exception as e:
-                logger.error(f"Failed checking slot {lid}: {e}")
+                logger.error(f"  Slot {lid}: check failed — {e}")
 
-        if updated_baselines:
-            await self.db.save_baselines_batch(updated_baselines)
-            logger.info(f"Updated {len(updated_baselines)} baselines")
-
-        if mismatches > 0:
-            logger.critical(f"{mismatches} SLOT(S) WITH MISMATCHES - MANUAL INTERVENTION REQUIRED")
+        if updated:
+            await self.db.save_baselines_batch(updated)
+            logger.info(f"Updated {len(updated)} baselines")
+        if mismatches:
+            logger.critical(f"{mismatches} SLOT(S) WITH MISMATCHES — MANUAL INTERVENTION REQUIRED")
 
     async def _initialize_monitoring(self):
-        """Initialize slot states from database"""
-        logger.info("\n" + "=" * 70)
-        logger.info("INITIALIZING MONITORING")
-        logger.info("=" * 70)
-
+        logger.info("Initializing slot states from database...")
         occupied_slots = await self.db.fetch_occupied_slots()
         occupied_lids = {lid: pid for lid, pid in occupied_slots}
-
         baselines = await self.db.fetch_all_baselines()
-
-        logger.info(f"Found {len(occupied_lids)} occupied slots")
-        logger.info(f"Found {len(baselines)} baselines")
+        logger.info(f"{len(occupied_lids)} occupied slots, {len(baselines)} baselines")
 
         for lid, baseline in baselines.items():
             if lid not in self.rois:
                 continue
-
             is_occupied = lid in occupied_lids
-
             self.slots[lid] = Slot(
-                lid=lid,
-                roi_coords=self.rois[lid],
-                baseline_emb=baseline,
-                is_occupied=is_occupied,
+                lid=lid, roi_coords=self.rois[lid],
+                baseline_emb=baseline, is_occupied=is_occupied,
             )
-
-            status = "OCCUPIED" if is_occupied else "EMPTY"
-            pid = occupied_lids.get(lid, "N/A")
-            logger.info(f"  Slot {lid}: {status}" + (f" (PID: {pid})" if is_occupied else ""))
+            pid_info = f" (PID: {occupied_lids[lid]})" if is_occupied else ""
+            logger.info(f"  Slot {lid}: {'OCCUPIED' if is_occupied else 'EMPTY'}{pid_info}")
 
         logger.info(f"Initialized {len(self.slots)} slots")
 
     async def _create_workers(self):
-        """Create async worker pool"""
-        logger.info("\n" + "=" * 70)
-        logger.info("CREATING WORKER POOL")
-        logger.info("=" * 70)
-
+        logger.info(f"Creating {self.num_workers} workers...")
         if not self.slots:
-            raise RuntimeError("No slots initialized!")
+            raise RuntimeError("No slots initialized")
 
-        # Initialize alarm controller
         self.alarm = AlarmController()
-
-        # If SocketIO provided, attach it to alarm controller
         if self.socketio:
             self.alarm.set_socketio(self.socketio)
-            logger.info("Alarm controller connected to SocketIO")
 
-        # Create worker pool
-        slot_list = list(self.slots.values())
         self.worker_pool = WorkerPool(
             num_workers=self.num_workers,
-            slots=slot_list,
+            slots=list(self.slots.values()),
             frame_buffer=self.frame_buffer,
             db=self.db,
             alarm=self.alarm,
@@ -319,81 +271,82 @@ class HeadlessSlotMonitor:
             recalc_threshold=self.recalc_threshold,
             grace_period=self.grace_period,
         )
+        logger.info(f"{self.num_workers} workers ready")
 
-        logger.info(f"Worker pool created: {self.num_workers} workers")
+    # ============================================================
+    # RUN
+    # ============================================================
 
-    async def run(self):
-        """Main monitoring loop (headless)"""
-        logger.info("\n" + "=" * 70)
-        logger.info("STARTING HEADLESS MONITORING")
+    async def _run(self):
         logger.info("=" * 70)
-        logger.info("Event-driven monitoring active")
-        logger.info("Press Ctrl+C to stop")
-        logger.info("=" * 70 + "\n")
+        logger.info("MONITORING ACTIVE")
+        logger.info("=" * 70)
 
-        # Start workers
         await self.worker_pool.start_all()
 
-        # Status reporting task
         status_task = asyncio.create_task(self._status_reporter())
+        stop_task = asyncio.create_task(self._watch_stop_event())
 
-        try:
-            await self._shutdown_event.wait()
-        except asyncio.CancelledError:
-            pass
-        finally:
-            status_task.cancel()
+        done, pending = await asyncio.wait(
+            {status_task, stop_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in pending:
+            task.cancel()
             try:
-                await status_task
+                await task
             except asyncio.CancelledError:
                 pass
 
+    async def _watch_stop_event(self):
+        """Poll the shared threading.Event every 250 ms without blocking the loop."""
+        while not self._stop_event.is_set():
+            await asyncio.sleep(0.25)
+        logger.info("Stop event received — shutting down slot monitor")
+
     async def _status_reporter(self):
-        """Periodic status reporting"""
         try:
             while True:
-                await asyncio.sleep(30)  # Report every 30s
-                await self._print_status()
+                await asyncio.sleep(30)
+                await self._log_status()
         except asyncio.CancelledError:
             pass
 
-    async def _print_status(self):
-        """Print system status"""
-        logger.info("\n" + "=" * 70)
-        logger.info("SYSTEM STATUS")
+    async def _log_status(self):
         logger.info("=" * 70)
-
+        logger.info("SLOT MONITOR STATUS")
+        logger.info("=" * 70)
         if self.camera:
             try:
-                cam_metrics = self.camera.get_metrics()
-                logger.info(f"Camera: {cam_metrics['frame_count']} frames, "
-                            f"{cam_metrics['active_subscribers']} subscribers")
+                m = self.camera.get_metrics()
+                logger.info(f"Camera: {m['frame_count']} frames, {m['active_subscribers']} subscribers")
             except Exception as e:
                 logger.warning(f"Camera metrics unavailable: {e}")
-
         if self.worker_pool:
             try:
-                worker_metrics = self.worker_pool.get_metrics()
-                logger.info(f"Workers: {worker_metrics['total_frames_processed']} frames, "
-                            f"avg_dist={worker_metrics['avg_distance']:.4f}")
-                logger.info(f"Alarms: {worker_metrics['total_alarms']}, "
-                            f"Errors: {worker_metrics['total_errors']}")
+                m = self.worker_pool.get_metrics()
+                logger.info(f"Workers: {m['total_frames_processed']} frames, avg_dist={m['avg_distance']:.4f}")
+                logger.info(f"Alarms: {m['total_alarms']}, Errors: {m['total_errors']}")
             except Exception as e:
                 logger.warning(f"Worker metrics unavailable: {e}")
-
         if self.alarm:
             try:
-                alarm_status = self.alarm.get_status()
-                if alarm_status['active']:
-                    logger.warning(f"ALARM ACTIVE: {alarm_status['mismatch_count']} mismatches")
+                s = self.alarm.get_status()
+                if s['active']:
+                    logger.warning(f"ALARM ACTIVE: {s['mismatch_count']} mismatches")
             except Exception as e:
                 logger.warning(f"Alarm status unavailable: {e}")
 
-    async def shutdown(self):
-        """Graceful shutdown"""
-        logger.info("\n" + "=" * 70)
-        logger.info("SHUTTING DOWN")
-        logger.info("=" * 70)
+    # ============================================================
+    # SHUTDOWN  (owned by this class)
+    # ============================================================
+
+    async def _shutdown(self):
+        """
+        Clean up everything this monitor owns.
+        Called automatically at the end of _async_main.
+        """
+        logger.info("Shutting down slot monitor...")
 
         if self.worker_pool:
             await self.worker_pool.stop_all()
@@ -404,77 +357,66 @@ class HeadlessSlotMonitor:
         if self.db:
             await self.db.close()
 
-        await self._print_status()
-        logger.info("\nShutdown complete")
-
-    def signal_handler(self, signum, frame):
-        """Handle shutdown signals"""
-        logger.info(f"\nSignal {signum} received")
-        self._shutdown_event.set()
+        logger.info("Slot monitor shutdown complete")
 
     # ============================================================
-    # PUBLIC API (for integration with Flask app)
+    # PUBLIC API
     # ============================================================
 
     def start(self):
-        """Start monitor in background thread"""
-        import threading
-
-        def run_async():
+        """Start monitor in a background daemon thread."""
+        def _run():
             asyncio.run(self._async_main())
 
-        self._thread = threading.Thread(target=run_async, daemon=True, name="SlotMonitor")
+        self._thread = threading.Thread(target=_run, daemon=True, name="SlotMonitor")
         self._thread.start()
-        logger.info("Slot monitor started in background thread")
+        logger.info("Slot monitor thread started")
+
+    def join(self, timeout: float = 8.0):
+        """Wait for the background thread to finish after stop_event is set."""
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=timeout)
 
     async def _async_main(self):
-        """Async entry point for threading"""
         try:
-            await self.setup()
-            await self.run()
-        except KeyboardInterrupt:
-            logger.info("\nKeyboard interrupt")
+            await self._setup()
+            await self._run()
         except Exception as e:
-            logger.error(f"Fatal error: {e}", exc_info=True)
+            logger.error(f"Slot monitor fatal error: {e}", exc_info=True)
         finally:
-            await self.shutdown()
+            await self._shutdown()
 
+
+# ============================================================
+# STANDALONE ENTRY POINT
+# ============================================================
 
 async def main():
-    """Standalone entry point"""
-    config = {
-        "camera_id": 1,
-        "camera_width": 1280,
-        "camera_height": 720,
-        "camera_fps": 30,
-        "num_workers": 4,
-        "mismatch_threshold": 0.15,
-        "recalc_threshold": 0.05,
-        "grace_period": 5.0,
-        "db_host": "localhost",
-        "db_port": 5432,
-        "db_name": "PhoneBoxDB",
-        "db_user": "admin",
-        "db_password": "admin",
-    }
-
-    system = HeadlessSlotMonitor(**config)
+    stop_event = threading.Event()
 
     if sys.platform != 'win32':
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGTERM, signal.SIGINT):
-            loop.add_signal_handler(sig, lambda s=sig: system.signal_handler(s, None))
+            loop.add_signal_handler(sig, stop_event.set)
+
+    monitor = HeadlessSlotMonitor(
+        stop_event=stop_event,
+        camera_id=1, camera_width=1280, camera_height=720, camera_fps=30,
+        num_workers=4, mismatch_threshold=0.15, recalc_threshold=0.05,
+        grace_period=5.0, db_host="localhost", db_port=5432,
+        db_name="PhoneBoxDB", db_user="admin", db_password="admin",
+    )
 
     try:
-        await system.setup()
-        await system.run()
+        await monitor._setup()
+        await monitor._run()
     except KeyboardInterrupt:
-        logger.info("\nKeyboard interrupt")
-    except Exception as e:
-        logger.error(f"Fatal error: {e}", exc_info=True)
+        logger.info("Keyboard interrupt")
     finally:
-        await system.shutdown()
+        stop_event.set()
+        await monitor._shutdown()
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     asyncio.run(main())

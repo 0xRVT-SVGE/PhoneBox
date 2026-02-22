@@ -1,5 +1,5 @@
 # ============================================================
-# FILE: server/slot_monitor/qr_scanner.py
+# FILE: server/slot_monitor/qr_pid_reader.py
 # ============================================================
 """
 QR Code scanning and PID validation.
@@ -22,8 +22,8 @@ logger = logging.getLogger(__name__)
 
 def read_pid_from_camera(
     camera_index: int = 0,
-    timeout_sec: float = 10.0
-) -> Optional[int]:
+    timeout_sec: float = 15.0,
+) -> Optional[str]:
     """
     Scan camera feed for a QR code containing a PID.
 
@@ -33,11 +33,10 @@ def read_pid_from_camera(
 
     Args:
         camera_index: OpenCV camera index (0 = default)
-        timeout_sec: Max seconds to scan before giving up
+        timeout_sec:  Max seconds to scan before giving up
 
     Returns:
-        pid (int) if detected and valid
-        None if timeout or invalid QR format
+        pid as str if detected and parseable, None on timeout or invalid format
     """
     cap = cv2.VideoCapture(camera_index)
     if not cap.isOpened():
@@ -55,25 +54,21 @@ def read_pid_from_camera(
             if not ret:
                 continue
 
-            # Decode all QR codes in frame
             decoded = decode(frame)
             if decoded:
-                # Take first QR code found
                 data = decoded[0].data.decode("utf-8").strip()
                 logger.debug(f"QR detected: {data}")
 
-                # Parse PID format
                 if data.startswith("PID:"):
                     data = data[4:]
 
                 if data.isdigit():
-                    pid = int(data)
-                    logger.info(f"✅ PID scanned: {pid}")
+                    pid = str(int(data))   # normalise (strips leading zeros)
+                    logger.info(f"PID scanned: {pid}")
                     return pid
                 else:
                     logger.warning(f"Invalid QR format: {data}")
 
-            # Timeout check
             elapsed = (cv2.getTickCount() - start) / freq
             if elapsed > timeout_sec:
                 logger.warning("QR scan timed out")
@@ -84,23 +79,23 @@ def read_pid_from_camera(
         logger.debug("Camera released")
 
 
-def scan_and_validate_pid(camera_index: int = 0) -> dict:
+def scan_and_validate_pid(camera_index: int = 0, timeout_sec: float = 15.0) -> dict:
     """
     Full QR scanning workflow:
     1. Scan camera feed for QR code
-    2. Extract PID
+    2. Extract PID as str
     3. Validate PID exists in database
 
     Args:
         camera_index: OpenCV camera index
+        timeout_sec:  Max seconds to scan before giving up
 
     Returns:
-        Success: {"status": "success", "pid": int}
-        Failure: {"status": "error", "message": str, "pid": int | None}
+        Success: {"status": "success", "pid": str}
+        Failure: {"status": "error", "message": str, "pid": str | None}
     """
     try:
-        # Step 1: Read QR code
-        pid = read_pid_from_camera(camera_index)
+        pid = read_pid_from_camera(camera_index, timeout_sec=timeout_sec)
 
         if pid is None:
             return {

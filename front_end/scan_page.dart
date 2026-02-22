@@ -5,6 +5,7 @@ import 'admin_menu.dart';
 import 'auth.dart';
 import 'api_service.dart';
 import 'scan_success_page.dart';
+import 'alarm_page.dart';
 
 class ScanPage extends StatefulWidget {
   const ScanPage({super.key});
@@ -28,10 +29,9 @@ class _ScanPageState extends State<ScanPage> {
   bool manualOverride = false;
 
   bool viewDisposed = false;
+  bool _alarmPageOpen = false;
 
   final socketService = SocketService();
-
-  bool _scanStatusListenerRegistered = false; // prevent multiple listeners
 
   @override
   void initState() {
@@ -46,7 +46,37 @@ class _ScanPageState extends State<ScanPage> {
   }
 
   void _connectSocket() {
-    socketService.connect(_updateScanStatus);
+    socketService.connect(
+      onScanStatus: _updateScanStatus,
+      onAlarmTriggered: _handleAlarmTriggered,
+      onAlarmCleared: _handleAlarmCleared,
+      onAlarmStatus: _handleAlarmStatus,
+    );
+  }
+
+  // Called on every (re)connect with current alarm state from backend
+  void _handleAlarmStatus(dynamic data) {
+    if (!mounted || _alarmPageOpen) return;
+    if (data["active"] == true) {
+      _handleAlarmTriggered(data);
+    }
+  }
+
+  void _handleAlarmTriggered(dynamic data) {
+    if (!mounted || _alarmPageOpen) return;
+    _alarmPageOpen = true;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AlarmPage(
+          initialMismatches: data["mismatches"] ?? [],
+        ),
+        fullscreenDialog: true,
+      ),
+    ).then((_) => _alarmPageOpen = false);
+  }
+
+  void _handleAlarmCleared(dynamic _) {
+    _alarmPageOpen = false;
   }
 
   void _updateScanStatus(dynamic data) {
@@ -108,23 +138,29 @@ class _ScanPageState extends State<ScanPage> {
         if (viewDisposed) return;
         if (!mounted) return;
         if (event.streams.isNotEmpty) {
-          _remoteRenderer.srcObject = event.streams[0]; // always assign
+          _remoteRenderer.srcObject = event.streams[0];
         }
       };
 
       // Detect connection state changes to reconnect if disconnected
+      bool _isReconnecting = false;
+
       _peerConnection!.onConnectionState = (state) async {
         if (viewDisposed) return;
+        if (_isReconnecting) return; // prevent loop
+
         if (state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
             state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
+          _isReconnecting = true;
           if (mounted) setState(() => webrtcStatus = "Reconnecting...");
           await _peerConnection?.close();
           _peerConnection = null;
-          await Future.delayed(const Duration(seconds: 1));
+          await Future.delayed(const Duration(seconds: 2));
           if (!viewDisposed) {
-            _remoteRenderer.srcObject = null; // reset before reconnect
+            _remoteRenderer.srcObject = null;
             await _startWebRTC();
           }
+          _isReconnecting = false;
         }
       };
 
@@ -165,10 +201,7 @@ class _ScanPageState extends State<ScanPage> {
         manualOverride = false;
       });
       socketService.toggleScan();
-      if (!_scanStatusListenerRegistered) {
-        socketService.listenScanStatus(_updateScanStatus);
-        _scanStatusListenerRegistered = true;
-      }
+      // REMOVED: listenScanStatus - already registered via connect()
     }
   }
 
@@ -181,7 +214,7 @@ class _ScanPageState extends State<ScanPage> {
 
       await showDialog(
         context: context,
-        barrierDismissible: false, // user must explicitly login or cancel
+        barrierDismissible: false,
         builder: (ctx) => StatefulBuilder(
           builder: (context, setState) => AlertDialog(
             title: const Text("Admin Login"),
@@ -198,7 +231,7 @@ class _ScanPageState extends State<ScanPage> {
                       loginSuccess = true;
                       Navigator.pop(ctx);
                     } else {
-                      setState(() {}); // trigger UI update
+                      setState(() {});
                     }
                   },
                 ),
@@ -219,7 +252,7 @@ class _ScanPageState extends State<ScanPage> {
                     loginSuccess = true;
                     Navigator.pop(ctx);
                   } else {
-                    setState(() {}); // update error message
+                    setState(() {});
                   }
                 },
                 child: const Text("Login"),
@@ -247,7 +280,8 @@ class _ScanPageState extends State<ScanPage> {
   void dispose() {
     viewDisposed = true;
 
-    socketService.disconnect();
+    // DON'T disconnect - socket is shared across app
+    // socketService.disconnect();
 
     _peerConnection?.onTrack = null;
     _peerConnection?.close();
@@ -279,14 +313,13 @@ class _ScanPageState extends State<ScanPage> {
                 child: AspectRatio(
                   aspectRatio: 16 / 9,
                   child: _remoteRenderer.srcObject != null
-                      ? RTCVideoView(_remoteRenderer) // only render when ready
-                      : Container(color: Colors.black), // black placeholder
+                      ? RTCVideoView(_remoteRenderer)
+                      : Container(color: Colors.black),
                 ),
               ),
             ),
             const SizedBox(height: 12),
 
-            // --- Show statuses ---
             Text(webrtcStatus, style: const TextStyle(fontSize: 16, color: Colors.grey)),
             const SizedBox(height: 4),
             Text(scanStatus, textAlign: TextAlign.center, style: const TextStyle(fontSize: 18)),
@@ -301,7 +334,7 @@ class _ScanPageState extends State<ScanPage> {
                   backgroundColor: scanning ? Colors.red : Colors.green,
                   minimumSize: const Size(160, 45),
                 ),
-                onPressed: toggleScan, // always active
+                onPressed: toggleScan,
               ),
             ),
           ],
