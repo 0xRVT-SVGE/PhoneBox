@@ -105,6 +105,24 @@ class DVWSocketHandler:
     # ============================================================
 
     def handle_verify(self, data: dict):
+        """
+        Correct a phone that is physically in the wrong slot.
+
+        Handles:
+          - Same-slot re-baseline (false alarm recovery)
+          - Simple mismatch: phone in wrong slot, target slot is empty
+
+        Rejects (with clear error + admin redirect):
+          - Phone has no active DB record (placed without deposit operation)
+            → use admin resolution
+          - Swap: target slot is occupied by a different phone
+            → use admin resolution (step-lock required)
+
+        Known limitation (TODO):
+          On timeout/failure, op_ctx restores target_lid with is_occupied=False.
+          This is correct for the simple mismatch case (target was physically empty).
+          It is not reachable for the swap case — swaps are blocked before op_ctx.start().
+        """
         client_id = request.sid
         pid = data.get("pid")
         original_lid = data.get("original_lid")
@@ -114,15 +132,52 @@ class DVWSocketHandler:
             return
 
         pid = str(pid)
+        original_lid = int(original_lid)
 
+        # ── Guard 1: phone must have an active DB record ─────────────────────
+        # Phones placed without a deposit operation have no storage record.
+        # Verify cannot handle these — they have no "correct" slot to return to.
+        # Use admin_session_start instead (it handles arbitrary slot states).
         target_lid = SlotMonitorDB.get_lid_for_pid(pid)
         if target_lid is None:
             emit("operation_error", {
                 "status": "error",
                 "message": "phone_not_registered_to_any_slot",
                 "pid": pid,
+                "detail": (
+                    "This phone has no active storage record. "
+                    "It was likely placed without a deposit operation. "
+                    "Use admin resolution (admin_session_start) to handle it."
+                ),
             })
             return
+
+        # ── Guard 2: swap detection ───────────────────────────────────────────
+        # If target_lid is occupied by a DIFFERENT phone, this is a swap.
+        # Proceeding would create two active DB records at target_lid.
+        # Admin resolution handles swaps safely via staging + step-lock.
+        if target_lid != original_lid:
+            blocking_pid = SlotMonitorDB.get_pid_for_lid(target_lid)
+            if blocking_pid is not None and blocking_pid != pid:
+                logger.warning(
+                    f"handle_verify: swap detected — "
+                    f"PID={pid} should go to lid={target_lid} "
+                    f"but lid={target_lid} is occupied by PID={blocking_pid}. "
+                    f"Redirecting to admin resolution."
+                )
+                emit("operation_error", {
+                    "status": "error",
+                    "message": "swap_requires_admin_resolution",
+                    "pid": pid,
+                    "original_lid": original_lid,
+                    "target_lid": target_lid,
+                    "blocking_pid": blocking_pid,
+                    "detail": (
+                        f"Slot {target_lid} is occupied by phone {blocking_pid}. "
+                        f"This is a swap — use admin resolution (admin_session_start)."
+                    ),
+                })
+                return
 
         self._pause_slot(original_lid)
         if target_lid != original_lid:
@@ -254,6 +309,8 @@ class DVWSocketHandler:
         same_slot = original_lid == target_lid
 
         if not same_slot:
+            # At this point we know target_lid is empty (swap guard in handle_verify
+            # blocked the case where it was occupied by a different phone).
             if not SlotMonitorDB.update_storage_lid(pid, target_lid):
                 emit("verify_result", {"status": "error", "message": "database_update_failed"})
                 op_ctx.clear(client_id)
@@ -266,7 +323,7 @@ class DVWSocketHandler:
         self._resume_slot(target_lid)
 
         if not same_slot:
-            # Original slot is now empty
+            # Original slot is now empty — phone was moved to target_lid
             self.slot_ops.capture_and_save_baseline(
                 lid=original_lid, is_occupied=False, wait_for_stable=1.5
             )

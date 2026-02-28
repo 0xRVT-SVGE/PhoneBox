@@ -185,6 +185,27 @@ class SlotMonitorDB:
             put_conn(conn)
 
     @staticmethod
+    def count_stored_phones() -> Optional[int]:
+        """
+        Return the number of phones currently in storage (retrieved_at IS NULL).
+        Used by AdminSessionContext for the phone count invariant check.
+        Returns None on DB error.
+        """
+        conn = get_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT COUNT(*) FROM phone_storage WHERE retrieved_at IS NULL;"
+                )
+                row = cur.fetchone()
+                return int(row[0]) if row else 0
+        except Exception as e:
+            logger.error(f"count_stored_phones failed: {e}")
+            return None
+        finally:
+            put_conn(conn)
+
+    @staticmethod
     def pid_exists(pid: int) -> bool:
         """
         Check if a phone PID exists in the database.

@@ -23,7 +23,7 @@ import threading
 import logging
 import signal
 import os
-
+from back_end.slot_monitor.admin.admin_ops_handler import register_admin_handlers
 from back_end.server.app import create_app, get_slot_monitor, get_slot_operations, set_monitor_components
 from back_end.server import webrtc_handler
 from back_end.server.webrtc_handler import webrtc_bp
@@ -148,7 +148,7 @@ if __name__ == "__main__":
     ).start()
     logger.info("Scanner loop started")
 
-    # 4. DVW system
+    # 4. DVW + admin resolution system
     slot_ops = get_slot_operations()
     if not slot_ops:
         logger.error("Slot operations not available — DVW system DISABLED")
@@ -157,15 +157,23 @@ if __name__ == "__main__":
         op_ctx.start_cleanup_thread()
         logger.info("DVW system ready")
 
+        # Admin resolution handlers need the alarm, which is only available
+        # after the monitor has started (step 5). Wire them after monitor.start().
+        # See the addition after slot_monitor.start() below.
+
     # 5. Slot monitor
     slot_monitor = get_slot_monitor()
     if slot_monitor:
         slot_monitor.start()
         logger.info("Slot monitor started")
-
-        # Wire live monitor into SlotOperations so baseline capture works.
-        # WorkerPool → op_ctx is wired inside _setup() after _create_workers() completes.
         set_monitor_components(slot_monitor)
+
+        # Wire admin handlers now that alarm exists
+        if slot_ops and slot_monitor.alarm:
+            register_admin_handlers(socketio, slot_ops, slot_monitor.alarm)
+            logger.info("Admin resolution system ready")
+        else:
+            logger.warning("Admin resolution system not started — alarm unavailable")
     else:
         logger.warning("Slot monitor not available")
 
