@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:flutter_webrtc/flutter_webrtc.dart';
@@ -33,8 +34,8 @@ class ApiService {
     }
   }
 
-  static Future<bool> updateStudent(String sid,
-      Map<String, dynamic> data) async {
+  static Future<bool> updateStudent(
+      String sid, Map<String, dynamic> data) async {
     final res = await http.put(
       Uri.parse("$baseUrl/api/students/$sid"),
       headers: {"Content-Type": "application/json"},
@@ -48,11 +49,11 @@ class ApiService {
     return res.statusCode == 200;
   }
 
-  static Future<List<Map<String, dynamic>>> searchStudents(String query) async {
+  static Future<List<Map<String, dynamic>>> searchStudents(
+      String query) async {
     try {
       final uri = Uri.parse("$baseUrl/api/students/search?q=$query");
       final response = await http.get(uri);
-
       if (response.statusCode == 200) {
         final jsonData = jsonDecode(response.body);
         if (jsonData['status'] == 'success') {
@@ -60,13 +61,12 @@ class ApiService {
           return data.cast<Map<String, dynamic>>();
         }
       }
-      return []; // empty if no results or error
+      return [];
     } catch (e) {
       print("Search error: $e");
       return [];
     }
   }
-
 
   // ====================== PHONES ======================
 
@@ -85,7 +85,8 @@ class ApiService {
     return res.statusCode == 200 || res.statusCode == 201;
   }
 
-  static Future<bool> updatePhone(String pid, Map<String, dynamic> data) async {
+  static Future<bool> updatePhone(
+      String pid, Map<String, dynamic> data) async {
     final res = await http.put(
       Uri.parse("$baseUrl/api/phones/$pid"),
       headers: {"Content-Type": "application/json"},
@@ -117,7 +118,6 @@ class ApiService {
     return res.statusCode == 200;
   }
 
-
   // ====================== ADMIN LISTING ======================
 
   static Future<List<dynamic>?> getAllPhones() async {
@@ -138,39 +138,70 @@ class ApiService {
     return null;
   }
 
-
   // ====================== WEBRTC ======================
 
-  static Future<String?> sendOffer(String offerSDP) async {
-    final res = await http.post(
-      Uri.parse("$baseUrl/webrtc/offer/main"),
-      headers: {"Content-Type": "application/json"},
-      body: jsonEncode({"sdp": offerSDP, "type": "offer"}),
+  /// Send a WebRTC offer to the server, retrying on network failure.
+  ///
+  /// [mode] must be one of: 'main' | 'preview' | 'admin'
+  /// [maxRetries] how many attempts before giving up (default 5).
+  /// [retryDelay] base delay between attempts — doubles each retry.
+  ///
+  /// Returns the answer SDP string, or null if all attempts fail.
+  static Future<String?> sendOffer(
+      String offerSDP, {
+        String mode = 'main',
+        int maxRetries = 5,
+        Duration retryDelay = const Duration(seconds: 2),
+      }) async {
+    assert(
+    ['main', 'preview', 'admin'].contains(mode),
+    'sendOffer: invalid mode "$mode"',
     );
 
-    if (res.statusCode == 200) {
-      final data = jsonDecode(res.body);
-      return data["data"]["sdp"];
+    Duration delay = retryDelay;
+    for (int attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        final res = await http
+            .post(
+          Uri.parse("$baseUrl/webrtc/offer/$mode"),
+          headers: {"Content-Type": "application/json"},
+          body: jsonEncode({"sdp": offerSDP, "type": "offer"}),
+        )
+            .timeout(const Duration(seconds: 8));
+
+        if (res.statusCode == 200) {
+          final data = jsonDecode(res.body);
+          return data["data"]["sdp"] as String?;
+        }
+        // Non-200 — server is up but rejected; no point retrying
+        print("sendOffer($mode): server returned ${res.statusCode}");
+        return null;
+      } catch (e) {
+        // Network error or timeout — retry
+        if (attempt == maxRetries) {
+          print("sendOffer($mode): all $maxRetries attempts failed. Last error: $e");
+          return null;
+        }
+        print("sendOffer($mode): attempt $attempt failed ($e), retrying in ${delay.inSeconds}s");
+        await Future.delayed(delay);
+        delay *= 2; // exponential back-off
+      }
     }
     return null;
   }
 
-  static Future<String?> createPreviewOffer(String offerSDP) async {
-    final res = await http.post(
-      Uri.parse("$baseUrl/webrtc/offer/preview"),
-      headers: {"Content-Type": "application/json"},
-      body: jsonEncode({"sdp": offerSDP, "type": "offer"}),
-    );
+  /// Convenience wrapper for the admin top-down camera stream.
+  static Future<String?> sendAdminOffer(String offerSDP) =>
+      sendOffer(offerSDP, mode: 'admin');
 
-    if (res.statusCode == 200) {
-      final data = jsonDecode(res.body);
-      return data["data"]?["sdp"];
-    }
-    return null;
-  }
+  static Future<String?> createPreviewOffer(String offerSDP) =>
+      sendOffer(offerSDP, mode: 'preview');
 
-  static Future<void> startPreviewConnection(Map<String, dynamic> offer,
-      RTCVideoRenderer renderer) async {
+  // Legacy method kept for compatibility — unused internally.
+  static Future<void> startPreviewConnection(
+      Map<String, dynamic> offer,
+      RTCVideoRenderer renderer,
+      ) async {
     final pc = await createPeerConnection({
       'iceServers': [
         {'urls': 'stun:stun.l.google.com:19302'}
@@ -222,24 +253,20 @@ class ApiService {
     return jsonDecode(res.body);
   }
 
-
-  static Future<bool> cancelPreview() async {
+  /// Cancel an active WebRTC connection by mode.
+  static Future<bool> cancelConnection(String mode) async {
     try {
-      final res = await http.post(Uri.parse("$baseUrl/webrtc/cancel/preview"));
+      final res = await http
+          .post(Uri.parse("$baseUrl/webrtc/cancel/$mode"))
+          .timeout(const Duration(seconds: 4));
       return res.statusCode == 200;
     } catch (e) {
-      print("cancelPreview error: $e");
+      print("cancelConnection($mode) error: $e");
       return false;
     }
   }
 
-  static Future<bool> cancelMain() async {
-    try {
-      final res = await http.post(Uri.parse("$baseUrl/webrtc/cancel/main"));
-      return res.statusCode == 200;
-    } catch (e) {
-      print("cancelMain error: $e");
-      return false;
-    }
-  }
+  static Future<bool> cancelPreview() => cancelConnection('preview');
+  static Future<bool> cancelMain() => cancelConnection('main');
+  static Future<bool> cancelAdmin() => cancelConnection('admin');
 }

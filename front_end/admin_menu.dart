@@ -464,7 +464,8 @@ class _CaptureEmbedPageState extends State<CaptureEmbedPage> {
   bool _loading = true;
   String? _error;
 
-  RTCVideoRenderer _renderer = RTCVideoRenderer();
+  final RTCVideoRenderer _renderer = RTCVideoRenderer();
+  RTCPeerConnection? _pc;  // ← stored at state level (was local in _initPreview)
 
   @override
   void initState() {
@@ -475,67 +476,56 @@ class _CaptureEmbedPageState extends State<CaptureEmbedPage> {
   Future<void> _initPreview() async {
     await _renderer.initialize();
 
-    // Create peer connection configuration
-    final config = {
+    _pc = await createPeerConnection({
       'iceServers': [
         {'urls': 'stun:stun.l.google.com:19302'},
       ]
-    };
+    });
 
-    final pc = await createPeerConnection(config);
-
-    // Attach incoming video to renderer
-    pc.onTrack = (event) {
+    _pc!.onTrack = (event) {
       if (event.streams.isNotEmpty) {
         _renderer.srcObject = event.streams[0];
       }
     };
 
-    // create offer (client -> server)
-    final offer = await pc.createOffer({
+    final offer = await _pc!.createOffer({
       'offerToReceiveVideo': true,
       'offerToReceiveAudio': false,
     });
-    await pc.setLocalDescription(offer);
+    await _pc!.setLocalDescription(offer);
 
-    // send offer to preview endpoint (with JSON header)
     final answerSDP = await ApiService.createPreviewOffer(offer.sdp!);
 
+    if (!mounted) return;
+
     if (answerSDP != null) {
-      await pc.setRemoteDescription(RTCSessionDescription(answerSDP, 'answer'));
-      // store pc somewhere if you want to close it on Cancel/Take photo
-      // e.g. this._pc = pc;
-      setState(() {
-        _loading = false;
-        _error = null;
-      });
+      await _pc!.setRemoteDescription(RTCSessionDescription(answerSDP, 'answer'));
+      setState(() { _loading = false; _error = null; });
     } else {
-      try {
-        await pc.close();
-      } catch (_) {}
-      setState(() {
-        _error = "Failed to initialize preview";
-        _loading = false;
-      });
+      await _pc?.close();
+      _pc = null;
+      setState(() { _error = "Failed to initialize preview"; _loading = false; });
     }
   }
 
-
   Future<void> _takePhoto() async {
-    final data = await ApiService.takePhoto();  // POST /webrtc/take_photo
-
+    final data = await ApiService.takePhoto();
+    if (!mounted) return;
     if (data == null || data["embed"] == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Failed to capture photo")),
       );
       return;
     }
-
     Navigator.pop(context, data["embed"]);
   }
 
   @override
   void dispose() {
+    _pc?.onTrack = null;
+    _pc?.close();   // ← was missing
+    _pc = null;
+    ApiService.cancelPreview();
     _renderer.dispose();
     super.dispose();
   }
@@ -543,9 +533,7 @@ class _CaptureEmbedPageState extends State<CaptureEmbedPage> {
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
     return Scaffold(
@@ -562,11 +550,10 @@ class _CaptureEmbedPageState extends State<CaptureEmbedPage> {
             children: [
               ElevatedButton(
                 onPressed: () async {
-                  // Send cancel request to backend
+                  await _pc?.close();  // ← close before cancel HTTP
+                  _pc = null;
                   await ApiService.cancelPreview();
-
-                  // Close the page
-                  Navigator.pop(context);
+                  if (mounted) Navigator.pop(context);
                 },
                 child: const Text("Cancel"),
               ),

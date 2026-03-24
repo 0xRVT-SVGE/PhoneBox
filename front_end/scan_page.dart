@@ -18,18 +18,21 @@ class _ScanPageState extends State<ScanPage> {
   final RTCVideoRenderer _remoteRenderer = RTCVideoRenderer();
   RTCPeerConnection? _peerConnection;
 
-  // --- Status texts ---
   String webrtcStatus = "Connecting...";
   String scanStatus = "Idle";
 
-  // Button state follows backend 'running'
   bool scanning = false;
-
-  // Override when stopping manually
   bool manualOverride = false;
-
   bool viewDisposed = false;
+  bool _webrtcConnected = false;
+
+  // True while AlarmPage is on top. Suppresses reconnect attempts so
+  // AlarmPage can safely reuse _remoteRenderer without cancelMain() being
+  // called underneath it.
   bool _alarmPageOpen = false;
+
+  // Guards against re-entrant reconnect calls
+  bool _isReconnecting = false;
 
   final socketService = SocketService();
 
@@ -54,25 +57,25 @@ class _ScanPageState extends State<ScanPage> {
     );
   }
 
-  // Called on every (re)connect with current alarm state from backend
   void _handleAlarmStatus(dynamic data) {
     if (!mounted || _alarmPageOpen) return;
-    if (data["active"] == true) {
-      _handleAlarmTriggered(data);
-    }
+    if (data["active"] == true) _handleAlarmTriggered(data);
   }
 
   void _handleAlarmTriggered(dynamic data) {
     if (!mounted || _alarmPageOpen) return;
     _alarmPageOpen = true;
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => AlarmPage(
-          initialMismatches: data["mismatches"] ?? [],
-        ),
-        fullscreenDialog: true,
+    Navigator.of(context)
+        .push(MaterialPageRoute(
+      fullscreenDialog: true,
+      builder: (_) => AlarmPage(
+        initialMismatches: data["mismatches"] ?? [],
+        // Pass the live renderer — AlarmPage just reads it, never disposes it.
+        mainRenderer: _remoteRenderer,
+        isMainConnected: () => _webrtcConnected,
       ),
-    ).then((_) => _alarmPageOpen = false);
+    ))
+        .then((_) => _alarmPageOpen = false);
   }
 
   void _handleAlarmCleared(dynamic _) {
@@ -81,15 +84,11 @@ class _ScanPageState extends State<ScanPage> {
 
   void _updateScanStatus(dynamic data) {
     if (viewDisposed || !mounted) return;
-
-    // Ignore backend updates while manually stopped
     if (manualOverride) return;
 
     final running = data["running"] ?? false;
-
     setState(() {
       scanning = running;
-
       final auth = data["authorized"] ?? false;
       final user = data["user"] ?? "";
       final timeout = data["badge_timeout_exceeded"] ?? false;
@@ -100,18 +99,15 @@ class _ScanPageState extends State<ScanPage> {
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (_) => ScanSuccessPage(
-              sid: user,
-              studentName: currentName,
-            ),
+            builder: (_) =>
+                ScanSuccessPage(sid: user, studentName: currentName),
           ),
         );
-
         scanning = false;
         scanStatus = "Idle";
-
       } else if (timeout) {
-        scanStatus = "Timeout. Unable to Verify Badge.\nAsk for admin's help if it happened more than 2 times";
+        scanStatus =
+        "Timeout. Unable to Verify Badge.\nAsk for admin's help if it happened more than 2 times";
       } else if (barcodeOk) {
         scanStatus = "Verifying Face Match: $currentName";
       } else if (scanning) {
@@ -123,40 +119,43 @@ class _ScanPageState extends State<ScanPage> {
   }
 
   Future<void> _startWebRTC() async {
-    final config = {
-      'iceServers': [
-        {'urls': 'stun:stun.l.google.com:19302'},
-      ]
-    };
-
+    if (viewDisposed) return;
     try {
       await ApiService.cancelMain();
-
-      _peerConnection = await createPeerConnection(config);
+      _peerConnection = await createPeerConnection({
+        'iceServers': [
+          {'urls': 'stun:stun.l.google.com:19302'}
+        ],
+      });
 
       _peerConnection!.onTrack = (event) {
-        if (viewDisposed) return;
-        if (!mounted) return;
+        if (viewDisposed || !mounted) return;
         if (event.streams.isNotEmpty) {
           _remoteRenderer.srcObject = event.streams[0];
+          if (mounted) setState(() => _webrtcConnected = true);
         }
       };
 
-      // Detect connection state changes to reconnect if disconnected
-      bool _isReconnecting = false;
-
       _peerConnection!.onConnectionState = (state) async {
-        if (viewDisposed) return;
-        if (_isReconnecting) return; // prevent loop
-
+        if (viewDisposed || _isReconnecting) return;
         if (state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
             state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
+          // AlarmPage is showing this renderer — do not cancel or restart.
+          if (_alarmPageOpen) {
+            if (mounted) setState(() => _webrtcConnected = false);
+            return;
+          }
           _isReconnecting = true;
-          if (mounted) setState(() => webrtcStatus = "Reconnecting...");
+          if (mounted) {
+            setState(() {
+              webrtcStatus = "Reconnecting...";
+              _webrtcConnected = false;
+            });
+          }
           await _peerConnection?.close();
           _peerConnection = null;
           await Future.delayed(const Duration(seconds: 2));
-          if (!viewDisposed) {
+          if (!viewDisposed && !_alarmPageOpen) {
             _remoteRenderer.srcObject = null;
             await _startWebRTC();
           }
@@ -168,27 +167,23 @@ class _ScanPageState extends State<ScanPage> {
         'offerToReceiveVideo': true,
         'offerToReceiveAudio': false,
       });
-
       await _peerConnection!.setLocalDescription(offer);
 
       final answerSDP = await ApiService.sendOffer(offer.sdp!);
-
       if (answerSDP != null) {
-        await _peerConnection!.setRemoteDescription(
-          RTCSessionDescription(answerSDP, 'answer'),
-        );
+        await _peerConnection!
+            .setRemoteDescription(RTCSessionDescription(answerSDP, 'answer'));
         if (mounted) setState(() => webrtcStatus = "WebRTC Connected");
       } else {
         if (mounted) setState(() => webrtcStatus = "WebRTC Error");
       }
-    } catch (e) {
-      if (mounted) setState(() => webrtcStatus = "WebRTC Error: $e");
+    } catch (_) {
+      if (mounted) setState(() => webrtcStatus = "WebRTC Error");
     }
   }
 
   void toggleScan() {
     if (scanning) {
-      // STOP
       setState(() {
         manualOverride = true;
         scanning = false;
@@ -196,18 +191,13 @@ class _ScanPageState extends State<ScanPage> {
       });
       socketService.toggleScan();
     } else {
-      // START
-      setState(() {
-        manualOverride = false;
-      });
+      setState(() => manualOverride = false);
       socketService.toggleScan();
-      // REMOVED: listenScanStatus - already registered via connect()
     }
   }
 
   void _openAdminMenu() async {
     final auth = AuthService();
-
     if (!auth.isAdmin) {
       final controller = TextEditingController();
       bool loginSuccess = false;
@@ -216,7 +206,7 @@ class _ScanPageState extends State<ScanPage> {
         context: context,
         barrierDismissible: false,
         builder: (ctx) => StatefulBuilder(
-          builder: (context, setState) => AlertDialog(
+          builder: (context, setDialogState) => AlertDialog(
             title: const Text("Admin Login"),
             content: Column(
               mainAxisSize: MainAxisSize.min,
@@ -231,17 +221,15 @@ class _ScanPageState extends State<ScanPage> {
                       loginSuccess = true;
                       Navigator.pop(ctx);
                     } else {
-                      setState(() {});
+                      setDialogState(() {});
                     }
                   },
                 ),
                 if (!loginSuccess && controller.text.isNotEmpty)
                   const Padding(
                     padding: EdgeInsets.only(top: 8.0),
-                    child: Text(
-                      "Wrong password, try again",
-                      style: TextStyle(color: Colors.red),
-                    ),
+                    child: Text("Wrong password, try again",
+                        style: TextStyle(color: Colors.red)),
                   ),
               ],
             ),
@@ -252,7 +240,7 @@ class _ScanPageState extends State<ScanPage> {
                     loginSuccess = true;
                     Navigator.pop(ctx);
                   } else {
-                    setState(() {});
+                    setDialogState(() {});
                   }
                 },
                 child: const Text("Login"),
@@ -265,31 +253,22 @@ class _ScanPageState extends State<ScanPage> {
           ),
         ),
       );
-
       if (!loginSuccess) return;
     }
-
     if (!mounted) return;
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => const AdminMenu()),
-    );
+    Navigator.push(context,
+        MaterialPageRoute(builder: (_) => const AdminMenu()));
   }
 
   @override
   void dispose() {
     viewDisposed = true;
-
-    // DON'T disconnect - socket is shared across app
-    // socketService.disconnect();
-
     _peerConnection?.onTrack = null;
+    _peerConnection?.onConnectionState = null;
     _peerConnection?.close();
     _peerConnection = null;
-
     _remoteRenderer.srcObject = null;
     _remoteRenderer.dispose();
-
     super.dispose();
   }
 
@@ -319,12 +298,13 @@ class _ScanPageState extends State<ScanPage> {
               ),
             ),
             const SizedBox(height: 12),
-
-            Text(webrtcStatus, style: const TextStyle(fontSize: 16, color: Colors.grey)),
+            Text(webrtcStatus,
+                style: const TextStyle(fontSize: 16, color: Colors.grey)),
             const SizedBox(height: 4),
-            Text(scanStatus, textAlign: TextAlign.center, style: const TextStyle(fontSize: 18)),
+            Text(scanStatus,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 18)),
             const SizedBox(height: 10),
-
             Padding(
               padding: const EdgeInsets.only(bottom: 16),
               child: ElevatedButton.icon(
