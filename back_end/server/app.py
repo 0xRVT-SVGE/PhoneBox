@@ -101,7 +101,7 @@ def _initialize_monitoring(socketio, stop_event: threading.Event):
             # Thresholds
             "mismatch_threshold": 0.15,
             "recalc_threshold": 0.05,
-            "grace_period": 15.0,
+            "grace_period": 3.0,
 
             # Database
             "db_host": "localhost",

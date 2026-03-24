@@ -43,7 +43,7 @@ class SlotMonitorDB:
     Synchronous DB interface for slot monitoring.
 
     USE FOR:
-    - Calibration scripts (calibrate_all_slots.py)
+    - Calibration scripts (embed_calibration.py)
     - One-time operations (setup, testing)
     - Legacy code that can't use async
 

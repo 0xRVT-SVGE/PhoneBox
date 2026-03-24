@@ -4,6 +4,12 @@
 """
 WebRTC video streaming handler.
 
+Modes:
+  main    — front-facing camera via scanner_state (face recognition)
+  preview — front-facing camera preview for photo capture
+  admin   — top-down camera via top_camera (admin resolution session)
+            frames are pre-annotated with staging ROI overlays
+
 Shutdown ownership: webrtc_handler owns its async_loop and all peer
 connections. Call webrtc_handler.shutdown() to close everything cleanly.
 server_main does not need to touch async_loop directly.
@@ -21,14 +27,16 @@ import av
 
 from back_end.scanner_state import scanner_state
 from back_end.embedding_gen import generate_embedding
+from back_end.slot_monitor.camera.top_camera import top_camera
 
 logger = logging.getLogger(__name__)
 
 webrtc_bp = Blueprint("webrtc", __name__)
 
-# Separate sets for main and preview connections
+# Separate sets per mode
 pcs_main: set[RTCPeerConnection] = set()
 pcs_preview: set[RTCPeerConnection] = set()
+pcs_admin: set[RTCPeerConnection] = set()
 
 # Dedicated async loop — owned by this module
 async_loop = asyncio.new_event_loop()
@@ -148,6 +156,32 @@ class PreviewVideoTrack(HWAccelVideoTrack):
         return make_video_frame(frame, pts, time_base)
 
 
+class AdminVideoTrack(HWAccelVideoTrack):
+    """
+    Streams the top-down camera (index 2) with staging ROI overlays.
+
+    Reads from top_camera which owns the camera capture thread.
+    ROI rectangles are already drawn on the frames — no client-side
+    drawing needed.
+
+    top_camera starts lazily on first DVW or admin op; this track will
+    block briefly (~1 frame) if called before the first frame arrives,
+    then stream normally thereafter.
+    """
+    kind = "video"
+
+    async def recv(self):
+        pts, time_base = await self.next_timestamp()
+
+        # Wait for the next frame from the top camera buffer
+        while not top_camera.wait_for_frame(timeout=0.01):
+            await asyncio.sleep(0.001)
+
+        frame = top_camera.get_frame()
+        top_camera.clear_frame_event()
+        return make_video_frame(frame, pts, time_base)
+
+
 # ============================================================
 # OFFER HANDLER
 # ============================================================
@@ -158,10 +192,14 @@ async def _handle_offer(offer_sdp, offer_type, mode):
     if mode == "main":
         pcs_main.add(pc)
         video_track = MainVideoTrack()
-    else:
+    elif mode == "preview":
         pcs_preview.add(pc)
         scanner_state.request_preview()
         video_track = PreviewVideoTrack()
+    else:  # admin
+        pcs_admin.add(pc)
+        top_camera.start()   # lazy — idempotent if DVW ops already started it
+        video_track = AdminVideoTrack()
 
     pc.addTrack(video_track)
     force_h264(pc)
@@ -172,7 +210,7 @@ async def _handle_offer(offer_sdp, offer_type, mode):
         if state == "disconnected":
             await asyncio.sleep(5)
         if state in ("closed", "failed", "disconnected"):
-            (pcs_main if mode == "main" else pcs_preview).discard(pc)
+            _pcs_for_mode(mode).discard(pc)
             await pc.close()
 
     await pc.setRemoteDescription(RTCSessionDescription(sdp=offer_sdp, type=offer_type))
@@ -190,13 +228,18 @@ async def _handle_offer(offer_sdp, offer_type, mode):
     }
 
 
+def _pcs_for_mode(mode: str) -> set:
+    return {"main": pcs_main, "preview": pcs_preview, "admin": pcs_admin}.get(mode, pcs_main)
+
+
 async def _close_all_connections():
     """Close all open peer connections — called during shutdown."""
-    all_pcs = list(pcs_main) + list(pcs_preview)
+    all_pcs = list(pcs_main) + list(pcs_preview) + list(pcs_admin)
     if all_pcs:
         await asyncio.gather(*[pc.close() for pc in all_pcs], return_exceptions=True)
     pcs_main.clear()
     pcs_preview.clear()
+    pcs_admin.clear()
 
 
 # ============================================================
@@ -219,13 +262,9 @@ def start():
 def shutdown():
     """
     Close all peer connections then stop the event loop.
-
-    Owned entirely by this module — server_main calls this once
-    and does not touch async_loop directly.
     """
     logger.info("Shutting down WebRTC handler...")
 
-    # Close connections inside the loop, then stop it
     future = asyncio.run_coroutine_threadsafe(_close_all_connections(), async_loop)
     try:
         future.result(timeout=5.0)
@@ -246,7 +285,7 @@ def shutdown():
 
 @webrtc_bp.route("/offer/<mode>", methods=["POST"])
 def offer(mode):
-    if mode not in ("main", "preview"):
+    if mode not in ("main", "preview", "admin"):
         return jsonify({"status": "error", "message": "Invalid mode"}), 400
     data = request.get_json()
     if not data or "sdp" not in data or "type" not in data:
@@ -281,7 +320,7 @@ def take_photo():
 
 @webrtc_bp.route("/cancel/<mode>", methods=["POST"])
 def cancel_connection(mode):
-    pcs = pcs_main if mode == "main" else pcs_preview
+    pcs = _pcs_for_mode(mode)
     if mode == "preview":
         scanner_state.stop_preview()
     for pc in list(pcs):

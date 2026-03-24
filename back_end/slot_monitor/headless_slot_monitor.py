@@ -63,7 +63,7 @@ class HeadlessSlotMonitor:
             # Monitoring config
             mismatch_threshold: float = 0.15,
             recalc_threshold: float = 0.05,
-            grace_period: float = 5.0,
+            grace_period: float = 3.0,
 
             # DB config
             db_host: str = "localhost",
@@ -113,6 +113,7 @@ class HeadlessSlotMonitor:
         # Event loop
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self._thread: Optional[threading.Thread] = None
+        self._setup_complete = threading.Event()
 
         logger.info("=" * 70)
         logger.info("HEADLESS SLOT MONITOR (PRODUCTION MODE)")
@@ -380,6 +381,7 @@ class HeadlessSlotMonitor:
     async def _async_main(self):
         try:
             await self._setup()
+            self._setup_complete.set()
             await self._run()
         except Exception as e:
             logger.error(f"Slot monitor fatal error: {e}", exc_info=True)

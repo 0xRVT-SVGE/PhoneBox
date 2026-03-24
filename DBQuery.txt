@@ -386,3 +386,68 @@ COMMENT ON INDEX uniq_active_phone_storage IS 'Prevents depositing same phone tw
 COMMENT ON INDEX uniq_active_location IS 'Prevents putting two phones in same location';
 
 COMMENT ON FUNCTION auto_assign_location() IS 'Auto-assigns first available empty location if lid is NULL on phone_storage insert';
+
+
+
+
+//additions to fix and merge with the whole thing
+
+-- ============================================================
+-- FILE: back_end/Database/migrations/004_evidence_tables.sql
+-- ============================================================
+-- Evidence tables for admin resolution session proof.
+--
+-- evidence_sessions: one row per admin session
+-- evidence_items:    one row per captured event (photo + metadata)
+--
+-- Deletion policy (enforced in application, not DB):
+--   kept=FALSE rows are deleted on clean session close.
+--   kept=TRUE  rows are permanent — no application code deletes them.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS evidence_sessions (
+    id          SERIAL          PRIMARY KEY,
+    session_id  VARCHAR(8)      NOT NULL UNIQUE,
+    opened_at   TIMESTAMP       NOT NULL,
+    closed_at   TIMESTAMP,
+
+    -- 'clean'    → all mismatches resolved, no flagged events, no warnings
+    -- 'flagged'  → no_qr_found or declare_missing occurred, or warnings at close
+    -- 'incomplete' → session never formally closed (crash / timeout)
+    outcome     VARCHAR(20),
+
+    warnings    JSONB,          -- list of warning strings from session close
+    kept        BOOLEAN         NOT NULL DEFAULT FALSE
+);
+
+CREATE INDEX IF NOT EXISTS idx_evidence_sessions_kept
+    ON evidence_sessions (kept)
+    WHERE kept = TRUE;
+
+-- ──────────────────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS evidence_items (
+    id          SERIAL          PRIMARY KEY,
+    session_id  VARCHAR(8)      NOT NULL
+                                REFERENCES evidence_sessions (session_id)
+                                ON DELETE CASCADE,
+    captured_at TIMESTAMP       NOT NULL DEFAULT NOW(),
+
+    -- Event that triggered this capture.
+    -- Values: 'session_start', 'remove_phone', 'qr_scanned', 'no_qr_found',
+    --         'stage_phone', 'unstage_phone', 'place_phone',
+    --         'declare_missing', 'needs_deposit', 'session_close'
+    event_type  VARCHAR(50)     NOT NULL,
+
+    lid         INTEGER,        -- slot involved (NULL if not applicable)
+    pid         VARCHAR(50),    -- phone PID (NULL if not yet identified)
+    photo_path  VARCHAR(500),   -- absolute or relative path to JPEG file
+                                -- NULL if camera capture failed
+    metadata    JSONB           -- event-specific data (expected_lid, blocking_pid, etc.)
+);
+
+CREATE INDEX IF NOT EXISTS idx_evidence_items_session
+    ON evidence_items (session_id);
+
+CREATE INDEX IF NOT EXISTS idx_evidence_items_event
+    ON evidence_items (event_type);

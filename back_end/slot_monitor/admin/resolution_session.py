@@ -76,6 +76,11 @@ class ResolutionSession:
     declared_missing_pids: set = field(default_factory=set)
     needs_deposit_pids: set = field(default_factory=set)
 
+    # PIDs whose slot was physically opened (admin_remove_phone called) at least once.
+    # declare_missing is blocked until all OTHER phones have been visited,
+    # preventing the admin from declaring a phone missing without checking all slots.
+    visited_pids: set = field(default_factory=set)
+
     # ── Step-lock: at most 1 phone in hand ───────────────
     in_transit_pid: Optional[str] = None
     in_transit_from_lid: Optional[int] = None

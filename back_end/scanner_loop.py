@@ -88,6 +88,15 @@ def process_frame(frame, timestamp, scanning=False, debug=True):
     # Push the (possibly annotated) frame to the main WebRTC stream.
     scanner_state.set_frame(frame)
     scanner_state._main_frame_event.set()
+    
+    # Feed the face rolling buffer — used for alarm and admin evidence clips.
+    # No thread, no overhead — just JPEG compression (~0.1ms per frame).
+    try:
+        from back_end.slot_monitor.camera.rolling_buffer import face_rolling_buffer
+        face_rolling_buffer.push(frame)
+    except Exception:
+        pass  # never let evidence recording crash the scanner loop
+
     return frame
 
 

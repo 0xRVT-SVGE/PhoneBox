@@ -7,7 +7,8 @@ from flask_socketio import emit, SocketIO
 from flask import request
 
 from back_end.slot_monitor.services.operation_context import op_ctx
-from back_end.slot_monitor.camera.qr_pid_reader import scan_and_validate_pid
+from back_end.slot_monitor.camera.qr_pid_reader import scan_and_validate_pid_from_buffer
+from back_end.slot_monitor.camera.top_camera import top_camera
 from back_end.slot_monitor.slot_operations import SlotOperations
 from back_end.slot_monitor.db_interface import SlotMonitorDB
 
@@ -219,10 +220,21 @@ class DVWSocketHandler:
 
         op = op_ctx.get(client_id)
 
-        scan_result = scan_and_validate_pid(camera_index=2, timeout_sec=QR_SCAN_TIMEOUT)
+        # Lazy-start top camera — no-op if already running (admin session may
+        # have started it earlier). Buffer scan never opens the camera directly,
+        # so the WebRTC stream continues uninterrupted during QR scanning.
+        top_camera.start()
+        # Switch to full fps for the duration of the QR scan
+        try:
+            from back_end.slot_monitor.camera.rolling_buffer import top_rolling_buffer
+            top_rolling_buffer.set_active(True)
+        except Exception:
+            pass
+        scan_result = scan_and_validate_pid_from_buffer(top_camera, timeout_sec=QR_SCAN_TIMEOUT)
         if scan_result["status"] != "success":
             emit("operation_error", scan_result)
             op_ctx.clear(client_id)
+            self._top_buffer_idle()
             return
 
         scanned_pid = scan_result["pid"]   # str, consistent with op.pid
@@ -234,6 +246,7 @@ class DVWSocketHandler:
                 "scanned_pid": scanned_pid,
             })
             op_ctx.clear(client_id)
+            self._top_buffer_idle()
             return
 
         op_ctx.qr_scanned(client_id)
@@ -244,6 +257,7 @@ class DVWSocketHandler:
             "verify": self._complete_verify,
         }
         dispatch[op.op_type](op)
+        self._top_buffer_idle()  # op done — back to idle fps
 
     # ============================================================
     # COMPLETION HANDLERS
@@ -341,6 +355,14 @@ class DVWSocketHandler:
     # SLOT HELPERS
     # ============================================================
 
+    def _top_buffer_idle(self):
+        """Return top rolling buffer to idle fps after a DVW operation ends."""
+        try:
+            from back_end.slot_monitor.camera.rolling_buffer import top_rolling_buffer
+            top_rolling_buffer.set_active(False)
+        except Exception:
+            pass
+
     def _pause_slot(self, lid: int):
         if self.slot_ops.monitor and self.slot_ops.monitor.worker_pool:
             self.slot_ops.monitor.worker_pool.pause_slot(lid)
@@ -408,9 +430,19 @@ def register_dvw_handlers(socketio: SocketIO, slot_operations: SlotOperations):
         password = data.get("password", "")
         result = alarm.authenticate_admin(password)
         if result["authenticated"]:
-            alarm.clear()
+            alarm.silence()   # stop beep — mismatches remain until session resolves them
             emit("alarm_acknowledge_result", {"status": "success"}, to=client_id)
         else:
             emit("alarm_acknowledge_result", {"status": "error", "message": "wrong_password"}, to=client_id)
+
+    @socketio.on("alarm_unsilence")
+    def on_alarm_unsilence(data):
+        """
+        Called when admin quits the resolution session without completing it.
+        Restarts the alarm sound so the next admin knows there are still mismatches.
+        """
+        alarm = slot_operations.monitor.alarm if slot_operations.monitor else None
+        if alarm:
+            alarm.unsilence()
 
     logger.info("DVW WebSocket handlers registered")
