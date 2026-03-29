@@ -4,26 +4,17 @@
 """
 QR Code scanning and PID validation.
 
-Two scan paths:
-
-  scan_and_validate_pid(camera_index, timeout_sec)
-      Original path — opens camera directly via cv2.VideoCapture.
-      Used for the bottom camera (slot monitoring) and any context
-      where no shared frame buffer is available.
-
-  scan_and_validate_pid_from_buffer(frame_buffer, timeout_sec)
-      Buffer path — reads frames from a TopCamera buffer instance.
-      Used by admin_ops_handler for camera 2 (top-down) so the
-      WebRTC admin stream never has to pause or stall during a QR scan.
-      pyzbar decoding happens on the same frames already being streamed.
-
-PID formats accepted:
-  "123"      raw integer string
-  "PID:123"  prefixed
+Changes from original:
+  - read_pid_from_buffer() and scan_and_validate_pid_from_buffer() now
+    accept an optional cancel_event: threading.Event.  The scan loop
+    checks it on every iteration and returns None immediately when set,
+    so op_ctx.clear() / cancel_operation unblocks the blocking call
+    within one frame interval (~30 ms) instead of waiting up to 15 s.
 """
 
 import logging
 import re
+import threading
 import time
 from typing import Optional, TYPE_CHECKING
 
@@ -49,17 +40,6 @@ _UUID_RE = re.compile(
 
 
 def _parse_pid(raw: str) -> Optional[str]:
-    """
-    Extract a normalised PID string from raw QR data.
-
-    Accepted formats:
-        "9f74aca1-556e-4212-aafd-5f1f48db319a"   bare UUID  (phones.pid)
-        "PID:9f74aca1-556e-4212-aafd-5f1f48db319a"  prefixed UUID
-        "PID:12345"   legacy integer format
-        "12345"       legacy bare integer
-
-    Returns None if the format is unrecognised.
-    """
     data = raw.strip()
     if data.upper().startswith("PID:"):
         data = data[4:].strip()
@@ -70,28 +50,18 @@ def _parse_pid(raw: str) -> Optional[str]:
     return None
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Path 1 — direct camera open (bottom camera / standalone use)
-# ──────────────────────────────────────────────────────────────────────────────
+# ── Path 1: direct camera open ────────────────────────────
 
 def read_pid_from_camera(
     camera_index: int = 0,
     timeout_sec: float = 15.0,
 ) -> Optional[str]:
-    """
-    Scan camera feed for a QR code containing a PID.
-    Opens and releases the camera internally.
-
-    Returns:
-        pid as str if detected and parseable, None on timeout or bad format.
-    """
     cap = cv2.VideoCapture(camera_index)
     if not cap.isOpened():
         logger.error(f"Camera {camera_index} not available")
         raise RuntimeError(f"Camera {camera_index} not available")
 
     logger.info(f"QR scan started via camera {camera_index} (timeout={timeout_sec}s)")
-
     deadline = time.time() + timeout_sec
 
     try:
@@ -99,18 +69,14 @@ def read_pid_from_camera(
             ret, frame = cap.read()
             if not ret or frame is None:
                 continue
-
             for qr in decode(frame):
                 pid = _parse_pid(qr.data.decode("utf-8"))
                 if pid:
                     logger.info(f"QR scan (direct): PID={pid}")
                     return pid
-                else:
-                    logger.warning(f"QR scan: unrecognised format: {qr.data!r}")
-
+                logger.warning(f"QR scan: unrecognised format: {qr.data!r}")
         logger.warning("QR scan (direct) timed out")
         return None
-
     finally:
         cap.release()
 
@@ -119,13 +85,6 @@ def scan_and_validate_pid(
     camera_index: int = 0,
     timeout_sec: float = 15.0,
 ) -> dict:
-    """
-    Scan camera directly, then validate PID against DB.
-
-    Returns:
-        {"status": "success", "pid": str}
-        {"status": "error",   "message": str, "pid": str | None}
-    """
     try:
         pid = read_pid_from_camera(camera_index, timeout_sec=timeout_sec)
     except RuntimeError:
@@ -145,39 +104,39 @@ def scan_and_validate_pid(
     return {"status": "success", "pid": pid}
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Path 2 — shared frame buffer (top camera / admin session)
-# ──────────────────────────────────────────────────────────────────────────────
+# ── Path 2: shared frame buffer ───────────────────────────
 
 def read_pid_from_buffer(
-    frame_buffer: "TopCamera",
-    timeout_sec: float = 15.0,
+    frame_buffer:  "TopCamera",
+    timeout_sec:   float = 15.0,
+    cancel_event:  Optional[threading.Event] = None,
 ) -> Optional[str]:
     """
     Read frames from a TopCamera buffer and decode QR codes.
 
-    The buffer's capture thread already owns the camera — this function
-    never opens cv2.VideoCapture itself, so the WebRTC admin stream
-    continues uninterrupted during the scan.
-
     Args:
-        frame_buffer: A running TopCamera instance.
-        timeout_sec:  Max seconds before giving up.
-
+        frame_buffer:  Running TopCamera instance.
+        timeout_sec:   Max seconds before giving up.
+        cancel_event:  Optional threading.Event; if set the loop exits
+                       immediately returning None so the caller can
+                       detect cancellation within one frame interval.
     Returns:
-        pid as str if found, None on timeout or bad format.
+        pid as str if found, None on timeout, cancellation, or bad format.
     """
     logger.info(f"QR scan started via frame buffer (timeout={timeout_sec}s)")
-
     deadline = time.time() + timeout_sec
 
     while time.time() < deadline:
+        # Check cancellation first — exits within one loop iteration
+        if cancel_event is not None and cancel_event.is_set():
+            logger.info("QR scan (buffer): cancelled")
+            return None
+
         remaining = deadline - time.time()
         if remaining <= 0:
             break
 
-        # Wait up to 100ms for the next frame, then check timeout and retry
-        got_frame = frame_buffer.wait_for_frame(timeout=min(0.1, remaining))
+        got_frame = frame_buffer.wait_for_frame(timeout=min(0.05, remaining))
         if not got_frame:
             continue
 
@@ -187,40 +146,45 @@ def read_pid_from_buffer(
         if frame is None:
             continue
 
-        # pyzbar needs a writeable frame — buffer frames are read-only
-        frame_copy = frame.copy()
+        frame_copy = frame.copy()   # pyzbar needs a writeable frame
 
         for qr in decode(frame_copy):
             pid = _parse_pid(qr.data.decode("utf-8"))
             if pid:
                 logger.info(f"QR scan (buffer): PID={pid}")
                 return pid
-            else:
-                logger.warning(f"QR scan (buffer): unrecognised format: {qr.data!r}")
+            logger.warning(f"QR scan (buffer): unrecognised format: {qr.data!r}")
 
-    logger.warning("QR scan (buffer) timed out")
+    if cancel_event is None or not cancel_event.is_set():
+        logger.warning("QR scan (buffer) timed out")
     return None
 
 
 def scan_and_validate_pid_from_buffer(
-    frame_buffer: "TopCamera",
-    timeout_sec: float = 15.0,
+    frame_buffer:  "TopCamera",
+    timeout_sec:   float = 15.0,
+    cancel_event:  Optional[threading.Event] = None,
 ) -> dict:
     """
     Scan from a shared frame buffer, then validate PID against DB.
-    Use this in admin_ops_handler instead of scan_and_validate_pid.
 
-    Returns:
-        {"status": "success", "pid": str}
-        {"status": "error",   "message": str, "pid": str | None}
+    Args:
+        cancel_event: If set, scan exits immediately and returns
+                      {"status": "error", "message": "cancelled"}.
     """
     try:
-        pid = read_pid_from_buffer(frame_buffer, timeout_sec=timeout_sec)
+        pid = read_pid_from_buffer(
+            frame_buffer,
+            timeout_sec=timeout_sec,
+            cancel_event=cancel_event,
+        )
     except Exception as e:
         logger.error(f"QR buffer scan error: {e}")
         return {"status": "error", "message": "scan_error"}
 
     if pid is None:
+        if cancel_event is not None and cancel_event.is_set():
+            return {"status": "error", "message": "cancelled"}
         return {"status": "error", "message": "qr_not_detected"}
 
     if not SlotMonitorDB.pid_exists(pid):

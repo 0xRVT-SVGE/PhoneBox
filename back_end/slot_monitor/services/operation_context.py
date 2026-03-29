@@ -1,49 +1,57 @@
 # ============================================================
-# FILE: server/slot_monitor/operation_context.py
+# FILE: back_end/slot_monitor/services/operation_context.py
 # ============================================================
 """
 Manages state for active Deposit/Withdraw/Verification operations.
 
-Design:
-    - Operation records pre-operation slot occupancy at start()
-    - complete() → success, no restore needed
-    - clear()    → failure/cancel, restores slots to pre-operation state
-    - Timeout always calls clear() — no special casing per op type
-    - Alarm system handles physical reality independently
+Changes from original:
+  - Operation.cancel_event   — threading.Event set by clear() to unblock
+                                any blocking scan or tracker thread
+  - Operation.background_frame — top-cam frame captured at op start,
+                                  used as background reference for tracking
+  - Operation.stage "tracking" — tracker running; excluded from auto-expiry
+                                  since the tracker owns its own timeout
+  - op_ctx.set_tracking()    — advances stage to "tracking"
+  - cancel_event is set in clear() AND _cleanup_expired() so the QR scan
+    loop and tracker both exit immediately on cancel or timeout
 """
 
 import logging
 import time
-from typing import Optional, Literal, Dict
+import threading
+from typing import Optional, Dict, Any
 from threading import Lock, Thread, Event
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
-OperationType = Literal["deposit", "withdraw", "verify"]
+OperationType = str   # "deposit" | "withdraw" | "verify"
 
 
 @dataclass
 class Operation:
-    """Single DVW operation state."""
-    op_type: OperationType
-    client_id: str
-    pid: str
-    sid: Optional[str] = None
-    lid: Optional[int] = None
-    original_lid: Optional[int] = None
+    op_type:      str
+    client_id:    str
+    pid:          str
+    sid:          Optional[str]  = None
+    lid:          Optional[int]  = None
+    original_lid: Optional[int]  = None
 
-    stage: str = "waiting_qr"
-    started_at: float = field(default_factory=time.time)
-    qr_scanned_at: Optional[float] = None
+    stage:           str   = "waiting_qr"
+    started_at:      float = field(default_factory=time.time)
+    qr_scanned_at:   Optional[float] = None
 
-    # Occupancy of each slot BEFORE this operation started.
-    # Restored exactly on failure/timeout — no guessing.
-    #   deposit:  lid was empty   (False)
-    #   withdraw: lid was occupied (True)
-    #   verify:   original_lid occupied (True), target lid empty (False)
-    lid_occupied_before: bool = False
+    lid_occupied_before:          bool = False
     original_lid_occupied_before: bool = True
+
+    # Set by clear() / _cleanup_expired() to unblock the QR scan loop
+    # and the phone tracker thread immediately.
+    cancel_event: threading.Event = field(default_factory=threading.Event)
+
+    # Top-cam frame captured at operation start (before the phone arrives).
+    # Used as background reference for frame-diff phone detection.
+    # None if top_camera had no frame yet at start time.
+    background_frame: Any = None   # Optional[np.ndarray]
 
     def is_expired(self, timeout: float) -> bool:
         elapsed = time.time() - (self.qr_scanned_at or self.started_at)
@@ -53,47 +61,35 @@ class Operation:
 class OperationContext:
     """
     Thread-safe manager for active DVW operations.
-
-    One operation per client at a time. Multiple clients can operate concurrently.
-
-    Timeouts:
-        QR_SCAN_TIMEOUT:  seconds allowed to scan QR after initiating
-        ACTION_TIMEOUT:   seconds allowed to complete physical action after QR scan
-        CLEANUP_INTERVAL: how often the background thread checks for expiry
+    One operation per client at a time.
     """
 
-    QR_SCAN_TIMEOUT = 5.0
-    ACTION_TIMEOUT = 5.0
+    QR_SCAN_TIMEOUT  = 20.0   # seconds allowed to scan QR after initiating
+    ACTION_TIMEOUT   = 40.0   # seconds allowed to place after QR scan
+                               # (covers tracker detection + placement time)
     CLEANUP_INTERVAL = 5.0
 
     def __init__(self):
-        self._lock = Lock()
-        self._operations: Dict[str, Operation] = {}
-        self._cleanup_thread: Optional[Thread] = None
-        self._stop_cleanup = Event()
-        self._worker_pool = None
+        self._lock              = Lock()
+        self._operations:  Dict[str, Operation] = {}
+        self._cleanup_thread:  Optional[Thread] = None
+        self._stop_cleanup     = Event()
+        self._worker_pool      = None
 
-    # ============================================================
-    # WORKER POOL INJECTION
-    # ============================================================
+    # ── Worker pool injection ────────────────────────────
 
     def set_worker_pool(self, worker_pool):
-        """Inject WorkerPool after HeadlessSlotMonitor.start()."""
         self._worker_pool = worker_pool
         logger.info("WorkerPool attached to OperationContext")
 
-    # ============================================================
-    # CLEANUP THREAD
-    # ============================================================
+    # ── Cleanup thread ───────────────────────────────────
 
     def start_cleanup_thread(self):
         if self._cleanup_thread is not None:
             return
         self._stop_cleanup.clear()
         self._cleanup_thread = Thread(
-            target=self._cleanup_loop,
-            daemon=True,
-            name="OpCtxCleanup",
+            target=self._cleanup_loop, daemon=True, name="OpCtxCleanup"
         )
         self._cleanup_thread.start()
         logger.info("Operation cleanup thread started")
@@ -112,9 +108,13 @@ class OperationContext:
     def _cleanup_expired(self):
         with self._lock:
             expired = [
-                client_id for client_id, op in self._operations.items()
-                if (op.stage == "waiting_qr" and op.is_expired(self.QR_SCAN_TIMEOUT))
-                or (op.stage == "waiting_action" and op.is_expired(self.ACTION_TIMEOUT))
+                cid for cid, op in self._operations.items()
+                if (
+                    (op.stage == "waiting_qr"     and op.is_expired(self.QR_SCAN_TIMEOUT))
+                    or
+                    (op.stage == "waiting_action" and op.is_expired(self.ACTION_TIMEOUT))
+                    # "tracking" is intentionally excluded — PhoneTracker owns its timeout
+                )
             ]
 
         for client_id in expired:
@@ -126,24 +126,14 @@ class OperationContext:
                 f"Operation timed out: {op.op_type.upper()} "
                 f"client={client_id} PID={op.pid} stage={op.stage}"
             )
+            op.cancel_event.set()   # unblock any blocking scan/tracker
             self._restore_slots(op)
 
-    # ============================================================
-    # SLOT RESTORE
-    # ============================================================
+    # ── Slot restore ─────────────────────────────────────
 
     def _restore_slots(self, op: Operation):
-        """
-        Restore paused slots to their pre-operation state.
-
-        deposit/withdraw: restores op.lid
-        verify:           restores op.original_lid and op.lid
-        """
         if self._worker_pool is None:
-            logger.warning(
-                "WorkerPool not injected — slots cannot be restored. "
-                "Call op_ctx.set_worker_pool(monitor.worker_pool) after monitor starts."
-            )
+            logger.warning("WorkerPool not injected — slots cannot be restored.")
             return
 
         if op.op_type in ("deposit", "withdraw"):
@@ -156,44 +146,23 @@ class OperationContext:
 
         elif op.op_type == "verify":
             if op.original_lid is not None:
-                logger.info(
-                    f"Restoring slot {op.original_lid} "
-                    f"is_occupied={op.original_lid_occupied_before} (verify rolled back)"
-                )
                 self._worker_pool.restore_slot(
                     op.original_lid, op.original_lid_occupied_before
                 )
             if op.lid is not None:
-                logger.info(
-                    f"Restoring slot {op.lid} "
-                    f"is_occupied={op.lid_occupied_before} (verify rolled back)"
-                )
                 self._worker_pool.restore_slot(op.lid, op.lid_occupied_before)
 
-    # ============================================================
-    # OPERATION LIFECYCLE
-    # ============================================================
+    # ── Lifecycle ─────────────────────────────────────────
 
     def start(
-            self,
-            client_id: str,
-            op_type: OperationType,
-            pid: str,
-            sid: Optional[str] = None,
-            lid: Optional[int] = None,
-            original_lid: Optional[int] = None,
+        self,
+        client_id:    str,
+        op_type:      str,
+        pid:          str,
+        sid:          Optional[str] = None,
+        lid:          Optional[int] = None,
+        original_lid: Optional[int] = None,
     ):
-        """
-        Start a new operation and record pre-operation slot occupancy.
-
-        Occupancy inferred from op_type:
-            deposit:  lid was empty
-            withdraw: lid was occupied
-            verify:   original_lid occupied, target lid empty
-
-        Raises:
-            RuntimeError: if this client already has an active operation.
-        """
         with self._lock:
             if client_id in self._operations:
                 existing = self._operations[client_id]
@@ -201,7 +170,6 @@ class OperationContext:
                     f"Client {client_id} already has active {existing.op_type} "
                     f"for PID {existing.pid}"
                 )
-
             op = Operation(
                 op_type=op_type,
                 client_id=client_id,
@@ -210,8 +178,7 @@ class OperationContext:
                 lid=lid,
                 original_lid=original_lid,
                 stage="waiting_qr",
-                lid_occupied_before=op_type == "withdraw",
-                # original_lid_occupied_before defaults True (verify source was occupied)
+                lid_occupied_before=(op_type == "withdraw"),
             )
             self._operations[client_id] = op
 
@@ -221,24 +188,29 @@ class OperationContext:
         )
 
     def qr_scanned(self, client_id: str) -> bool:
-        """Advance to waiting_action after QR scan. Returns False if no active op."""
         with self._lock:
             op = self._operations.get(client_id)
             if op is None:
                 return False
-            op.stage = "waiting_action"
-            op.qr_scanned_at = time.time()
-        logger.info(
-            f"QR scanned: {op.op_type} client={client_id} PID={op.pid} "
-            f"→ waiting for physical action"
-        )
+            op.stage          = "waiting_action"
+            op.qr_scanned_at  = time.time()
+        logger.info(f"QR scanned: {op.op_type} client={client_id} PID={op.pid}")
+        return True
+
+    def set_tracking(self, client_id: str) -> bool:
+        """
+        Advance stage to "tracking". The cleanup thread ignores this stage —
+        PhoneTracker manages its own timeout and calls clear() when done.
+        """
+        with self._lock:
+            op = self._operations.get(client_id)
+            if op is None:
+                return False
+            op.stage = "tracking"
+        logger.info(f"Operation stage → tracking: client={client_id}")
         return True
 
     def complete(self, client_id: str):
-        """
-        Remove a successfully completed operation.
-        Slot state is already correct — no restore needed.
-        """
         with self._lock:
             op = self._operations.pop(client_id, None)
         if op:
@@ -249,13 +221,15 @@ class OperationContext:
 
     def clear(self, client_id: str):
         """
-        Discard a failed or cancelled operation and restore slots to
-        their pre-operation state.
+        Discard a failed/cancelled operation.
+        Sets cancel_event BEFORE restoring slots so any blocking scan
+        or tracker thread exits immediately.
         """
         with self._lock:
             op = self._operations.pop(client_id, None)
         if op is None:
             return
+        op.cancel_event.set()   # unblock QR scan loop and tracker
         logger.info(
             f"Operation failed/cancelled: {op.op_type} "
             f"client={client_id} PID={op.pid}"
@@ -263,23 +237,22 @@ class OperationContext:
         self._restore_slots(op)
 
     def clear_all(self):
-        """Clear all operations on shutdown. No restore — process is exiting."""
         with self._lock:
             count = len(self._operations)
+            ops = list(self._operations.values())
             self._operations.clear()
+        for op in ops:
+            op.cancel_event.set()
         if count:
             logger.info(f"Cleared {count} active operations on shutdown")
 
-    # ============================================================
-    # QUERIES
-    # ============================================================
+    # ── Queries ───────────────────────────────────────────
 
     def get(self, client_id: str) -> Optional[Operation]:
         with self._lock:
             return self._operations.get(client_id)
 
     def get_by_pid(self, pid: str) -> Optional[Operation]:
-        """Find an active operation by PID."""
         with self._lock:
             for op in self._operations.values():
                 if op.pid == pid:
@@ -287,11 +260,6 @@ class OperationContext:
         return None
 
     def get_withdraw_for_lid(self, lid: int) -> Optional[Operation]:
-        """
-        Find an active withdraw operation for a given lid.
-        Alarm controller uses this to distinguish withdraw-without-scan
-        from theft (no active operation on that lid).
-        """
         with self._lock:
             for op in self._operations.values():
                 if op.op_type == "withdraw" and op.lid == lid:
@@ -305,16 +273,16 @@ class OperationContext:
     def get_all_operations(self) -> Dict[str, dict]:
         with self._lock:
             return {
-                client_id: {
-                    "op_type": op.op_type,
-                    "pid": op.pid,
-                    "sid": op.sid,
-                    "lid": op.lid,
-                    "original_lid": op.original_lid,
-                    "stage": op.stage,
-                    "elapsed": time.time() - op.started_at,
+                cid: {
+                    "op_type":     op.op_type,
+                    "pid":         op.pid,
+                    "sid":         op.sid,
+                    "lid":         op.lid,
+                    "original_lid":op.original_lid,
+                    "stage":       op.stage,
+                    "elapsed":     time.time() - op.started_at,
                 }
-                for client_id, op in self._operations.items()
+                for cid, op in self._operations.items()
             }
 
 

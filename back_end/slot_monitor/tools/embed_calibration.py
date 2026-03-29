@@ -337,10 +337,10 @@ def verify_calibration(
             emb  = compute_embedding(roi_img)
             dist = embedding_distance(emb, baselines[lid])
 
-            mark = "✓" if dist < 0.15 else ("⚠" if dist < 0.35 else "✗")
+            mark = "✓" if dist < 0.05 else ("⚠" if dist < 0.15 else "✗")
             logger.info(f"  Slot {lid:3d}  dist={dist:.4f}  {mark}")
 
-            if dist >= 0.35:
+            if dist >= 0.15:
                 high.append((lid, dist))
         except Exception as e:
             logger.error(f"  Slot {lid:3d}  ERROR: {e}")

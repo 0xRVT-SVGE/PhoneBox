@@ -31,10 +31,38 @@ class _ScanSuccessPageState extends State<ScanSuccessPage> {
     final data = await ApiService.getPhones(widget.sid);
     if (!mounted) return;
     setState(() {
-      _phones = data ?? [];
+      _phones  = data ?? [];
       _loading = false;
     });
   }
+
+  // ── Location helper ───────────────────────────────────
+
+  /// "slot N (row R, col C)"
+  /// lid is 0-based if present; x = row, y = col.
+  static String _locationLabel(Map<String, dynamic> p) {
+    final lid = p['lid'];
+    final x   = p['x'];
+    final y   = p['y'];
+
+    if (lid == null && x == null) return 'N/A';
+
+    final slotNum = lid != null ? (lid as num).toInt() + 1 : null;
+
+    if (slotNum != null && x != null && y != null) {
+      return 'slot $slotNum (row $x, col $y)';
+    }
+    if (slotNum != null) {
+      return 'slot $slotNum';
+    }
+    // lid unknown but row/col available — show what we have
+    if (x != null && y != null) {
+      return 'row $x, col $y';
+    }
+    return 'N/A';
+  }
+
+  // ── Operation ─────────────────────────────────────────
 
   void _startOperation(String pid, bool isDeposit) {
     if (isDeposit) {
@@ -61,25 +89,30 @@ class _ScanSuccessPageState extends State<ScanSuccessPage> {
     );
   }
 
+  // ── Phone card ────────────────────────────────────────
+
   Widget _buildPhoneCard(Map<String, dynamic> p) {
     final pid      = p["pid"].toString();
     final model    = p["model"] ?? "Unknown Model";
     final isStored = p["is_stored"] == true;
-    final location = (p["x"] != null && p["y"] != null)
-        ? "Row ${p['x']}, Col ${p['y']}"
-        : "N/A";
+    final location = _locationLabel(p);
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
-        child: Row(
-          children: [
-            Expanded(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(model, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        child: Row(children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(model,
+                    style: const TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 4),
-                Text("PID: $pid", style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                Text("PID: $pid",
+                    style: const TextStyle(
+                        fontSize: 12, color: Colors.grey)),
                 Text("Location: $location"),
                 Text(
                   isStored ? "📦 Stored" : "🎒 With you",
@@ -87,27 +120,27 @@ class _ScanSuccessPageState extends State<ScanSuccessPage> {
                       color: isStored ? Colors.green[700] : Colors.blue[700],
                       fontWeight: FontWeight.w600),
                 ),
-              ]),
+              ],
             ),
-            Column(children: [
-              ElevatedButton(
-                onPressed: isStored ? () => _startOperation(pid, false) : null,
-                style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green,
-                    fixedSize: const Size(80, 36)),
-                child: const Text("Take"),
-              ),
-              const SizedBox(height: 8),
-              ElevatedButton(
-                onPressed: !isStored ? () => _startOperation(pid, true) : null,
-                style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue,
-                    fixedSize: const Size(80, 36)),
-                child: const Text("Put"),
-              ),
-            ]),
-          ],
-        ),
+          ),
+          Column(children: [
+            ElevatedButton(
+              onPressed: isStored ? () => _startOperation(pid, false) : null,
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green,
+                  fixedSize: const Size(80, 36)),
+              child: const Text("Take"),
+            ),
+            const SizedBox(height: 8),
+            ElevatedButton(
+              onPressed: !isStored ? () => _startOperation(pid, true) : null,
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blue,
+                  fixedSize: const Size(80, 36)),
+              child: const Text("Put"),
+            ),
+          ]),
+        ]),
       ),
     );
   }
@@ -141,11 +174,18 @@ class _ScanSuccessPageState extends State<ScanSuccessPage> {
 }
 
 
-// ──────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════
 // DVW BOTTOM SHEET
-// ──────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════
 
-enum _DvwStep { waiting, readyToScan, scanning, success, error }
+enum _DvwStep {
+  waiting,
+  readyToScan,
+  scanning,
+  tracking,
+  success,
+  error,
+}
 
 class DVWBottomSheet extends StatefulWidget {
   final String pid;
@@ -167,8 +207,9 @@ class DVWBottomSheet extends StatefulWidget {
 
 class _DVWBottomSheetState extends State<DVWBottomSheet> {
   _DvwStep _step = _DvwStep.waiting;
-  int?     _lid;
+  int?     _slot;
   String?  _errorText;
+  bool     _qrVisible = true;
 
   @override
   void initState() {
@@ -181,24 +222,45 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
       onDepositWaiting: (data) {
         if (!mounted) return;
         setState(() {
-          _lid  = data['lid'] as int?;
+          _slot = data['slot'] as int? ?? ((data['lid'] as int? ?? 0) + 1);
           _step = _DvwStep.readyToScan;
         });
       },
       onWithdrawWaiting: (data) {
         if (!mounted) return;
         setState(() {
-          _lid  = data['lid'] as int?;
+          _slot = data['slot'] as int? ?? ((data['lid'] as int? ?? 0) + 1);
           _step = _DvwStep.readyToScan;
         });
       },
-      onDepositResult: (data) => _handleResult(data),
+      onDepositResult:  (data) => _handleResult(data),
       onWithdrawResult: (data) => _handleResult(data),
       onOperationError: (data) {
         if (!mounted) return;
         setState(() {
-          _step = _DvwStep.error;
+          _step      = _DvwStep.error;
           _errorText = data['message'] ?? 'Unknown error';
+        });
+      },
+      onOperationCancelled: (_) {
+        if (mounted) Navigator.of(context).pop();
+      },
+      onTrackingStarted: (data) {
+        if (!mounted) return;
+        setState(() {
+          _step      = _DvwStep.tracking;
+          _qrVisible = true;
+        });
+      },
+      onTrackingUpdate: (data) {
+        if (!mounted) return;
+        setState(() => _qrVisible = data['qr_visible'] as bool? ?? true);
+      },
+      onTrackingFailed: (data) {
+        if (!mounted) return;
+        setState(() {
+          _step      = _DvwStep.error;
+          _errorText = _trackingFailureMessage(data['reason'] as String? ?? '');
         });
       },
     );
@@ -214,15 +276,38 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
       });
     } else {
       setState(() {
-        _step = _DvwStep.error;
+        _step      = _DvwStep.error;
         _errorText = data['message'] ?? 'Operation failed';
       });
     }
   }
 
+  void _onCancel() {
+    widget.socketService.cancelOperation();
+    Navigator.of(context).pop();
+  }
+
   void _onScanQr() {
     widget.socketService.qrScanned();
     setState(() => _step = _DvwStep.scanning);
+  }
+
+  String _trackingFailureMessage(String reason) {
+    switch (reason) {
+      case 'qr_lost':
+        return 'The QR code disappeared before the phone reached the slot. '
+            'Please retry and keep the QR visible throughout the motion.';
+      case 'out_of_frame':
+        return 'The phone left the camera view before reaching the slot. '
+            'Please retry and move the phone directly toward the slot.';
+      case 'timeout':
+        return 'Placement timed out. Please retry.';
+      case 'detect_timeout':
+        return 'Phone not detected. Make sure the phone enters the camera view. '
+            'Please retry.';
+      default:
+        return 'Placement failed. Please retry.';
+    }
   }
 
   @override
@@ -236,11 +321,12 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
       child: Column(mainAxisSize: MainAxisSize.min, children: [
-        // Drag handle
-        Container(width: 40, height: 4,
-            decoration: BoxDecoration(
-                color: Colors.grey[300],
-                borderRadius: BorderRadius.circular(2))),
+        Container(
+          width: 40, height: 4,
+          decoration: BoxDecoration(
+              color: Colors.grey[300],
+              borderRadius: BorderRadius.circular(2)),
+        ),
         const SizedBox(height: 20),
         ..._buildContent(),
       ]),
@@ -251,22 +337,26 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
     switch (_step) {
       case _DvwStep.waiting:
         return [
-          const SizedBox(width: 36, height: 36,
+          const SizedBox(
+              width: 36, height: 36,
               child: CircularProgressIndicator(strokeWidth: 3)),
           const SizedBox(height: 16),
           Text(
-            widget.isDeposit ? "Finding a free slot..." : "Looking up your phone...",
+            widget.isDeposit ? "Finding a free slot…" : "Looking up your phone…",
             style: const TextStyle(fontSize: 16),
           ),
+          const SizedBox(height: 24),
+          _cancelButton(),
         ];
 
       case _DvwStep.readyToScan:
+      // _slot is already 1-based as sent by the server
+        final slotLabel = 'slot ${_slot ?? '?'}';
         final action = widget.isDeposit
-            ? "Please hold your QR code under the top camera and tap Scan."
-            : "Remove the phone from slot ${_lid ?? '?'}.";
-        final scanInstruction = widget.isDeposit
-            ? "Then place the phone in slot ${_lid ?? '?'}."
-            : "Then hold its QR code under the top camera and tap Scan.";
+            ? "Go to $slotLabel and place the phone in it.\n"
+            "Hold its QR code under the top camera and tap Scan."
+            : "Remove your phone from $slotLabel.\n"
+            "Hold its QR code under the top camera and tap Scan.";
         return [
           Icon(
             widget.isDeposit ? Icons.login_outlined : Icons.logout_outlined,
@@ -274,62 +364,116 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
             color: widget.isDeposit ? Colors.blue : Colors.green,
           ),
           const SizedBox(height: 14),
-          Text(action,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          Text(scanInstruction,
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 14, color: Colors.grey[600])),
+          Text(
+            action,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+          ),
           const SizedBox(height: 24),
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
               icon: const Icon(Icons.qr_code_scanner),
-              label: const Text("Scan QR Code", style: TextStyle(fontSize: 16)),
+              label: const Text("Scan QR Code",
+                  style: TextStyle(fontSize: 16)),
               style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  backgroundColor:
-                  widget.isDeposit ? Colors.blue : Colors.green),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                backgroundColor:
+                widget.isDeposit ? Colors.blue : Colors.green,
+              ),
               onPressed: _onScanQr,
             ),
           ),
           const SizedBox(height: 10),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text("Cancel"),
-          ),
+          _cancelButton(),
         ];
 
       case _DvwStep.scanning:
         return [
-          const SizedBox(width: 36, height: 36,
+          const SizedBox(
+              width: 36, height: 36,
               child: CircularProgressIndicator(strokeWidth: 3)),
           const SizedBox(height: 16),
-          const Text("Scanning QR code...",
+          const Text("Scanning QR code…",
               style: TextStyle(fontSize: 16)),
           const SizedBox(height: 6),
           Text("Keep it still — up to 15 seconds",
               style: TextStyle(fontSize: 13, color: Colors.grey[500])),
+          const SizedBox(height: 24),
+          _cancelButton(),
+        ];
+
+      case _DvwStep.tracking:
+        final qrColor = _qrVisible ? Colors.green : Colors.orange;
+        final qrIcon  = _qrVisible ? Icons.qr_code_2 : Icons.qr_code_2_outlined;
+        final qrLabel = _qrVisible
+            ? "QR code visible — keep it facing up"
+            : "QR code not detected — keep the QR visible!";
+        return [
+          const SizedBox(
+              width: 36, height: 36,
+              child: CircularProgressIndicator(strokeWidth: 3)),
+          const SizedBox(height: 16),
+          Text(
+            "Place phone in slot ${_slot ?? '?'}",
+            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            "Move the phone toward the slot.\n"
+                "Keep the QR code visible until it lands.",
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 14, color: Colors.grey),
+          ),
+          const SizedBox(height: 16),
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 300),
+            padding:
+            const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            decoration: BoxDecoration(
+              color: qrColor.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: qrColor.withOpacity(0.4)),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(qrIcon, color: qrColor, size: 20),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(qrLabel,
+                    style: TextStyle(
+                        color: qrColor,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500)),
+              ),
+            ]),
+          ),
+          const SizedBox(height: 24),
+          _cancelButton(),
         ];
 
       case _DvwStep.success:
         final verb = widget.isDeposit ? "stored" : "retrieved";
         return [
-          const Icon(Icons.check_circle_outline, size: 52, color: Colors.green),
+          const Icon(Icons.check_circle_outline,
+              size: 52, color: Colors.green),
           const SizedBox(height: 14),
-          Text("Phone ${widget.pid} $verb successfully!",
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+          Text(
+            "Phone ${widget.pid} $verb successfully!",
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+                fontSize: 17, fontWeight: FontWeight.bold),
+          ),
         ];
 
       case _DvwStep.error:
         return [
           const Icon(Icons.error_outline, size: 48, color: Colors.red),
           const SizedBox(height: 14),
-          Text(_errorText ?? "Something went wrong.",
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 16)),
+          Text(
+            _errorText ?? "Something went wrong.",
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 15),
+          ),
           const SizedBox(height: 20),
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
@@ -338,4 +482,10 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
         ];
     }
   }
+
+  Widget _cancelButton() => TextButton(
+    onPressed: _onCancel,
+    child: const Text("Cancel",
+        style: TextStyle(color: Colors.grey)),
+  );
 }

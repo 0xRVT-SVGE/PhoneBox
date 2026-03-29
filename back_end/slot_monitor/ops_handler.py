@@ -11,12 +11,11 @@ from back_end.slot_monitor.camera.qr_pid_reader import scan_and_validate_pid_fro
 from back_end.slot_monitor.camera.top_camera import top_camera
 from back_end.slot_monitor.slot_operations import SlotOperations
 from back_end.slot_monitor.db_interface import SlotMonitorDB
+from back_end.slot_monitor.phone_tracker import create_tracker_for_operation
 
 logger = logging.getLogger(__name__)
 
-# Seconds the handler waits for the user to scan a QR code.
-# Must stay well under OperationContext.ACTION_TIMEOUT (30 s).
-QR_SCAN_TIMEOUT = 15.0
+QR_SCAN_TIMEOUT = 15.0   # seconds for the QR scan blocking call
 
 
 class DVWSocketHandler:
@@ -25,9 +24,36 @@ class DVWSocketHandler:
         self.slot_ops = slot_operations
         self.socketio = socketio
 
-    # ============================================================
+    # ══════════════════════════════════════════════════════
+    # CANCEL
+    # ══════════════════════════════════════════════════════
+
+    def handle_cancel_operation(self, data: dict):
+        """
+        Cancel any active DVW operation for the requesting client.
+        Works in all stages: waiting_qr, waiting_action, tracking.
+
+        op_ctx.clear() sets the operation's cancel_event, which:
+          - unblocks the QR scan loop within one frame (~30 ms)
+          - signals the PhoneTracker thread to stop immediately
+          - restores paused slots to their pre-operation state
+        """
+        client_id = request.sid
+        op = op_ctx.get(client_id)
+        if op is None:
+            emit("operation_error", {"status": "error", "message": "no_active_operation"})
+            return
+
+        logger.info(
+            f"[DVW] Cancel requested by client={client_id} "
+            f"op_type={op.op_type} PID={op.pid} stage={op.stage}"
+        )
+        op_ctx.clear(client_id)   # sets cancel_event + restores slots
+        emit("operation_cancelled", {"status": "success", "pid": op.pid})
+
+    # ══════════════════════════════════════════════════════
     # DEPOSIT
-    # ============================================================
+    # ══════════════════════════════════════════════════════
 
     def handle_deposit(self, data: dict):
         client_id = request.sid
@@ -36,7 +62,7 @@ class DVWSocketHandler:
             emit("operation_error", {"status": "error", "message": "missing_pid"})
             return
 
-        pid = str(pid)  # normalise — all PIDs are str throughout the system
+        pid = str(pid)
 
         if not SlotMonitorDB.pid_exists(pid):
             emit("operation_error", {"status": "error", "message": "pid_not_found", "pid": pid})
@@ -60,16 +86,25 @@ class DVWSocketHandler:
             self._restore_slot(lid, is_occupied=False)
             return
 
+        # Capture the top-camera background frame NOW — before the phone
+        # arrives.  Stored on the operation for the tracker's frame-diff
+        # detection.  May be None if top_camera has no frame yet (handled
+        # gracefully in _complete_deposit).
+        op = op_ctx.get(client_id)
+        if op is not None:
+            op.background_frame = top_camera.get_frame()
+
         emit("deposit_waiting_for_qr", {
             "status": "waiting",
-            "pid": pid,
-            "lid": lid,
-            "message": f"Scan QR for phone {pid}, then place it in slot {lid}",
+            "pid":    pid,
+            "lid":    lid,
+            "slot":   lid + 1,   # 1-based for UI
+            "message": f"Scan QR for phone {pid}, then place it in slot {lid + 1}",
         })
 
-    # ============================================================
+    # ══════════════════════════════════════════════════════
     # WITHDRAW
-    # ============================================================
+    # ══════════════════════════════════════════════════════
 
     def handle_withdraw(self, data: dict):
         client_id = request.sid
@@ -95,87 +130,55 @@ class DVWSocketHandler:
             return
 
         emit("withdraw_waiting_for_action", {
-            "status": "waiting",
-            "pid": pid,
-            "lid": lid,
-            "message": f"Remove phone {pid} from slot {lid}, then scan its QR code",
+            "status":  "waiting",
+            "pid":     pid,
+            "lid":     lid,
+            "slot":    lid + 1,
+            "message": f"Remove phone {pid} from slot {lid + 1}, then scan its QR code",
         })
 
-    # ============================================================
+    # ══════════════════════════════════════════════════════
     # VERIFY
-    # ============================================================
+    # ══════════════════════════════════════════════════════
 
     def handle_verify(self, data: dict):
-        """
-        Correct a phone that is physically in the wrong slot.
-
-        Handles:
-          - Same-slot re-baseline (false alarm recovery)
-          - Simple mismatch: phone in wrong slot, target slot is empty
-
-        Rejects (with clear error + admin redirect):
-          - Phone has no active DB record (placed without deposit operation)
-            → use admin resolution
-          - Swap: target slot is occupied by a different phone
-            → use admin resolution (step-lock required)
-
-        Known limitation (TODO):
-          On timeout/failure, op_ctx restores target_lid with is_occupied=False.
-          This is correct for the simple mismatch case (target was physically empty).
-          It is not reachable for the swap case — swaps are blocked before op_ctx.start().
-        """
-        client_id = request.sid
-        pid = data.get("pid")
+        client_id    = request.sid
+        pid          = data.get("pid")
         original_lid = data.get("original_lid")
 
         if not pid or original_lid is None:
             emit("operation_error", {"status": "error", "message": "missing_parameters"})
             return
 
-        pid = str(pid)
+        pid          = str(pid)
         original_lid = int(original_lid)
 
-        # ── Guard 1: phone must have an active DB record ─────────────────────
-        # Phones placed without a deposit operation have no storage record.
-        # Verify cannot handle these — they have no "correct" slot to return to.
-        # Use admin_session_start instead (it handles arbitrary slot states).
         target_lid = SlotMonitorDB.get_lid_for_pid(pid)
         if target_lid is None:
             emit("operation_error", {
-                "status": "error",
+                "status":  "error",
                 "message": "phone_not_registered_to_any_slot",
-                "pid": pid,
-                "detail": (
+                "pid":     pid,
+                "detail":  (
                     "This phone has no active storage record. "
-                    "It was likely placed without a deposit operation. "
                     "Use admin resolution (admin_session_start) to handle it."
                 ),
             })
             return
 
-        # ── Guard 2: swap detection ───────────────────────────────────────────
-        # If target_lid is occupied by a DIFFERENT phone, this is a swap.
-        # Proceeding would create two active DB records at target_lid.
-        # Admin resolution handles swaps safely via staging + step-lock.
         if target_lid != original_lid:
             blocking_pid = SlotMonitorDB.get_pid_for_lid(target_lid)
             if blocking_pid is not None and blocking_pid != pid:
-                logger.warning(
-                    f"handle_verify: swap detected — "
-                    f"PID={pid} should go to lid={target_lid} "
-                    f"but lid={target_lid} is occupied by PID={blocking_pid}. "
-                    f"Redirecting to admin resolution."
-                )
                 emit("operation_error", {
-                    "status": "error",
-                    "message": "swap_requires_admin_resolution",
-                    "pid": pid,
+                    "status":       "error",
+                    "message":      "swap_requires_admin_resolution",
+                    "pid":          pid,
                     "original_lid": original_lid,
-                    "target_lid": target_lid,
+                    "target_lid":   target_lid,
                     "blocking_pid": blocking_pid,
                     "detail": (
-                        f"Slot {target_lid} is occupied by phone {blocking_pid}. "
-                        f"This is a swap — use admin resolution (admin_session_start)."
+                        f"Slot {target_lid + 1} is occupied by phone {blocking_pid}. "
+                        "Use admin resolution."
                     ),
                 })
                 return
@@ -185,7 +188,10 @@ class DVWSocketHandler:
             self._pause_slot(target_lid)
 
         try:
-            op_ctx.start(client_id, "verify", pid=pid, lid=target_lid, original_lid=original_lid)
+            op_ctx.start(
+                client_id, "verify",
+                pid=pid, lid=target_lid, original_lid=original_lid,
+            )
         except RuntimeError:
             emit("operation_error", {"status": "error", "message": "operation_already_active"})
             self._restore_slot(original_lid, is_occupied=True)
@@ -193,23 +199,27 @@ class DVWSocketHandler:
                 self._restore_slot(target_lid, is_occupied=False)
             return
 
-        same_slot = target_lid == original_lid
+        same_slot = (target_lid == original_lid)
         emit("verify_waiting_for_action", {
-            "status": "waiting",
-            "pid": pid,
+            "status":       "waiting",
+            "pid":          pid,
             "original_lid": original_lid,
-            "target_lid": target_lid,
-            "same_slot": same_slot,
+            "original_slot": original_lid + 1,
+            "target_lid":   target_lid,
+            "target_slot":  target_lid + 1,
+            "same_slot":    same_slot,
             "message": (
-                f"Take phone {pid} from slot {original_lid}, scan QR, place back in same slot."
+                f"Take phone {pid} from slot {original_lid + 1}, "
+                f"scan QR, place back in same slot."
                 if same_slot else
-                f"Take phone {pid} from slot {original_lid}, scan QR, place in slot {target_lid}."
+                f"Take phone {pid} from slot {original_lid + 1}, "
+                f"scan QR, place in slot {target_lid + 1}."
             ),
         })
 
-    # ============================================================
+    # ══════════════════════════════════════════════════════
     # QR SCANNED
-    # ============================================================
+    # ══════════════════════════════════════════════════════
 
     def handle_qr_scanned(self, data: dict):
         client_id = request.sid
@@ -220,78 +230,174 @@ class DVWSocketHandler:
 
         op = op_ctx.get(client_id)
 
-        # Lazy-start top camera — no-op if already running (admin session may
-        # have started it earlier). Buffer scan never opens the camera directly,
-        # so the WebRTC stream continues uninterrupted during QR scanning.
+        # Lazy-start top camera (idempotent — already started eagerly at boot)
         top_camera.start()
-        # Switch to full fps for the duration of the QR scan
         try:
             from back_end.slot_monitor.camera.rolling_buffer import top_rolling_buffer
             top_rolling_buffer.set_active(True)
         except Exception:
             pass
-        scan_result = scan_and_validate_pid_from_buffer(top_camera, timeout_sec=QR_SCAN_TIMEOUT)
+
+        # Blocking QR scan — exits immediately if cancel_event is set
+        scan_result = scan_and_validate_pid_from_buffer(
+            top_camera,
+            timeout_sec=QR_SCAN_TIMEOUT,
+            cancel_event=op.cancel_event,
+        )
+
+        self._top_buffer_idle()
+
+        # Check if cancelled while scanning
+        if op.cancel_event.is_set():
+            # op_ctx.clear() was already called by handle_cancel_operation;
+            # the scan just returned because the event was set.
+            # Nothing more to do — operation_cancelled was already emitted.
+            return
+
         if scan_result["status"] != "success":
             emit("operation_error", scan_result)
             op_ctx.clear(client_id)
-            self._top_buffer_idle()
             return
 
-        scanned_pid = scan_result["pid"]   # str, consistent with op.pid
+        scanned_pid = scan_result["pid"]
         if scanned_pid != op.pid:
             emit("operation_error", {
-                "status": "error",
-                "message": "pid_mismatch",
+                "status":      "error",
+                "message":     "pid_mismatch",
                 "expected_pid": op.pid,
                 "scanned_pid": scanned_pid,
             })
             op_ctx.clear(client_id)
-            self._top_buffer_idle()
             return
 
         op_ctx.qr_scanned(client_id)
 
         dispatch = {
-            "deposit": self._complete_deposit,
+            "deposit":  self._complete_deposit,
             "withdraw": self._complete_withdraw,
-            "verify": self._complete_verify,
+            "verify":   self._complete_verify,
         }
         dispatch[op.op_type](op)
-        self._top_buffer_idle()  # op done — back to idle fps
 
-    # ============================================================
+    # ══════════════════════════════════════════════════════
     # COMPLETION HANDLERS
-    # ============================================================
+    # ══════════════════════════════════════════════════════
 
     def _complete_deposit(self, op):
+        """
+        QR confirmed for deposit.  Start the phone tracker instead of
+        completing immediately.  The tracker calls _finalize_deposit()
+        on success or _on_tracking_failed() on any failure.
+
+        Falls back to immediate completion if tracker data is unavailable
+        (no rois_top.json or no background frame captured).
+        """
+        client_id = op.client_id
+        pid       = op.pid
+        lid       = op.lid
+
+        tracker = create_tracker_for_operation(op, self.socketio)
+
+        if tracker is None:
+            # No tracker available — complete in the old way
+            logger.warning(
+                f"[DVW] Tracker unavailable for PID={pid} lid={lid} — "
+                "completing deposit without motion verification"
+            )
+            self._finalize_deposit(op)
+            return
+
+        # Advance op stage so cleanup thread doesn't expire it
+        op_ctx.set_tracking(client_id)
+
+        self.socketio.emit(
+            "tracking_started",
+            {
+                "pid":  pid,
+                "lid":  lid,
+                "slot": lid + 1,
+                "message": f"Place phone {pid} in slot {lid + 1}. Keep the QR visible.",
+            },
+            to=client_id,
+            namespace="/",
+        )
+
+        tracker.start(
+            on_success=lambda: self._finalize_deposit(op),
+            on_failure=lambda reason: self._on_tracking_failed(op, reason),
+        )
+
+    def _finalize_deposit(self, op):
+        """
+        Called by PhoneTracker on success (or directly as fallback).
+        Captures baseline, creates DB record, emits deposit_result.
+        Runs from the tracker background thread — uses socketio.emit().
+        """
         pid, lid, client_id = op.pid, op.lid, op.client_id
 
-        # Capture baseline first — confirms phone was actually placed
+        # Baseline capture confirms phone is physically in the slot
         baseline_result = self.slot_ops.capture_and_save_baseline(
             lid=lid, is_occupied=True, wait_for_stable=2.0
         )
         if baseline_result["status"] != "success":
-            emit("deposit_result", {
-                "status": "error",
-                "message": "baseline_capture_failed",
-                "pid": pid, "lid": lid,
-            })
+            self.socketio.emit(
+                "deposit_result",
+                {
+                    "status":  "error",
+                    "message": "baseline_capture_failed",
+                    "pid": pid, "lid": lid,
+                },
+                to=client_id, namespace="/",
+            )
             op_ctx.clear(client_id)
             return
 
         db_result = self.slot_ops.deposit_phone_db(pid, lid)
         if db_result["status"] != "success":
-            emit("deposit_result", db_result)
+            self.socketio.emit("deposit_result", db_result, to=client_id, namespace="/")
             op_ctx.clear(client_id)
             return
 
         self._resume_slot(lid)
         op_ctx.complete(client_id)
-        emit("deposit_result", {
-            "status": "success",
-            "pid": pid, "lid": lid,
-            "storage_id": db_result.get("storage_id"),
-        })
+        self.socketio.emit(
+            "deposit_result",
+            {
+                "status":     "success",
+                "pid":        pid,
+                "lid":        lid,
+                "slot":       lid + 1,
+                "storage_id": db_result.get("storage_id"),
+            },
+            to=client_id, namespace="/",
+        )
+
+    def _on_tracking_failed(self, op, reason: str):
+        """
+        Called by PhoneTracker on any failure.
+        Clears the operation (restores slot) and notifies the client.
+        Runs from the tracker background thread.
+        """
+        client_id = op.client_id
+        op_ctx.clear(client_id)   # restores slot, sets cancel_event
+
+        messages = {
+            "qr_lost":       "QR code disappeared before the phone reached the slot. "
+                             "This may indicate a substitution attempt. Please retry.",
+            "out_of_frame":  "Phone left the camera view before reaching the slot. Please retry.",
+            "timeout":       "Placement timed out. Please retry.",
+            "detect_timeout":"Phone not detected entering the camera view. Please retry.",
+            "cancelled":     "Operation was cancelled.",
+        }
+        self.socketio.emit(
+            "tracking_failed",
+            {
+                "status":  "error",
+                "reason":  reason,
+                "message": messages.get(reason, f"Tracking failed: {reason}"),
+            },
+            to=client_id, namespace="/",
+        )
 
     def _complete_withdraw(self, op):
         pid, lid, client_id = op.pid, op.lid, op.client_id
@@ -302,17 +408,16 @@ class DVWSocketHandler:
             op_ctx.clear(client_id)
             return
 
-        # Capture empty-slot baseline; also sets slot.is_occupied = False
         self.slot_ops.capture_and_save_baseline(
             lid=lid, is_occupied=False, wait_for_stable=2.0
         )
-
-        # Operation succeeded — lift pause without resetting slot state
         self._resume_slot(lid)
         op_ctx.complete(client_id)
         emit("withdraw_result", {
-            "status": "success",
-            "pid": pid, "lid": lid,
+            "status":     "success",
+            "pid":        pid,
+            "lid":        lid,
+            "slot":       lid + 1,
             "storage_id": db_result.get("storage_id"),
         })
 
@@ -320,24 +425,20 @@ class DVWSocketHandler:
         pid, original_lid, target_lid, client_id = (
             op.pid, op.original_lid, op.lid, op.client_id
         )
-        same_slot = original_lid == target_lid
+        same_slot = (original_lid == target_lid)
 
         if not same_slot:
-            # At this point we know target_lid is empty (swap guard in handle_verify
-            # blocked the case where it was occupied by a different phone).
             if not SlotMonitorDB.update_storage_lid(pid, target_lid):
                 emit("verify_result", {"status": "error", "message": "database_update_failed"})
                 op_ctx.clear(client_id)
                 return
 
-        # Capture baseline for target slot (phone is now here)
         self.slot_ops.capture_and_save_baseline(
             lid=target_lid, is_occupied=True, wait_for_stable=1.5
         )
         self._resume_slot(target_lid)
 
         if not same_slot:
-            # Original slot is now empty — phone was moved to target_lid
             self.slot_ops.capture_and_save_baseline(
                 lid=original_lid, is_occupied=False, wait_for_stable=1.5
             )
@@ -345,18 +446,18 @@ class DVWSocketHandler:
 
         op_ctx.complete(client_id)
         emit("verify_result", {
-            "status": "success",
-            "pid": pid,
+            "status":       "success",
+            "pid":          pid,
             "original_lid": original_lid,
-            "target_lid": target_lid,
+            "target_lid":   target_lid,
+            "target_slot":  target_lid + 1,
         })
 
-    # ============================================================
+    # ══════════════════════════════════════════════════════
     # SLOT HELPERS
-    # ============================================================
+    # ══════════════════════════════════════════════════════
 
     def _top_buffer_idle(self):
-        """Return top rolling buffer to idle fps after a DVW operation ends."""
         try:
             from back_end.slot_monitor.camera.rolling_buffer import top_rolling_buffer
             top_rolling_buffer.set_active(False)
@@ -368,22 +469,24 @@ class DVWSocketHandler:
             self.slot_ops.monitor.worker_pool.pause_slot(lid)
 
     def _resume_slot(self, lid: int):
-        """Lift pause — slot state is already correct (successful operation)."""
         if self.slot_ops.monitor and self.slot_ops.monitor.worker_pool:
             self.slot_ops.monitor.worker_pool.resume_slot(lid)
 
     def _restore_slot(self, lid: int, is_occupied: bool):
-        """Lift pause and reset slot state (failed/cancelled operation)."""
         if self.slot_ops.monitor and self.slot_ops.monitor.worker_pool:
             self.slot_ops.monitor.worker_pool.restore_slot(lid, is_occupied)
 
 
-# ============================================================
+# ══════════════════════════════════════════════════════════
 # REGISTRATION
-# ============================================================
+# ══════════════════════════════════════════════════════════
 
 def register_dvw_handlers(socketio: SocketIO, slot_operations: SlotOperations):
     handler = DVWSocketHandler(slot_operations, socketio)
+
+    @socketio.on("cancel_operation")
+    def on_cancel_operation(data):
+        handler.handle_cancel_operation(data)
 
     @socketio.on("deposit")
     def on_deposit(data):
@@ -413,9 +516,9 @@ def register_dvw_handlers(socketio: SocketIO, slot_operations: SlotOperations):
             with alarm._lock:
                 mismatches = [[p, l] for p, l in alarm.mismatches]
             emit("alarm_status", {
-                "active": True,
+                "active":         True,
                 "mismatch_count": len(mismatches),
-                "mismatches": mismatches,
+                "mismatches":     mismatches,
             }, to=client_id)
         else:
             emit("alarm_status", {"active": False}, to=client_id)
@@ -425,22 +528,19 @@ def register_dvw_handlers(socketio: SocketIO, slot_operations: SlotOperations):
         client_id = request.sid
         alarm = slot_operations.monitor.alarm if slot_operations.monitor else None
         if alarm is None:
-            emit("operation_error", {"status": "error", "message": "alarm_not_available"}, to=client_id)
+            emit("operation_error",
+                 {"status": "error", "message": "alarm_not_available"}, to=client_id)
             return
-        password = data.get("password", "")
-        result = alarm.authenticate_admin(password)
+        result = alarm.authenticate_admin(data.get("password", ""))
         if result["authenticated"]:
-            alarm.silence()   # stop beep — mismatches remain until session resolves them
+            alarm.silence()
             emit("alarm_acknowledge_result", {"status": "success"}, to=client_id)
         else:
-            emit("alarm_acknowledge_result", {"status": "error", "message": "wrong_password"}, to=client_id)
+            emit("alarm_acknowledge_result",
+                 {"status": "error", "message": "wrong_password"}, to=client_id)
 
     @socketio.on("alarm_unsilence")
     def on_alarm_unsilence(data):
-        """
-        Called when admin quits the resolution session without completing it.
-        Restarts the alarm sound so the next admin knows there are still mismatches.
-        """
         alarm = slot_operations.monitor.alarm if slot_operations.monitor else None
         if alarm:
             alarm.unsilence()
