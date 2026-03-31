@@ -2,167 +2,193 @@
 # FILE: back_end/slot_monitor/admin/resolution_session.py
 # ============================================================
 """
-Per-connection admin resolution session state.
+Admin resolution session state.
 
-Tracks:
-  - Which phone is currently in-hand (current_pid, current_from_lid)
-  - Whether that phone belongs back in the same slot (current_same_slot)
-  - Which phones have been staged
-  - Which phones have been resolved
-  - Which phones are still pending
+Exports used by admin_ops_handler:
+    admin_ctx      — AdminSessionContext singleton
+    SESSION_TIMEOUT — seconds before a session is considered expired
+
+AdminSessionContext manages a single active ResolutionSession.
+At most one session can be open at a time (school system assumption).
+
+ResolutionSession holds all mutable per-session state that
+admin_ops_handler reads and writes directly on the session object.
 """
 
 import logging
 import time
-from typing import Optional
+from typing import Dict, Optional, Set
 
 logger = logging.getLogger(__name__)
 
+# How long (seconds) an admin session may stay open before it is
+# considered expired.  _check_timeout in admin_ops_handler logs a
+# warning when this is exceeded but does NOT forcibly close the session —
+# the admin must close it explicitly.
+SESSION_TIMEOUT = 1800.0   # 30 minutes
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ResolutionSession — per-session mutable state
+# ══════════════════════════════════════════════════════════════════════════════
 
 class ResolutionSession:
+    """
+    All state for one admin resolution session.
 
-    def __init__(self, client_id: str, slot_ops, alarm, socketio):
-        self.client_id  = client_id
-        self.slot_ops   = slot_ops
-        self.alarm      = alarm
-        self.socketio   = socketio
+    admin_ops_handler reads and writes these attributes directly —
+    they are intentionally public (no properties) for simplicity.
 
-        self._session_id   = f"res-{int(time.time())}-{client_id[:6]}"
-        self._opened_at    = time.time()
+    Attribute reference
+    ───────────────────
+    session_id          str        "res-{ts}-{client_id[:6]}"
+    client_id           str        WebSocket SID of the admin
 
-        # All lids/pids that were mismatched when the session opened
-        self._mismatch_map: dict[str, int] = {}  # pid → expected_lid
+    initial_mismatches  dict       {pid: expected_lid}  — snapshot at open time
+    phone_count_at_open int        total phones in storage when session opened
+                                   (-1 if DB query failed)
 
-        # Per-phone tracking
-        self._remaining:  list[str] = []   # pids not yet resolved
-        self._staged:     list[str] = []   # pids currently in staging zone
-        self._resolved:   list[str] = []   # pids successfully placed
-        self._missing:    list[str] = []   # pids declared missing
-        self._needs_dep:  list[str] = []   # pids that need normal deposit
+    staged_phones       dict       {pid: from_lid}  — phones currently in the
+                                   physical staging area (not in any slot)
+
+    visited_pids        set        PIDs whose slot the admin has physically
+                                   opened (for "must visit all before missing")
+
+    resolved_pids       set        PIDs successfully placed in correct slot
+    declared_missing_pids set      PIDs declared missing (DB record withdrawn)
+    needs_deposit_pids  set        PIDs found in box but with no DB record
+
+    in_transit_pid          str|None   PID of phone currently in admin's hand
+    in_transit_from_lid     int|None   lid it was removed from
+    in_transit_qr_confirmed bool       True after admin_qr_scanned succeeds
+    current_same_slot       bool       True when expected_lid == from_lid
+    """
+
+    def __init__(
+        self,
+        client_id:          str,
+        initial_mismatches: Dict[str, int],
+        phone_count:        int,
+    ):
+        self.session_id   = f"res-{int(time.time())}-{client_id[:6]}"
+        self.client_id    = client_id
+        self._opened_at   = time.time()
+
+        # Snapshot — never mutated after open
+        self.initial_mismatches:    Dict[str, int] = dict(initial_mismatches)
+        self.phone_count_at_open:   int            = phone_count
+
+        # Per-phone tracking — mutated throughout the session
+        self.staged_phones:          Dict[str, int] = {}
+        self.visited_pids:           Set[str]       = set()
+        self.resolved_pids:          Set[str]       = set()
+        self.declared_missing_pids:  Set[str]       = set()
+        self.needs_deposit_pids:     Set[str]       = set()
 
         # Current phone in hand
-        self.current_pid:       Optional[str] = None
-        self.current_from_lid:  Optional[int] = None
-        self.current_same_slot: bool          = False
-        self._current_expected: Optional[int] = None
-
-    # ── Open / close ──────────────────────────────────────
-
-    def open(self):
-        """Populate mismatch list from alarm state and notify client."""
-        with self.alarm._lock:
-            mismatches = list(self.alarm.mismatches)
-
-        self._mismatch_map = {pid: lid for pid, lid in mismatches}
-        self._remaining    = list(self._mismatch_map.keys())
+        self.in_transit_pid:          Optional[str] = None
+        self.in_transit_from_lid:     Optional[int] = None
+        self.in_transit_qr_confirmed: bool          = False
+        self.current_same_slot:       bool          = False
 
         logger.info(
-            f"[ResolutionSession] {self._session_id} opened — "
-            f"{len(self._remaining)} mismatches"
+            f"[ResolutionSession] {self.session_id} opened — "
+            f"{len(self.initial_mismatches)} mismatches, "
+            f"phone_count={phone_count}"
         )
 
-        self.socketio.emit(
-            "admin_session_opened",
-            {
-                "session_id": self._session_id,
-                "mismatches": [
-                    {"pid": pid, "expected_lid": lid}
-                    for pid, lid in self._mismatch_map.items()
-                ],
-            },
-            to=self.client_id,
-            namespace="/",
-        )
+    # ── Queries ───────────────────────────────────────────────────────────────
 
-    def close(self):
-        logger.info(f"[ResolutionSession] {self._session_id} closed")
+    def has_phone_in_hand(self) -> bool:
+        """True if the admin has physically removed a phone and not yet placed it."""
+        return self.in_transit_from_lid is not None
 
-    def build_summary(self) -> dict:
+    def pending_pids(self) -> list:
+        """
+        PIDs from the initial mismatch list that are not yet resolved,
+        declared missing, or flagged for deposit.
+        Also includes staged phones that haven't been placed yet.
+        """
+        handled = self.resolved_pids | self.declared_missing_pids | self.needs_deposit_pids
+        pending = [
+            pid for pid in self.initial_mismatches
+            if pid not in handled
+        ]
+        return pending
+
+    def is_expired(self) -> bool:
+        return (time.time() - self._opened_at) > SESSION_TIMEOUT
+
+    def elapsed(self) -> float:
+        return time.time() - self._opened_at
+
+    def summary(self) -> dict:
         return {
-            "session_id":        self._session_id,
-            "duration_s":        round(time.time() - self._opened_at, 1),
-            "resolved":          list(self._resolved),
-            "declared_missing":  list(self._missing),
-            "needs_deposit":     list(self._needs_dep),
+            "session_id":         self.session_id,
+            "duration_s":         round(self.elapsed(), 1),
+            "resolved":           sorted(self.resolved_pids),
+            "declared_missing":   sorted(self.declared_missing_pids),
+            "needs_deposit":      sorted(self.needs_deposit_pids),
+            "unresolved":         sorted(self.pending_pids()),
         }
 
-    # ── Phone tracking ────────────────────────────────────
 
-    def record_removal(self, from_lid: int) -> bool:
-        """
-        Admin has physically picked up the object from from_lid.
-        Returns False if nothing was expected there.
-        """
-        self.current_from_lid  = from_lid
-        self.current_pid       = None
-        self.current_same_slot = False
-        self._current_expected = None
-        return True   # always accept; QR scan determines validity
+# ══════════════════════════════════════════════════════════════════════════════
+# AdminSessionContext — singleton session manager
+# ══════════════════════════════════════════════════════════════════════════════
 
-    def record_qr_result(
+class AdminSessionContext:
+    """
+    Thread-safe manager for the single active ResolutionSession.
+
+    At most one session may be open at a time.
+    admin_ops_handler imports the module-level `admin_ctx` singleton.
+    """
+
+    def __init__(self):
+        self._session: Optional[ResolutionSession] = None
+
+    def is_active(self) -> bool:
+        return self._session is not None
+
+    def open(
         self,
-        pid: str,
-        expected_lid: Optional[int],
-        same_slot: bool,
-    ):
-        """Store QR scan result for the phone currently in hand."""
-        self.current_pid       = pid
-        self._current_expected = expected_lid
-        self.current_same_slot = same_slot
+        client_id:          str,
+        initial_mismatches: Dict[str, int],
+        phone_count:        int,
+    ) -> ResolutionSession:
+        """
+        Open a new session.
+        Raises RuntimeError if a session is already active.
+        """
+        if self._session is not None:
+            raise RuntimeError(
+                f"Session {self._session.session_id} is already active. "
+                "Close it before opening a new one."
+            )
+        self._session = ResolutionSession(
+            client_id          = client_id,
+            initial_mismatches = initial_mismatches,
+            phone_count        = phone_count,
+        )
+        return self._session
 
-    def record_unknown_object(self, from_lid: int):
-        """No QR found — object has no identity."""
-        self.current_pid       = f"unknown-{from_lid}"
-        self._current_expected = from_lid
-        self.current_same_slot = False
+    def get(self) -> Optional[ResolutionSession]:
+        """Return the active session, or None if no session is open."""
+        return self._session
 
-    def get_expected_lid(self, pid: str) -> Optional[int]:
-        if pid == self.current_pid:
-            return self._current_expected
-        return self._mismatch_map.get(pid)
+    def close(self) -> ResolutionSession:
+        """
+        Close the active session and return it (for summary()).
+        Raises RuntimeError if no session is active.
+        """
+        if self._session is None:
+            raise RuntimeError("No active session to close.")
+        session = self._session
+        self._session = None
+        logger.info(f"[AdminSessionContext] Session {session.session_id} closed")
+        return session
 
-    def stage(self, pid: str):
-        if pid not in self._staged:
-            self._staged.append(pid)
-        self.current_pid       = None
-        self.current_from_lid  = None
-        self.current_same_slot = False
 
-    def unstage(self, pid: str):
-        if pid in self._staged:
-            self._staged.remove(pid)
-        self.current_pid      = pid
-        self.current_from_lid = self._mismatch_map.get(pid)
-        self.current_same_slot = False   # unstaged phones always go to their slot
-
-    def is_staged(self, pid: str) -> bool:
-        return pid in self._staged
-
-    def mark_resolved(self, pid: str):
-        self._remaining = [p for p in self._remaining if p != pid]
-        if pid not in self._resolved:
-            self._resolved.append(pid)
-        self.current_pid       = None
-        self.current_from_lid  = None
-        self.current_same_slot = False
-        self._current_expected = None
-
-    def mark_missing(self, pid: str):
-        self._remaining = [p for p in self._remaining if p != pid]
-        if pid not in self._missing:
-            self._missing.append(pid)
-
-    def mark_needs_deposit(self, pid: str):
-        self._remaining = [p for p in self._remaining if p != pid]
-        if pid not in self._needs_dep:
-            self._needs_dep.append(pid)
-
-    def remaining_pids(self) -> list:
-        return list(self._remaining)
-
-    def staged_pids(self) -> list:
-        return list(self._staged)
-
-    @property
-    def session_id(self) -> str:
-        return self._session_id
+# ── Module-level singleton ─────────────────────────────────────────────────────
+admin_ctx = AdminSessionContext()
