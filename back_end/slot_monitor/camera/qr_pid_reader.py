@@ -56,7 +56,8 @@ def read_pid_from_camera(
     camera_index: int = 0,
     timeout_sec: float = 15.0,
 ) -> Optional[str]:
-    cap = cv2.VideoCapture(camera_index)
+    # CAP_DSHOW avoids MSMF sharing conflicts on Windows.
+    cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
     if not cap.isOpened():
         logger.error(f"Camera {camera_index} not available")
         raise RuntimeError(f"Camera {camera_index} not available")

@@ -2,613 +2,590 @@
 # FILE: back_end/slot_monitor/phone_tracker.py
 # ============================================================
 """
-Phone Tracker — deposit + verify motion verification.
+PhoneTracker — frame-difference detection + CSRT tracking on the top camera.
 
-Optimization vs previous version
-──────────────────────────────────
-_check_qr (pyzbar) previously ran on every tracking frame.
-It now runs on every second frame (alternating skip).
-At 20 fps this halves pyzbar CPU usage with no meaningful security
-impact — a substitution attack cannot be hidden in a single skipped
-frame, and QR_LOST_TIMEOUT (2 s) gives 20 frames of tolerance.
+Used by ops_handler (deposit / verify) and admin_ops_handler (resolution).
 
-Overlay system
-──────────────
-Two composable callable hooks on top_camera draw on every frame:
+Detection + tracking pipeline
+──────────────────────────────
+  Phase 1 — Motion detection
+    Compares each new frame against a captured background using frame
+    differencing.  Scanning is restricted to the target ROI (+margin)
+    so movements elsewhere in the frame are ignored.  When a contour
+    large enough to be a phone is found, the bounding box is returned
+    and Phase 2 begins.
 
-  _context_overlay  Drawn first.
-    Set by ops_handler (DVW) or admin_ops_handler (admin session).
-    Shows the static session context — slot grid, source, destination,
-    staging zones with occupancy colors.
+  Phase 2 — CSRT tracking
+    OpenCV CSRT tracker follows the phone frame by frame.  After each
+    update the current bbox is tested against the target ROI with IoU.
+    When IoU >= overlap_threshold for stable_frames consecutive frames,
+    on_confirmed() is fired and the tracker exits cleanly.
 
-  _tracker_overlay  Drawn on top of context.
-    Set by PhoneTracker once CSRT is live.
-    Shows only the phone bounding box and QR status badge.
+Overlay architecture
+─────────────────────
+  The tracker registers a _tracker_overlay on top_camera for its
+  live bounding box.  The caller supplies a _context_overlay (slot
+  highlights, grid) separately via top_camera.set_context_overlay().
+  Both are cleared when tracking ends.
 
-Public factory functions
-────────────────────────
-  make_dvw_context_overlay(all_rois, source_lid, dest_lid)
-  make_admin_session_overlay(all_rois, staging_rois, staged_pids,
-                              source_lid, dest_lid)
+Public API
+───────────
+  PhoneTracker(...)     Create instance (does not start tracking)
+  tracker.start()       Spawn daemon thread — returns immediately
+  tracker.stop()        Request abort — joins thread with 2 s timeout
+  tracker.is_running()  True while background thread is alive
+
+Callbacks (all called from tracker thread, not the main thread)
+────────────────────────────────────────────────────────────────
+  on_detected(bbox)           Phone appeared in frame, CSRT initialised
+  on_progress(bbox, overlap)  Each frame: current bbox + IoU vs target
+  on_confirmed()              Phone stable in target ROI — success
+  on_timeout()                Timed out before confirmation
+  on_failed(reason: str)      Camera error, CSRT lost, etc.
+
+Context overlay factories
+──────────────────────────
+  make_operation_context_overlay(...)   Slot grid + source/target highlights
+  make_staging_context_overlay(...)     Staging zones with occupancy colours
 """
 
-import json
+import cv2
 import logging
-import math
-import os
 import threading
 import time
 from typing import Callable, Dict, List, Optional, Tuple
 
-import cv2
 import numpy as np
-from pyzbar.pyzbar import decode
 
 logger = logging.getLogger(__name__)
 
-# ── Timing constants ──────────────────────────────────────
-DETECT_TIMEOUT    = 8.0
-PLACEMENT_TIMEOUT = 30.0
-QR_LOST_TIMEOUT   = 2.0
+# ── Tunable parameters ────────────────────────────────────────────────────────
 
-# ── Detection constants ───────────────────────────────────
-MIN_PHONE_AREA   = 1500
-DIFF_BLUR_KERNEL = 21
-DIFF_THRESHOLD   = 25
-DILATE_ITERS     = 3
-
-# ── QR frame-skip ─────────────────────────────────────────
-# Run pyzbar on every Nth tracking frame.
-# N=2 halves CPU at the cost of up to one extra frame of QR absence
-# before detection — negligible at 20 fps with a 2 s tolerance window.
-_QR_CHECK_EVERY_N = 2
-
-# ── Palette (BGR) ─────────────────────────────────────────
-_COL_GRID          = (60,  60,  60)
-_COL_SOURCE        = (30, 130, 255)
-_COL_DEST_BASE     = (40, 220, 255)
-_COL_STAGING_EMPTY = [(200, 100,  30), (30, 100, 200)]
-_COL_STAGING_OCC   = [(255, 180,  80), (80, 180, 255)]
-_COL_BBOX_OK       = (20, 215,  20)
-_COL_BBOX_WARN     = (20,  20, 215)
-_COL_TEXT          = (255, 255, 255)
-_FONT              = cv2.FONT_HERSHEY_SIMPLEX
+OVERLAP_THRESHOLD  = 0.50   # IoU fraction needed to count as "in target"
+STABLE_FRAMES      = 10     # consecutive overlapping frames → confirmed
+DETECT_TIMEOUT     = 15.0   # seconds to find the phone before giving up
+TRACK_TIMEOUT      = 55.0   # total seconds the tracker is allowed to run
+TARGET_FPS         = 15     # tracker loop rate (frames/s)
+MIN_MOTION_AREA    = 600    # px² — smaller blobs are ignored as noise
+LOST_TRACK_LIMIT   = 8      # consecutive lost frames before tracker gives up
+DETECTION_MARGIN   = 40     # px of padding around target ROI during detection
 
 
-# ══════════════════════════════════════════════════════════
-# Drawing primitives
-# ══════════════════════════════════════════════════════════
+# ── Geometry helpers ──────────────────────────────────────────────────────────
 
-def _draw_dashed_line(
-    frame: np.ndarray,
-    x1: int, y1: int, x2: int, y2: int,
-    color: Tuple,
-    thickness: int = 2,
-    dash: int = 12, gap: int = 7,
-) -> None:
-    length = math.hypot(x2 - x1, y2 - y1)
-    if length < 1:
-        return
-    ux, uy = (x2 - x1) / length, (y2 - y1) / length
-    pos, on = 0.0, True
-    while pos < length:
-        seg = min(dash if on else gap, length - pos)
-        if on:
-            p1 = (int(x1 + ux * pos),       int(y1 + uy * pos))
-            p2 = (int(x1 + ux * (pos + seg)), int(y1 + uy * (pos + seg)))
-            cv2.line(frame, p1, p2, color, thickness, cv2.LINE_AA)
-        pos += seg
-        on = not on
+def _iou(a: Tuple[int, int, int, int],
+         b: Tuple[int, int, int, int]) -> float:
+    """IoU of two (x, y, w, h) rectangles. Returns value in [0, 1]."""
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+
+    ix = max(0, min(ax + aw, bx + bw) - max(ax, bx))
+    iy = max(0, min(ay + ah, by + bh) - max(ay, by))
+    inter = ix * iy
+    if inter == 0:
+        return 0.0
+
+    union = aw * ah + bw * bh - inter
+    return inter / union if union > 0 else 0.0
 
 
-def _draw_dashed_rect(
-    frame: np.ndarray,
-    x: int, y: int, w: int, h: int,
-    color: Tuple,
-    thickness: int = 2,
-    dash: int = 12, gap: int = 7,
-) -> None:
-    x2, y2 = x + w, y + h
-    _draw_dashed_line(frame, x,  y,  x2,  y, color, thickness, dash, gap)
-    _draw_dashed_line(frame, x2, y,  x2, y2, color, thickness, dash, gap)
-    _draw_dashed_line(frame, x2, y2,  x, y2, color, thickness, dash, gap)
-    _draw_dashed_line(frame,  x, y2,  x,  y, color, thickness, dash, gap)
+def _detect_motion_in_roi(
+    background: np.ndarray,
+    current:    np.ndarray,
+    roi:        Tuple[int, int, int, int],
+    margin:     int = DETECTION_MARGIN,
+    min_area:   int = MIN_MOTION_AREA,
+) -> Optional[Tuple[int, int, int, int]]:
+    """
+    Frame-difference motion detector restricted to roi (+margin).
 
+    Returns a bounding box (x, y, w, h) in full-frame coordinates,
+    or None if no significant motion is found.
+    """
+    fh, fw = current.shape[:2]
+    rx, ry, rw, rh = roi
 
-def _fill_alpha(
-    frame: np.ndarray,
-    x: int, y: int, w: int, h: int,
-    color: Tuple, alpha: float = 0.15,
-) -> None:
-    overlay = frame.copy()
-    cv2.rectangle(overlay, (x, y), (x + w, y + h), color, cv2.FILLED)
-    cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
+    # Expand search window by margin (clamped to frame bounds)
+    sx = max(0, rx - margin)
+    sy = max(0, ry - margin)
+    ex = min(fw, rx + rw + margin)
+    ey = min(fh, ry + rh + margin)
 
+    bg_crop  = background[sy:ey, sx:ex]
+    cur_crop = current[sy:ey, sx:ex]
 
-def _corner_brackets(
-    frame: np.ndarray,
-    x: int, y: int, w: int, h: int,
-    color: Tuple, arm: int = 20, thickness: int = 2,
-) -> None:
-    x2, y2 = x + w, y + h
-    for (ax, ay), (bx, by), (cx, cy) in [
-        ((x + arm, y),     (x, y),     (x,  y + arm)),
-        ((x2 - arm, y),    (x2, y),    (x2, y + arm)),
-        ((x, y2 - arm),    (x, y2),    (x + arm, y2)),
-        ((x2, y2 - arm),   (x2, y2),   (x2 - arm, y2)),
-    ]:
-        cv2.line(frame, (ax, ay), (bx, by), color, thickness, cv2.LINE_AA)
-        cv2.line(frame, (bx, by), (cx, cy), color, thickness, cv2.LINE_AA)
+    diff  = cv2.absdiff(bg_crop, cur_crop)
+    gray  = cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY)
+    blur  = cv2.GaussianBlur(gray, (21, 21), 0)
+    _, thresh = cv2.threshold(blur, 18, 255, cv2.THRESH_BINARY)
 
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+    thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
 
-def _label(
-    frame: np.ndarray,
-    text: str, x: int, y: int,
-    color: Tuple,
-    scale: float = 0.44, thick: int = 1, pad: int = 3,
-) -> None:
-    (tw, th), _ = cv2.getTextSize(text, _FONT, scale, thick)
-    fh, fw = frame.shape[:2]
-    x = max(pad, min(x, fw - tw - pad - 2))
-    y = max(th + pad + 2, min(y, fh - pad - 2))
-    cv2.rectangle(frame, (x - pad, y - th - pad), (x + tw + pad, y + pad),
-                  (0, 0, 0), cv2.FILLED)
-    cv2.putText(frame, text, (x, y), _FONT, scale, color, thick, cv2.LINE_AA)
-
-
-def _pulse(base: Tuple, period: float = 1.2, lo: float = 0.55, hi: float = 1.0) -> Tuple:
-    f = lo + (hi - lo) * (0.5 + 0.5 * math.sin(2 * math.pi * time.time() / period))
-    return tuple(min(255, int(c * f)) for c in base)
-
-
-# ══════════════════════════════════════════════════════════
-# ROI file loader
-# ══════════════════════════════════════════════════════════
-
-_roi_cache: Optional[Dict[int, Tuple]] = None
-_roi_lock  = threading.Lock()
-
-
-def _ensure_cache() -> None:
-    global _roi_cache
-    if _roi_cache is not None:
-        return
-    roi_file = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        "tools", "rois_top.json",
+    contours, _ = cv2.findContours(
+        thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
     )
-    if not os.path.exists(roi_file):
-        logger.warning(f"[Tracker] rois_top.json not found at {roi_file}")
-        _roi_cache = {}
-        return
-    try:
-        with open(roi_file) as f:
-            data = json.load(f)
-        _roi_cache = {i: tuple(int(v) for v in r) for i, r in enumerate(data)}
-        logger.info(f"[Tracker] Loaded {len(_roi_cache)} top-cam ROIs from {roi_file}")
-    except Exception as e:
-        logger.error(f"[Tracker] Failed to load rois_top.json: {e}")
-        _roi_cache = {}
+    if not contours:
+        return None
+
+    largest = max(contours, key=cv2.contourArea)
+    if cv2.contourArea(largest) < min_area:
+        return None
+
+    bx, by, bw, bh = cv2.boundingRect(largest)
+    # Convert crop-local coords back to full-frame coords
+    return (sx + bx, sy + by, bw, bh)
 
 
-def _load_top_roi(lid: int) -> Optional[Tuple]:
-    with _roi_lock:
-        _ensure_cache()
-        return _roi_cache.get(lid)
-
-
-def load_all_top_rois() -> Dict[int, Tuple]:
-    with _roi_lock:
-        _ensure_cache()
-        return dict(_roi_cache) if _roi_cache else {}
-
-
-# ══════════════════════════════════════════════════════════
-# Overlay factories
-# ══════════════════════════════════════════════════════════
-
-def make_dvw_context_overlay(
-    all_rois:   Dict[int, Tuple],
-    source_lid: Optional[int],
-    dest_lid:   int,
-) -> Callable[[np.ndarray], None]:
-    """
-    DVW operation context (deposit or verify).
-    • Dim gray reference grid for all other slots.
-    • Source slot: orange dashed rect + label (verify only).
-    • Destination: yellow pulsing dashed rect + corner brackets + arrow + label.
-    """
-    def draw(frame: np.ndarray) -> None:
-        for lid, (rx, ry, rw, rh) in all_rois.items():
-            if lid in (dest_lid, source_lid):
-                continue
-            cv2.rectangle(frame, (rx, ry), (rx + rw, ry + rh), _COL_GRID, 1)
-            _label(frame, str(lid + 1), rx + 3, ry + 14,
-                   _COL_GRID, scale=0.33, thick=1)
-
-        if source_lid is not None and source_lid in all_rois:
-            rx, ry, rw, rh = all_rois[source_lid]
-            _fill_alpha(frame, rx, ry, rw, rh, _COL_SOURCE, 0.12)
-            _draw_dashed_rect(frame, rx, ry, rw, rh, _COL_SOURCE, 2)
-            _label(frame, f"FROM  slot {source_lid + 1}",
-                   rx + 4, ry + rh - 6, _COL_SOURCE)
-
-        if dest_lid in all_rois:
-            rx, ry, rw, rh = all_rois[dest_lid]
-            col = _pulse(_COL_DEST_BASE)
-            _fill_alpha(frame, rx, ry, rw, rh, col, 0.13)
-            _draw_dashed_rect(frame, rx, ry, rw, rh, col, 2)
-            _corner_brackets(frame, rx, ry, rw, rh, col, arm=min(20, rw // 4, rh // 4))
-            cx, cy = rx + rw // 2, ry + rh // 2
-            cv2.arrowedLine(frame, (cx, cy - 16), (cx, cy + 16),
-                            col, 2, cv2.LINE_AA, tipLength=0.35)
-            _label(frame, f"\u25BC  SLOT {dest_lid + 1}  \u2014  PLACE HERE",
-                   rx + 4, ry + rh + 17, col)
-
-    return draw
-
-
-def make_admin_session_overlay(
-    all_slot_rois: Dict[int, Tuple],
-    staging_rois:  List[Tuple],
-    staged_pids:   List[Optional[str]],
-    source_lid:    Optional[int] = None,
-    dest_lid:      Optional[int] = None,
-) -> Callable[[np.ndarray], None]:
-    """
-    Admin resolution session context overlay.
-
-    • Dim gray reference grid (all slots not currently active).
-    • Staging zones — dashed when empty, solid fill when occupied.
-    • Source slot  — orange dashed + "FROM slot N".
-    • Destination  — yellow pulsing + corner brackets + "PLACE HERE".
-    • Same-slot    — orange with corner brackets + "RETURN HERE".
-    """
-    _staging = list(staging_rois)
-    _pids    = list(staged_pids)
-
-    def draw(frame: np.ndarray) -> None:
-        skip = set()
-        if source_lid is not None:
-            skip.add(source_lid)
-        if dest_lid is not None:
-            skip.add(dest_lid)
-
-        # 1. Background grid
-        for lid, (rx, ry, rw, rh) in all_slot_rois.items():
-            if lid in skip:
-                continue
-            cv2.rectangle(frame, (rx, ry), (rx + rw, ry + rh), _COL_GRID, 1)
-            _label(frame, str(lid + 1), rx + 3, ry + 14,
-                   _COL_GRID, scale=0.33, thick=1)
-
-        # 2. Staging zones
-        for i, roi in enumerate(_staging):
-            if not roi or len(roi) < 4:
-                continue
-            rx, ry, rw, rh = roi
-            pid      = _pids[i] if i < len(_pids) else None
-            occupied = pid is not None
-            col_e    = _COL_STAGING_EMPTY[i % len(_COL_STAGING_EMPTY)]
-            col_o    = _COL_STAGING_OCC[i % len(_COL_STAGING_OCC)]
-            col      = col_o if occupied else col_e
-            name     = f"STAGING {i + 1}"
-            if occupied:
-                _fill_alpha(frame, rx, ry, rw, rh, col, 0.22)
-                cv2.rectangle(frame, (rx, ry), (rx + rw, ry + rh), col, 3)
-                tail = pid[-8:] if pid and len(pid) > 8 else (pid or "")
-                _label(frame, f"\u25CF {name}  [{tail}]",
-                       rx + 4, ry + rh // 2 + 7, col)
-            else:
-                _draw_dashed_rect(frame, rx, ry, rw, rh, col, 2, dash=14, gap=6)
-                _label(frame, f"\u25CB {name}  \u2014  empty",
-                       rx + 4, ry + rh // 2 + 7, col)
-
-        # 3. Source slot
-        if source_lid is not None and source_lid in all_slot_rois:
-            rx, ry, rw, rh = all_slot_rois[source_lid]
-            same  = (source_lid == dest_lid)
-            col   = _COL_SOURCE
-            _fill_alpha(frame, rx, ry, rw, rh, col, 0.11)
-            _draw_dashed_rect(frame, rx, ry, rw, rh, col, 2)
-            label = f"FROM  slot {source_lid + 1}" + (" \u2194 RETURN HERE" if same else "")
-            _label(frame, label, rx + 4, ry + rh - 6, col)
-            if same:
-                _corner_brackets(frame, rx, ry, rw, rh, col,
-                                  arm=min(20, rw // 4, rh // 4))
-
-        # 4. Destination slot (skip if same as source)
-        if dest_lid is not None and dest_lid in all_slot_rois and dest_lid != source_lid:
-            rx, ry, rw, rh = all_slot_rois[dest_lid]
-            col = _pulse(_COL_DEST_BASE)
-            _fill_alpha(frame, rx, ry, rw, rh, col, 0.13)
-            _draw_dashed_rect(frame, rx, ry, rw, rh, col, 2)
-            _corner_brackets(frame, rx, ry, rw, rh, col,
-                              arm=min(20, rw // 4, rh // 4))
-            cx, cy = rx + rw // 2, ry + rh // 2
-            cv2.arrowedLine(frame, (cx, cy - 16), (cx, cy + 16),
-                            col, 2, cv2.LINE_AA, tipLength=0.35)
-            _label(frame, f"\u25BC  SLOT {dest_lid + 1}  \u2014  PLACE HERE",
-                   rx + 4, ry + rh + 17, col)
-
-    return draw
-
-
-# ══════════════════════════════════════════════════════════
-# PhoneTracker
-# ══════════════════════════════════════════════════════════
+# ── PhoneTracker ──────────────────────────────────────────────────────────────
 
 class PhoneTracker:
     """
-    Tracks a phone from QR-scan-success to slot-placement.
+    Tracks a phone on the top-down camera and auto-confirms placement.
 
-    Draws only the bounding box and QR status via _tracker_overlay.
-    The static context (dest, source, grid, staging) is drawn by
-    _context_overlay, set in ops_handler before this tracker starts.
+    Thread safety
+    ─────────────
+    All callbacks are invoked from the tracker thread.  If you need to
+    emit SocketIO events from them, use socketio.emit() directly (it is
+    thread-safe) or schedule via the Flask-SocketIO background task API.
 
-    QR check runs every _QR_CHECK_EVERY_N frames to reduce pyzbar CPU.
+    At most one PhoneTracker should be active at a time per top_camera.
+    ops_handler ensures this by always cancelling the current operation
+    (via cancel_event) before starting a new one.
     """
 
     def __init__(
         self,
-        pid:              str,
-        lid:              int,
-        slot_roi:         Tuple,
-        background_frame: np.ndarray,
-        cancel_event:     threading.Event,
-        socketio,
-        client_id:        str,
+        target_roi:        Tuple[int, int, int, int],
+        cancel_event:      threading.Event,
+        background_frame:  Optional[np.ndarray]    = None,
+        on_detected:       Optional[Callable]      = None,
+        on_progress:       Optional[Callable]      = None,
+        on_confirmed:      Optional[Callable]      = None,
+        on_timeout:        Optional[Callable]      = None,
+        on_failed:         Optional[Callable]      = None,
+        stable_frames:     int                     = STABLE_FRAMES,
+        overlap_threshold: float                   = OVERLAP_THRESHOLD,
+        detect_timeout:    float                   = DETECT_TIMEOUT,
+        track_timeout:     float                   = TRACK_TIMEOUT,
     ):
-        self._pid              = pid
-        self._lid              = lid
-        self._slot_roi         = slot_roi
-        self._bg               = background_frame
-        self._cancel_event     = cancel_event
-        self._socketio         = socketio
-        self._client_id        = client_id
-        self._bbox:            Optional[Tuple] = None
-        self._qr_visible:      bool = True
-        self._on_success:      Optional[Callable] = None
-        self._on_failure:      Optional[Callable] = None
+        self._target_roi        = target_roi
+        self._cancel_event      = cancel_event
+        self._background        = background_frame
 
-    def start(self, on_success: Callable, on_failure: Callable) -> None:
-        self._on_success = on_success
-        self._on_failure = on_failure
-        t = threading.Thread(
-            target=self._run, daemon=True,
-            name=f"PhoneTracker-{self._pid[:8]}-lid{self._lid}",
+        # Callbacks — default to no-ops so callers only need to pass what they use
+        self._on_detected       = on_detected   or (lambda bbox: None)
+        self._on_progress       = on_progress   or (lambda bbox, overlap: None)
+        self._on_confirmed      = on_confirmed  or (lambda: None)
+        self._on_timeout        = on_timeout    or (lambda: None)
+        self._on_failed         = on_failed     or (lambda reason: None)
+
+        self._stable_frames     = stable_frames
+        self._overlap_threshold = overlap_threshold
+        self._detect_timeout    = detect_timeout
+        self._track_timeout     = track_timeout
+
+        self._thread: Optional[threading.Thread] = None
+        self._running = False
+
+    # ── Lifecycle ─────────────────────────────────────────────────────────────
+
+    def start(self) -> None:
+        """Spawn tracker daemon thread. Returns immediately."""
+        if self._running:
+            logger.warning("[PhoneTracker] start() called while already running")
+            return
+        self._running = True
+        self._thread = threading.Thread(
+            target=self._run, daemon=True, name="PhoneTracker"
         )
-        t.start()
+        self._thread.start()
+        logger.info("[PhoneTracker] Started")
+
+    def stop(self) -> None:
+        """Signal abort and wait up to 2 s for the thread to exit."""
+        self._running = False
+        self._cancel_event.set()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=2.0)
+        logger.info("[PhoneTracker] Stopped")
+
+    def is_running(self) -> bool:
+        return self._running and (
+            self._thread is not None and self._thread.is_alive()
+        )
+
+    # ── Main ──────────────────────────────────────────────────────────────────
 
     def _run(self) -> None:
         from back_end.slot_monitor.camera.top_camera import top_camera
+
         try:
-            logger.info(
-                f"[Tracker] PID={self._pid} LID={self._lid} — "
-                f"detecting phone (timeout={DETECT_TIMEOUT}s)"
-            )
-            bbox = self._detect_phone(top_camera)
-            if bbox is None:
-                reason = "cancelled" if self._cancel_event.is_set() else "detect_timeout"
-                self._fail(reason, top_camera)
-                return
+            init_bbox = self._phase_detect(top_camera)
+            if init_bbox is None:
+                return  # callbacks already fired in the phase
 
-            frame = top_camera.get_frame()
-            if frame is None:
-                self._fail("detect_timeout", top_camera)
-                return
-
-            tracker = cv2.TrackerCSRT_create()
-            tracker.init(frame, bbox)
-            self._bbox = bbox
-            top_camera.set_tracker_overlay(self._draw_overlay)
-            logger.info(f"[Tracker] CSRT initialised at bbox={bbox}")
-            self._track(tracker, top_camera)
+            confirmed = self._phase_track(top_camera, init_bbox)
+            if confirmed:
+                logger.info("[PhoneTracker] ✓ Placement confirmed")
+                self._on_confirmed()
 
         except Exception as e:
-            logger.error(f"[Tracker] Unexpected error: {e}", exc_info=True)
-            try:
-                from back_end.slot_monitor.camera.top_camera import top_camera as tc
-                tc.clear_tracker_overlay()
-            except Exception:
-                pass
-            if self._on_failure:
-                self._on_failure("error")
+            logger.error(f"[PhoneTracker] Unexpected error: {e}", exc_info=True)
+            self._on_failed(f"internal_error: {e}")
+        finally:
+            from back_end.slot_monitor.camera.top_camera import top_camera
+            top_camera.clear_tracker_overlay()
+            self._running = False
 
-    def _detect_phone(self, top_camera) -> Optional[Tuple]:
-        bg_gray = cv2.cvtColor(self._bg, cv2.COLOR_BGR2GRAY)
-        bg_blur = cv2.GaussianBlur(bg_gray, (DIFF_BLUR_KERNEL, DIFF_BLUR_KERNEL), 0)
-        deadline = time.time() + DETECT_TIMEOUT
+    # ── Phase 1: motion detection ─────────────────────────────────────────────
 
-        while time.time() < deadline:
+    def _phase_detect(
+        self, cam
+    ) -> Optional[Tuple[int, int, int, int]]:
+        """
+        Wait for the phone to appear in (or near) the target ROI.
+
+        We restrict detection to the target ROI + margin so the user's
+        hand or other motion outside the target area doesn't trigger a
+        false start.
+
+        Returns the initial bounding box in full-frame coordinates,
+        or None if detection timed out / was cancelled.
+        """
+        deadline      = time.time() + self._detect_timeout
+        frame_interval = 1.0 / TARGET_FPS
+        background     = self._background   # may be None → captured lazily
+
+        while time.time() < deadline and self._running:
             if self._cancel_event.is_set():
                 return None
-            if not top_camera.wait_for_frame(timeout=0.05):
+
+            t0 = time.time()
+
+            if not cam.wait_for_frame(timeout=0.08):
                 continue
-            frame = top_camera.get_frame()
-            top_camera.clear_frame_event()
+
+            frame = cam.get_frame()
+            cam.clear_frame_event()
             if frame is None:
                 continue
 
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            blur = cv2.GaussianBlur(gray, (DIFF_BLUR_KERNEL, DIFF_BLUR_KERNEL), 0)
-            diff = cv2.absdiff(bg_blur, blur)
-            _, thr = cv2.threshold(diff, DIFF_THRESHOLD, 255, cv2.THRESH_BINARY)
-            thr = cv2.dilate(thr, None, iterations=DILATE_ITERS)
-
-            contours, _ = cv2.findContours(
-                thr, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            if not contours:
+            # Capture lazy background from first real frame
+            if background is None:
+                background = frame.copy()
+                self._background = background
+                sleep = frame_interval - (time.time() - t0)
+                if sleep > 0:
+                    time.sleep(sleep)
                 continue
-            largest = max(contours, key=cv2.contourArea)
-            if cv2.contourArea(largest) < MIN_PHONE_AREA:
-                continue
-            x, y, w, h = cv2.boundingRect(largest)
-            return (x, y, w, h)
 
+            bbox = _detect_motion_in_roi(
+                background, frame, self._target_roi
+            )
+            if bbox is not None:
+                logger.info(f"[PhoneTracker] Motion detected: bbox={bbox}")
+                self._on_detected(bbox)
+                return bbox
+
+            sleep = frame_interval - (time.time() - t0)
+            if sleep > 0:
+                time.sleep(sleep)
+
+        # Timed out or cancelled
+        if self._running and not self._cancel_event.is_set():
+            logger.warning("[PhoneTracker] Detection timeout — no motion seen")
+            self._on_timeout()
         return None
 
-    def _track(self, tracker, top_camera) -> None:
-        deadline      = time.time() + PLACEMENT_TIMEOUT
-        last_qr_seen  = time.time()
-        last_emit     = 0.0
-        frame_count   = 0   # for QR frame-skip
+    # ── Phase 2: CSRT tracking ────────────────────────────────────────────────
 
-        while time.time() < deadline:
+    def _phase_track(
+        self, cam, init_bbox: Tuple[int, int, int, int]
+    ) -> bool:
+        """
+        CSRT-track the phone and confirm when it is stable inside the target ROI.
+
+        Returns True if placement was confirmed, False otherwise.
+        Fires on_timeout or on_failed (never both) before returning False.
+        """
+        from back_end.slot_monitor.camera.top_camera import top_camera as _tc
+
+        # Initialise tracker on the latest available frame
+        frame = cam.get_frame()
+        if frame is None:
+            self._on_failed("no_frame_for_csrt_init")
+            return False
+
+        tracker = cv2.TrackerCSRT_create()
+        tracker.init(frame, init_bbox)
+
+        stable_count = 0
+        lost_count   = 0
+        deadline      = time.time() + self._track_timeout
+        frame_interval = 1.0 / TARGET_FPS
+
+        while time.time() < deadline and self._running:
             if self._cancel_event.is_set():
-                self._fail("cancelled", top_camera)
-                return
+                return False
 
-            if not top_camera.wait_for_frame(timeout=0.05):
+            t0 = time.time()
+
+            if not cam.wait_for_frame(timeout=0.08):
                 continue
-            frame = top_camera.get_frame()
-            top_camera.clear_frame_event()
+
+            frame = cam.get_frame()
+            cam.clear_frame_event()
             if frame is None:
                 continue
 
-            fh, fw = frame.shape[:2]
-            ok, raw = tracker.update(frame)
+            ok, raw_bbox = tracker.update(frame)
+
             if not ok:
-                self._fail("out_of_frame", top_camera)
-                return
+                lost_count += 1
+                stable_count = 0
 
-            bx, by, bw, bh = (int(v) for v in raw)
-            if bx + bw <= 0 or bx >= fw or by + bh <= 0 or by >= fh:
-                self._fail("out_of_frame", top_camera)
-                return
+                if lost_count >= LOST_TRACK_LIMIT:
+                    logger.warning("[PhoneTracker] Track lost — too many failures")
+                    _tc.set_tracker_overlay(_draw_lost_overlay)
+                    self._on_failed("tracking_lost")
+                    return False
 
-            self._bbox = (bx, by, bw, bh)
+                _tc.set_tracker_overlay(_draw_lost_overlay)
 
-            if self._centre_in_roi(bx, by, bw, bh):
-                top_camera.clear_tracker_overlay()
-                logger.info(f"[Tracker] PID={self._pid} reached slot {self._lid}")
-                if self._on_success:
-                    self._on_success()
-                return
+                sleep = frame_interval - (time.time() - t0)
+                if sleep > 0:
+                    time.sleep(sleep)
+                continue
 
-            # QR check — every Nth frame only
-            frame_count += 1
-            if frame_count % _QR_CHECK_EVERY_N == 0:
-                qr_now = self._check_qr(frame)
-                if qr_now:
-                    last_qr_seen = time.time()
-                self._qr_visible = qr_now
+            lost_count = 0
+            bbox = tuple(int(v) for v in raw_bbox)
+            overlap = _iou(bbox, self._target_roi)
 
-            qr_absent = time.time() - last_qr_seen
-            if qr_absent > QR_LOST_TIMEOUT:
-                self._fail("qr_lost", top_camera)
-                return
+            # Build overlay with current state (closure captures snapshot)
+            _tc.set_tracker_overlay(
+                _make_bbox_overlay(bbox, overlap, stable_count, self._stable_frames)
+            )
 
-            now = time.time()
-            if now - last_emit > 0.5:
-                self._emit_update(self._qr_visible, False, qr_absent)
-                last_emit = now
+            self._on_progress(bbox, overlap)
 
-        self._fail("timeout", top_camera)
-
-    def _centre_in_roi(self, bx, by, bw, bh) -> bool:
-        cx, cy = bx + bw // 2, by + bh // 2
-        rx, ry, rw, rh = self._slot_roi
-        return rx <= cx <= rx + rw and ry <= cy <= ry + rh
-
-    def _check_qr(self, frame: np.ndarray) -> bool:
-        try:
-            for obj in decode(frame.copy()):
-                raw = obj.data.decode("utf-8", errors="ignore").strip()
-                if raw.startswith("PID:"):
-                    raw = raw[4:]
-                if raw.isdigit() and str(int(raw)) == self._pid:
+            if overlap >= self._overlap_threshold:
+                stable_count += 1
+                if stable_count >= self._stable_frames:
+                    _tc.clear_tracker_overlay()
                     return True
-        except Exception:
-            pass
+            else:
+                stable_count = max(0, stable_count - 1)   # decay, not instant reset
+
+            sleep = frame_interval - (time.time() - t0)
+            if sleep > 0:
+                time.sleep(sleep)
+
+        if self._running and not self._cancel_event.is_set():
+            self._on_timeout()
         return False
 
-    def _fail(self, reason: str, top_camera=None) -> None:
-        if top_camera is not None:
-            top_camera.clear_tracker_overlay()
-        logger.warning(f"[Tracker] PID={self._pid} LID={self._lid} failed: {reason}")
-        if self._on_failure:
-            self._on_failure(reason)
 
-    def _emit_update(self, qr_visible, in_roi, qr_absent) -> None:
-        try:
-            self._socketio.emit(
-                "tracking_update",
-                {"pid": self._pid, "lid": self._lid,
-                 "qr_visible": qr_visible, "in_roi": in_roi,
-                 "qr_absent": round(qr_absent, 1)},
-                to=self._client_id, namespace="/",
+# ── Overlay draw functions ────────────────────────────────────────────────────
+
+def _draw_lost_overlay(frame: np.ndarray) -> None:
+    cv2.putText(
+        frame, "Re-locating phone...", (16, 40),
+        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 60, 255), 2, cv2.LINE_AA,
+    )
+
+
+def _make_bbox_overlay(
+    bbox:         Tuple[int, int, int, int],
+    overlap:      float,
+    stable_count: int,
+    stable_total: int,
+) -> Callable[[np.ndarray], None]:
+    """Return a draw callable that captures the current tracking state."""
+    _b = bbox
+    _ov = overlap
+    _sc = stable_count
+    _st = stable_total
+
+    def _draw(frame: np.ndarray) -> None:
+        x, y, w, h = _b
+        pct = min(100, int(_sc / _st * 100)) if _st > 0 else 0
+
+        # Colour transitions green as confirmation approaches
+        g = int(50 + 205 * pct / 100)
+        r = int(255 * (1 - pct / 100))
+        color = (0, g, r)
+
+        # Bounding box
+        cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
+
+        # Overlap percentage label
+        label = f"IoU {int(_ov * 100)}%  stable {pct}%"
+        (tw, th), _ = cv2.getTextSize(
+            label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1
+        )
+        ly = max(y - 6, th + 4)
+        cv2.rectangle(
+            frame, (x - 1, ly - th - 3), (x + tw + 2, ly + 3),
+            (0, 0, 0), cv2.FILLED,
+        )
+        cv2.putText(
+            frame, label, (x, ly),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA,
+        )
+
+        # Horizontal progress bar beneath the bbox
+        bar_y = y + h + 5
+        bar_w = w
+        filled = int(bar_w * pct / 100)
+        cv2.rectangle(frame, (x, bar_y), (x + bar_w, bar_y + 6), (40, 40, 40), cv2.FILLED)
+        if filled > 0:
+            cv2.rectangle(frame, (x, bar_y), (x + filled, bar_y + 6), color, cv2.FILLED)
+        cv2.rectangle(frame, (x, bar_y), (x + bar_w, bar_y + 6), color, 1)
+
+    return _draw
+
+
+# ── Context overlay factories ─────────────────────────────────────────────────
+
+def make_operation_context_overlay(
+    slot_rois:  Dict[int, Tuple[int, int, int, int]],
+    target_lid: Optional[int] = None,
+    source_lid: Optional[int] = None,
+) -> Callable[[np.ndarray], None]:
+    """
+    Context overlay for deposit / withdraw / verify operations.
+
+    Draws:
+      • Dim grey grid for all non-participating slots (reference)
+      • Yellow outline for the source slot (phone being removed from here)
+      • Pulsing green fill + corner brackets for the target slot
+    """
+    _rois   = dict(slot_rois)
+    _target = target_lid
+    _source = source_lid
+    _t0     = time.time()
+
+    def _draw(frame: np.ndarray) -> None:
+        # 1. Dim all non-participating slots
+        for lid, (x, y, w, h) in _rois.items():
+            if lid in (_target, _source):
+                continue
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (55, 55, 55), 1)
+            cv2.putText(
+                frame, str(lid), (x + 3, y + 13),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.38, (70, 70, 70), 1, cv2.LINE_AA,
             )
-        except Exception as e:
-            logger.debug(f"[Tracker] emit tracking_update failed: {e}")
 
-    def _draw_overlay(self, frame: np.ndarray) -> None:
-        bbox = self._bbox
-        if bbox is None:
-            return
-        bx, by, bw, bh = bbox
-        col = _COL_BBOX_OK if self._qr_visible else _COL_BBOX_WARN
+        # 2. Source slot — yellow
+        if _source is not None and _source in _rois:
+            x, y, w, h = _rois[_source]
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 200, 200), 2)
+            _label_box(frame, f"FROM {_source}", x, y, (0, 200, 200))
 
-        cv2.rectangle(frame, (bx, by), (bx + bw, by + bh), col, 2)
+        # 3. Target slot — pulsing green + corner brackets
+        if _target is not None and _target in _rois:
+            x, y, w, h = _rois[_target]
+            pulse = int(100 + 100 * np.sin((time.time() - _t0) * 4.0))
+            color = (0, 180 + pulse // 3, 0)
 
-        arm = max(6, min(14, bw // 5, bh // 5))
-        for (ax, ay), (cx, cy) in [
-            ((bx + arm,    by),        (bx,    by + arm)),
-            ((bx+bw-arm,   by),        (bx+bw, by + arm)),
-            ((bx,          by+bh-arm), (bx+arm,    by+bh)),
-            ((bx+bw,       by+bh-arm), (bx+bw-arm, by+bh)),
-        ]:
-            left = ax < bx + bw // 2
-            ex = bx if left else bx + bw
-            cv2.line(frame, (ax, ay), (ex, ay), col, 2)
-            cv2.line(frame, (ex, ay), (ex, cy), col, 2)
+            # Semi-transparent fill
+            ov = frame.copy()
+            cv2.rectangle(ov, (x, y), (x + w, y + h), color, cv2.FILLED)
+            cv2.addWeighted(ov, 0.12, frame, 0.88, 0, frame)
 
-        qr_text = "QR \u2713 visible" if self._qr_visible else "QR \u2717  KEEP VISIBLE!"
-        _label(frame, qr_text, bx, by + bh + 16, col)
-        _label(frame, "TRACKING \u2014 move phone to target slot",
-               8, frame.shape[0] - 8, _COL_TEXT)
+            # Outline
+            cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
+
+            # Corner bracket decorations
+            sz = min(w, h) // 5
+            for (cx, cy, dx, dy) in [
+                (x,     y,     1,  1),
+                (x + w, y,    -1,  1),
+                (x,     y + h, 1, -1),
+                (x + w, y + h, -1, -1),
+            ]:
+                cv2.line(frame, (cx, cy), (cx + dx * sz, cy), color, 3)
+                cv2.line(frame, (cx, cy), (cx, cy + dy * sz), color, 3)
+
+            _label_box(frame, f"SLOT {_target}", x, y, color)
+
+    return _draw
 
 
-# ══════════════════════════════════════════════════════════
-# Public convenience
-# ══════════════════════════════════════════════════════════
-
-def create_tracker_for_operation(op, socketio) -> Optional[PhoneTracker]:
+def make_staging_context_overlay(
+    staging_rois: List[Tuple[int, int, int, int]],
+    staged_pids:  Dict[str, int],
+    slot_rois:    Optional[Dict[int, Tuple[int, int, int, int]]] = None,
+) -> Callable[[np.ndarray], None]:
     """
-    Build a PhoneTracker from an Operation object.
+    Admin staging overlay with per-zone occupancy colours.
 
-    If op.background_frame is None (race condition — camera not yet warm),
-    waits up to 300 ms for a fresh frame before giving up.
-    Returns None if background frame or slot ROI is unavailable.
+    staged_pids: {pid: zone_index}  — which zone each staged phone is in.
+    slot_rois:   optional reference grid (drawn dim).
     """
-    from back_end.slot_monitor.camera.top_camera import top_camera
+    _staging = list(staging_rois)
+    _staged  = dict(staged_pids)
+    _slots   = dict(slot_rois) if slot_rois else {}
 
-    if op.background_frame is None:
-        top_camera.wait_for_frame(timeout=0.3)
-        op.background_frame = top_camera.get_frame()
+    ZONE_COLORS: List[Tuple[int, int, int]] = [
+        (255, 140,   0),   # zone 0 — amber
+        (  0, 140, 255),   # zone 1 — blue
+    ]
+    ZONE_NAMES = ["STAGING 1", "STAGING 2"]
 
-    if op.background_frame is None:
-        logger.warning(
-            f"[Tracker] No background frame for PID={op.pid} lid={op.lid} "
-            "— top camera may not have started"
-        )
-        return None
+    def _draw(frame: np.ndarray) -> None:
+        # Reference slot grid (very dim)
+        for lid, (x, y, w, h) in _slots.items():
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (35, 35, 35), 1)
 
-    slot_roi = _load_top_roi(op.lid)
-    if slot_roi is None:
-        all_keys = list(_roi_cache.keys()) if _roi_cache else "cache empty"
-        logger.warning(
-            f"[Tracker] No top-cam ROI for lid={op.lid} "
-            f"(available: {all_keys}) — run roi_calibration.py"
-        )
-        return None
+        # Build per-zone occupancy count
+        counts = [0] * len(_staging)
+        for pid, zone_idx in _staged.items():
+            if 0 <= zone_idx < len(counts):
+                counts[zone_idx] += 1
 
-    return PhoneTracker(
-        pid              = op.pid,
-        lid              = op.lid,
-        slot_roi         = slot_roi,
-        background_frame = op.background_frame,
-        cancel_event     = op.cancel_event,
-        socketio         = socketio,
-        client_id        = op.client_id,
+        for i, (x, y, w, h) in enumerate(_staging):
+            color = ZONE_COLORS[i % len(ZONE_COLORS)]
+            occupied = counts[i] > 0
+
+            if occupied:
+                ov = frame.copy()
+                cv2.rectangle(ov, (x, y), (x + w, y + h), color, cv2.FILLED)
+                cv2.addWeighted(ov, 0.18, frame, 0.82, 0, frame)
+                cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
+                label = f"{ZONE_NAMES[i]}  ({counts[i]})"
+            else:
+                dim = tuple(max(0, c // 2) for c in color)
+                cv2.rectangle(frame, (x, y), (x + w, y + h), dim, 1)
+                label = ZONE_NAMES[i]
+
+            _label_box(frame, label, x, y, color if occupied else
+                       tuple(max(0, c // 2) for c in color))
+
+    return _draw
+
+
+# ── Utility ───────────────────────────────────────────────────────────────────
+
+def _label_box(
+    frame: np.ndarray,
+    text:  str,
+    x:     int,
+    y:     int,
+    color: Tuple[int, int, int],
+    font_scale: float = 0.45,
+) -> None:
+    """Draw a text label with a black background just above (x, y)."""
+    (tw, th), _ = cv2.getTextSize(
+        text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 1
+    )
+    ly = max(y - 4, th + 4)
+    cv2.rectangle(
+        frame, (x - 1, ly - th - 3), (x + tw + 2, ly + 3),
+        (0, 0, 0), cv2.FILLED,
+    )
+    cv2.putText(
+        frame, text, (x, ly),
+        cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, 1, cv2.LINE_AA,
     )

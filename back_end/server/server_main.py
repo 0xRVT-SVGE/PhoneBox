@@ -176,7 +176,22 @@ if __name__ == "__main__":
         )
 
     from back_end.slot_monitor.tools.roi_calibration import run_calibration
+
+    # Stop top_camera before calibration so roi_calibration.py gets exclusive
+    # access to camera 2.  On Windows the MSMF/DirectShow backends do not
+    # allow two simultaneous opens of the same device index; if top_camera
+    # holds cam 2 while calibration tries to open it, one of them gets
+    # -1072873821 (MF_E_HW_MFT_FAILED_START_STREAMING) and grabs fail.
+    # top_camera is restarted immediately after calibration completes — the
+    # rolling buffer resumes and frames fill again before the slot monitor
+    # (which also needs cam 2 via WebRTC) has started.
+    logger.info("Stopping top camera for ROI calibration (exclusive cam 2 access)")
+    top_camera.stop()
+
     run_calibration(num_lids)     # blocks until operator confirms both windows
+
+    logger.info("ROI calibration complete — restarting top camera")
+    top_camera.start()            # idempotent; also restarts top_rolling_buffer
 
     # 7. Slot monitor (reads rois_bottom.json written by step 6)
     slot_monitor = get_slot_monitor()
