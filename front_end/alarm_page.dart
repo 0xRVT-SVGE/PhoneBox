@@ -38,6 +38,11 @@ class _AlarmPageState extends State<AlarmPage>
   bool _disposed = false;
   bool _resolutionInProgress = false;
 
+  // Tracks the async pre-connect started in initState.
+  // _onAuthSuccess waits for this before opening AdminResolutionPage so
+  // _adminPc is guaranteed to be set (or cleanly failed) — no race condition.
+  Future<void>? _preConnectFuture;
+
   late AnimationController _pulseCtrl;
   late Animation<double> _pulseAnim;
 
@@ -74,7 +79,12 @@ class _AlarmPageState extends State<AlarmPage>
       CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut),
     );
 
-    _adminRenderer.initialize();
+    // Pre-connect the admin top-camera stream so ICE negotiation runs
+    // while the user reads the mismatch list and types their password.
+    // The result Future is stored so _onAuthSuccess can wait for it —
+    // this prevents the race condition where _detachAdminPc() runs before
+    // _startAdminVideo() has finished setting _adminPc.
+    _preConnectFuture = _adminRenderer.initialize().then((_) => _startAdminVideo());
     _connectSocket();
   }
 
@@ -141,6 +151,13 @@ class _AlarmPageState extends State<AlarmPage>
 
   RTCPeerConnection? _detachAdminPc() {
     final pc = _adminPc;
+    // Clear callbacks BEFORE nulling _adminPc.  If we don't, the
+    // onConnectionState handler (which calls _startAdminVideo again) could
+    // fire after we hand the PC to AdminResolutionPage and AdminResolutionPage
+    // calls cancelAdmin() — triggering an infinite reconnect loop on AlarmPage
+    // that competes with AdminResolutionPage's own connection.
+    _adminPc?.onTrack            = null;
+    _adminPc?.onConnectionState  = null;
     _adminPc = null;
     _adminRenderer.srcObject = null;
     if (mounted) setState(() => _adminVideoConnected = false);
@@ -190,7 +207,12 @@ class _AlarmPageState extends State<AlarmPage>
 
   void _onAuthSuccess() {
     setState(() => _authenticated = true);
-    _startAdminVideo().then((_) {
+    // Wait for the pre-connect that started in initState to finish before
+    // opening AdminResolutionPage.  If the connection is already established
+    // (user typed slowly) this resolves immediately.  If it's still in
+    // progress (user was fast), we wait — this ensures _detachAdminPc()
+    // always gets a valid PC to hand off instead of null.
+    (_preConnectFuture ?? Future.value()).then((_) {
       if (mounted) _openResolution();
     });
   }
