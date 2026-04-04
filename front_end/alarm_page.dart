@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'socket_service.dart';
@@ -38,17 +39,25 @@ class _AlarmPageState extends State<AlarmPage>
   bool _disposed = false;
   bool _resolutionInProgress = false;
 
+  // Pending auto-pop timer. Kept as a field so it can be cancelled if the
+  // alarm re-triggers before the delay expires (alarm fires per-slot so it can
+  // briefly clear then re-fire within ~200 ms — without this the page would
+  // dismiss itself before the admin has a chance to authenticate).
+  Timer? _autoPop;
+
+  // Pre-connect future — capped at 6 s via .timeout().
+  // If pre-connect fails or times out, AdminResolutionPage starts its own
+  // connection (inheritedPeerConnection = null, which it already handles).
+  Future<void>? _preConnectFuture;
+
   late AnimationController _pulseCtrl;
   late Animation<double> _pulseAnim;
 
   // ── Display helpers ───────────────────────────────────
 
-  /// "slot N (row R, col C)" — lid is 0-based, x=row, y=col.
   static String _slotLabel(dynamic lid, {dynamic x, dynamic y}) {
     final slot = (lid as num).toInt() + 1;
-    if (x != null && y != null) {
-      return 'slot $slot (row $x, col $y)';
-    }
+    if (x != null && y != null) return 'slot $slot (row $x, col $y)';
     return 'slot $slot';
   }
 
@@ -74,13 +83,21 @@ class _AlarmPageState extends State<AlarmPage>
       CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut),
     );
 
-    _adminRenderer.initialize();
+    // Start admin video pre-connect using only 1 attempt (not 5) so it
+    // fails fast. The whole chain is also capped at 6 s so _onAuthSuccess
+    // is never blocked indefinitely waiting for a slow/unavailable server.
+    _preConnectFuture = _adminRenderer
+        .initialize()
+        .then((_) => _startAdminVideo())
+        .timeout(const Duration(seconds: 6), onTimeout: () {});
+
     _connectSocket();
   }
 
   @override
   void dispose() {
     _disposed = true;
+    _autoPop?.cancel();
     _pulseCtrl.dispose();
     _passwordController.dispose();
     _adminPc?.onTrack = null;
@@ -129,7 +146,10 @@ class _AlarmPageState extends State<AlarmPage>
       final offer = await _adminPc!.createOffer(
           {'offerToReceiveVideo': true, 'offerToReceiveAudio': false});
       await _adminPc!.setLocalDescription(offer);
-      final sdp = await ApiService.sendOffer(offer.sdp!, mode: 'admin');
+      // Single attempt only — no retries. If the server isn't ready the 6 s
+      // timeout on _preConnectFuture will fire and we proceed without the PC.
+      final sdp = await ApiService.sendOffer(offer.sdp!, mode: 'admin',
+          maxRetries: 1);
       if (sdp != null && !_disposed) {
         await _adminPc!
             .setRemoteDescription(RTCSessionDescription(sdp, 'answer'));
@@ -141,6 +161,8 @@ class _AlarmPageState extends State<AlarmPage>
 
   RTCPeerConnection? _detachAdminPc() {
     final pc = _adminPc;
+    _adminPc?.onTrack = null;
+    _adminPc?.onConnectionState = null;
     _adminPc = null;
     _adminRenderer.srcObject = null;
     if (mounted) setState(() => _adminVideoConnected = false);
@@ -153,15 +175,27 @@ class _AlarmPageState extends State<AlarmPage>
     _socketService.connect(
       onAlarmUpdated: (data) {
         if (!mounted) return;
-        setState(() => _mismatches = data["mismatches"] ?? []);
+        // The alarm re-fired (new or updated mismatch) — cancel any pending
+        // auto-pop that was scheduled when the alarm briefly cleared.
+        _autoPop?.cancel();
+        _autoPop = null;
+        setState(() {
+          _cleared = false;
+          _mismatches = data["mismatches"] ?? [];
+        });
       },
       onAlarmCleared: (_) {
         if (!mounted) return;
         setState(() => _cleared = true);
-        if (!_resolutionInProgress) {
-          Future.delayed(const Duration(milliseconds: 800), () {
-            if (mounted) Navigator.of(context).pop();
-          });
+        _maybeAutoPop();
+      },
+      // onAlarmStatus fires when we call requestAlarmStatus() below.
+      // If alarm already cleared before this page opened, pop immediately.
+      onAlarmStatus: (data) {
+        if (!mounted) return;
+        if (data["active"] != true) {
+          setState(() => _cleared = true);
+          _maybeAutoPop(delay: const Duration(milliseconds: 300));
         }
       },
       onAlarmAcknowledgeResult: (data) {
@@ -174,6 +208,26 @@ class _AlarmPageState extends State<AlarmPage>
         }
       },
     );
+    // Request current alarm status so we self-dismiss if the alarm was already
+    // cleared before this page was pushed (common after a page refresh).
+    _socketService.requestAlarmStatus();
+  }
+
+  // Auto-pop only when the admin hasn't started engaging with the auth flow.
+  // Uses a stored Timer so it can be cancelled if the alarm re-fires before
+  // the delay expires — without this, a brief alarm clear followed by a
+  // re-trigger would dismiss the page while the admin is still authenticating.
+  void _maybeAutoPop({Duration delay = const Duration(milliseconds: 800)}) {
+    final adminEngaged = _resolutionInProgress ||
+        _loading ||
+        _authenticated ||
+        _passwordController.text.trim().isNotEmpty;
+    if (!adminEngaged) {
+      _autoPop?.cancel();
+      _autoPop = Timer(delay, () {
+        if (mounted) Navigator.of(context).pop();
+      });
+    }
   }
 
   // ── Auth ──────────────────────────────────────────────
@@ -190,7 +244,8 @@ class _AlarmPageState extends State<AlarmPage>
 
   void _onAuthSuccess() {
     setState(() => _authenticated = true);
-    _startAdminVideo().then((_) {
+    // _preConnectFuture is already capped at 6 s — this never blocks long.
+    (_preConnectFuture ?? Future.value()).then((_) {
       if (mounted) _openResolution();
     });
   }
@@ -204,6 +259,8 @@ class _AlarmPageState extends State<AlarmPage>
         builder: (_) => AdminResolutionPage(
           password: _passwordController.text.trim(),
           mismatches: List.from(_mismatches),
+          // May be null if pre-connect timed out — AdminResolutionPage
+          // handles null via _startVideo() fallback in _initVideo().
           inheritedPeerConnection: existingPc,
         ),
       ),
@@ -223,13 +280,6 @@ class _AlarmPageState extends State<AlarmPage>
   }
 
   // ── Build ─────────────────────────────────────────────
-  //
-  // Layout: Column
-  //   ├── Expanded → video panel (fills all remaining space)
-  //   └── SingleChildScrollView → alarm content (intrinsic height)
-  //
-  // The video panel never overflows or leaks under the content because
-  // Expanded + SingleChildScrollView share the screen height cleanly.
 
   @override
   Widget build(BuildContext context) {
@@ -240,12 +290,7 @@ class _AlarmPageState extends State<AlarmPage>
         body: SafeArea(
           child: Column(
             children: [
-              // ── Video — fills all space not claimed by content ──
-              Expanded(
-                child: _buildCameraPanel(),
-              ),
-
-              // ── Alarm content — intrinsic height, scrollable ───
+              Expanded(child: _buildCameraPanel()),
               _cleared ? _buildClearedView() : _buildAlarmContent(),
             ],
           ),
@@ -266,21 +311,17 @@ class _AlarmPageState extends State<AlarmPage>
     return Stack(
       fit: StackFit.expand,
       children: [
-        // Video or placeholder
         connected && renderer.srcObject != null
-            ? RTCVideoView(
-          renderer,
-          objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain,
-        )
+            ? RTCVideoView(renderer,
+            objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain)
             : Container(
           color: Colors.black,
           child: Center(
             child: Column(mainAxisSize: MainAxisSize.min, children: [
               const SizedBox(
-                width: 22, height: 22,
-                child: CircularProgressIndicator(
-                    strokeWidth: 2, color: Colors.white24),
-              ),
+                  width: 22, height: 22,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: Colors.white24)),
               const SizedBox(height: 8),
               Text('Connecting $camLabel…',
                   style: const TextStyle(
@@ -288,24 +329,18 @@ class _AlarmPageState extends State<AlarmPage>
             ]),
           ),
         ),
-
-        // Camera label badge — bottom left
         Positioned(
           bottom: 10, left: 12,
           child: _camBadge(camIcon, camLabel),
         ),
-
-        // REC badge — bottom right, pulsing
         Positioned(
           bottom: 10, right: 12,
           child: AnimatedBuilder(
             animation: _pulseAnim,
             builder: (_, __) => Opacity(
               opacity: _pulseAnim.value,
-              child: _camBadge(
-                Icons.fiber_manual_record, 'REC',
-                dotColor: const Color(0xFFE5484D),
-              ),
+              child: _camBadge(Icons.fiber_manual_record, 'REC',
+                  dotColor: const Color(0xFFE5484D)),
             ),
           ),
         ),
@@ -326,10 +361,8 @@ class _AlarmPageState extends State<AlarmPage>
           const SizedBox(width: 5),
           Text(label,
               style: const TextStyle(
-                  color: Colors.white54,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w500,
-                  letterSpacing: 0.3)),
+                  color: Colors.white54, fontSize: 11,
+                  fontWeight: FontWeight.w500, letterSpacing: 0.3)),
         ]),
       );
 
@@ -345,17 +378,14 @@ class _AlarmPageState extends State<AlarmPage>
             color: const Color(0xFF0F2318),
             shape: BoxShape.circle,
             border: Border.all(
-                color: const Color(0xFF30A46C).withOpacity(0.4),
-                width: 1.5),
+                color: const Color(0xFF30A46C).withOpacity(0.4), width: 1.5),
           ),
           child: const Icon(Icons.check_rounded,
               color: Color(0xFF30A46C), size: 36),
         ),
         const SizedBox(height: 20),
         const Text('Alarm cleared',
-            style: TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.w600,
+            style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600,
                 color: Colors.white)),
         const SizedBox(height: 6),
         const Text('All slots are back to their expected state.',
@@ -366,23 +396,21 @@ class _AlarmPageState extends State<AlarmPage>
 
   // ── Alarm content ─────────────────────────────────────
 
-  Widget _buildAlarmContent() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _buildAlarmHeader(),
-          if (_mismatches.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            _buildMismatchList(),
-          ],
+  Widget _buildAlarmContent() => SingleChildScrollView(
+    padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _buildAlarmHeader(),
+        if (_mismatches.isNotEmpty) ...[
           const SizedBox(height: 12),
-          _buildAuthCard(),
+          _buildMismatchList(),
         ],
-      ),
-    );
-  }
+        const SizedBox(height: 12),
+        _buildAuthCard(),
+      ],
+    ),
+  );
 
   Widget _buildAlarmHeader() => Container(
     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -410,23 +438,17 @@ class _AlarmPageState extends State<AlarmPage>
       ),
       const SizedBox(width: 14),
       Expanded(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Alarm active',
-                style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFFFF6B6B))),
-            const SizedBox(height: 2),
-            Text(
-              '${_mismatches.length} slot '
-                  'mismatch${_mismatches.length == 1 ? '' : 'es'} detected',
-              style: const TextStyle(
-                  color: Colors.white38, fontSize: 13),
-            ),
-          ],
-        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('Alarm active',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600,
+                  color: Color(0xFFFF6B6B))),
+          const SizedBox(height: 2),
+          Text(
+            '${_mismatches.length} slot '
+                'mismatch${_mismatches.length == 1 ? '' : 'es'} detected',
+            style: const TextStyle(color: Colors.white38, fontSize: 13),
+          ),
+        ]),
       ),
     ]),
   );
@@ -435,88 +457,68 @@ class _AlarmPageState extends State<AlarmPage>
     decoration: BoxDecoration(
       color: const Color(0xFF1C1C1E),
       borderRadius: BorderRadius.circular(14),
-      border: Border.all(
-          color: Colors.white.withOpacity(0.07), width: 1),
+      border: Border.all(color: Colors.white.withOpacity(0.07), width: 1),
     ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
-          child: Text(
-            'MISMATCHED SLOTS',
-            style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                color: Colors.white.withOpacity(0.3),
-                letterSpacing: 0.9),
-          ),
-        ),
-        const Divider(height: 1, color: Colors.white10),
-        // Constrain height so it doesn't push auth card off screen
-        ConstrainedBox(
-          constraints: const BoxConstraints(maxHeight: 160),
-          child: ListView.separated(
-            shrinkWrap: true,
-            padding: EdgeInsets.zero,
-            itemCount: _mismatches.length,
-            separatorBuilder: (_, __) =>
-            const Divider(height: 1, color: Colors.white10),
-            itemBuilder: (_, i) {
-              final m   = _mismatches[i];
-              final pid = m[0];
-              final lid = m[1];
-              // Mismatch data may or may not include row/col
-              final x   = m.length > 2 ? m[2] : null;
-              final y   = m.length > 3 ? m[3] : null;
-              final isUnknown = pid.toString().startsWith('unknown-');
-
-              return Padding(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 16, vertical: 11),
-                child: Row(children: [
-                  Container(
-                    width: 34, height: 34,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFE5484D).withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Icon(
-                        isUnknown
-                            ? Icons.help_outline_rounded
-                            : Icons.smartphone,
-                        color: const Color(0xFFFF6B6B),
-                        size: 18),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+        child: Text('MISMATCHED SLOTS',
+            style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600,
+                color: Colors.white.withOpacity(0.3), letterSpacing: 0.9)),
+      ),
+      const Divider(height: 1, color: Colors.white10),
+      ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 160),
+        child: ListView.separated(
+          shrinkWrap: true,
+          padding: EdgeInsets.zero,
+          itemCount: _mismatches.length,
+          separatorBuilder: (_, __) =>
+          const Divider(height: 1, color: Colors.white10),
+          itemBuilder: (_, i) {
+            final m   = _mismatches[i];
+            final pid = m[0];
+            final lid = m[1];
+            final x   = m.length > 2 ? m[2] : null;
+            final y   = m.length > 3 ? m[3] : null;
+            final isUnknown = pid.toString().startsWith('unknown-');
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+              child: Row(children: [
+                Container(
+                  width: 34, height: 34,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE5484D).withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _pidLabel(pid),
+                  child: Icon(
+                      isUnknown
+                          ? Icons.help_outline_rounded
+                          : Icons.smartphone,
+                      color: const Color(0xFFFF6B6B), size: 18),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(_pidLabel(pid),
+                          style: const TextStyle(color: Colors.white,
+                              fontSize: 13, fontWeight: FontWeight.w500),
+                          overflow: TextOverflow.ellipsis),
+                      const SizedBox(height: 2),
+                      Text('Expected in ${_slotLabel(lid, x: x, y: y)}',
                           style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w500),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          'Expected in ${_slotLabel(lid, x: x, y: y)}',
-                          style: const TextStyle(
-                              color: Colors.white38, fontSize: 12),
-                        ),
-                      ],
-                    ),
+                              color: Colors.white38, fontSize: 12)),
+                    ],
                   ),
-                ]),
-              );
-            },
-          ),
+                ),
+              ]),
+            );
+          },
         ),
-      ],
-    ),
+      ),
+    ]),
   );
 
   Widget _buildAuthCard() => Container(
@@ -524,87 +526,71 @@ class _AlarmPageState extends State<AlarmPage>
     decoration: BoxDecoration(
       color: const Color(0xFF1C1C1E),
       borderRadius: BorderRadius.circular(16),
-      border: Border.all(
-          color: Colors.white.withOpacity(0.07), width: 1),
+      border: Border.all(color: Colors.white.withOpacity(0.07), width: 1),
     ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const Text('Admin authentication required',
-            style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: Colors.white)),
-        const SizedBox(height: 4),
-        const Text(
-          'Enter your password to silence the alarm and begin guided resolution.',
-          style: TextStyle(
-              color: Colors.white38, fontSize: 12, height: 1.5),
-        ),
-        const SizedBox(height: 16),
-        TextField(
-          controller: _passwordController,
-          obscureText: true,
-          style: const TextStyle(color: Colors.white),
-          decoration: InputDecoration(
-            labelText: 'Admin password',
-            labelStyle: const TextStyle(color: Colors.white38),
-            errorText: _errorMessage,
-            errorStyle: const TextStyle(color: Color(0xFFFF6B6B)),
-            prefixIcon: const Icon(Icons.lock_outline,
-                color: Colors.white38, size: 20),
-            filled: true,
-            fillColor: Colors.white.withOpacity(0.04),
-            border: OutlineInputBorder(
+    child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      const Text('Admin authentication required',
+          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600,
+              color: Colors.white)),
+      const SizedBox(height: 4),
+      const Text(
+        'Enter your password to silence the alarm and begin guided resolution.',
+        style: TextStyle(color: Colors.white38, fontSize: 12, height: 1.5),
+      ),
+      const SizedBox(height: 16),
+      TextField(
+        controller: _passwordController,
+        obscureText: true,
+        style: const TextStyle(color: Colors.white),
+        decoration: InputDecoration(
+          labelText: 'Admin password',
+          labelStyle: const TextStyle(color: Colors.white38),
+          errorText: _errorMessage,
+          errorStyle: const TextStyle(color: Color(0xFFFF6B6B)),
+          prefixIcon: const Icon(Icons.lock_outline,
+              color: Colors.white38, size: 20),
+          filled: true,
+          fillColor: Colors.white.withOpacity(0.04),
+          border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(
-                  color: Colors.white.withOpacity(0.12)),
-            ),
-            enabledBorder: OutlineInputBorder(
+              borderSide: BorderSide(color: Colors.white.withOpacity(0.12))),
+          enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(
-                  color: Colors.white.withOpacity(0.12)),
-            ),
-            focusedBorder: OutlineInputBorder(
+              borderSide: BorderSide(color: Colors.white.withOpacity(0.12))),
+          focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
               borderSide: const BorderSide(
-                  color: Color(0xFFE5484D), width: 1.5),
-            ),
-            errorBorder: OutlineInputBorder(
+                  color: Color(0xFFE5484D), width: 1.5)),
+          errorBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide:
-              const BorderSide(color: Color(0xFFE5484D)),
-            ),
-            focusedErrorBorder: OutlineInputBorder(
+              borderSide: const BorderSide(color: Color(0xFFE5484D))),
+          focusedErrorBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
               borderSide: const BorderSide(
-                  color: Color(0xFFE5484D), width: 1.5),
-            ),
-          ),
-          onSubmitted: (_) => _submitPassword(),
+                  color: Color(0xFFE5484D), width: 1.5)),
         ),
-        const SizedBox(height: 14),
-        ElevatedButton.icon(
-          icon: _loading
-              ? const SizedBox(
-              width: 18, height: 18,
-              child: CircularProgressIndicator(
-                  strokeWidth: 2, color: Colors.white))
-              : const Icon(Icons.shield_outlined, size: 18),
-          label: const Text('Silence & begin resolution',
-              style: TextStyle(
-                  fontSize: 15, fontWeight: FontWeight.w600)),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFFE5484D),
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(vertical: 15),
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12)),
-            elevation: 0,
-          ),
-          onPressed: _loading ? null : _submitPassword,
+        onSubmitted: (_) => _submitPassword(),
+      ),
+      const SizedBox(height: 14),
+      ElevatedButton.icon(
+        icon: _loading
+            ? const SizedBox(
+            width: 18, height: 18,
+            child: CircularProgressIndicator(
+                strokeWidth: 2, color: Colors.white))
+            : const Icon(Icons.shield_outlined, size: 18),
+        label: const Text('Silence & begin resolution',
+            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: const Color(0xFFE5484D),
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(vertical: 15),
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12)),
+          elevation: 0,
         ),
-      ],
-    ),
+        onPressed: _loading ? null : _submitPassword,
+      ),
+    ]),
   );
 }

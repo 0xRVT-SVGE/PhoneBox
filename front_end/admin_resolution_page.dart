@@ -114,7 +114,22 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
     _renderer.initialize().then((_) => _initVideo());
     _registerCallbacks();
     _startOpeningTimer();
-    _socket.adminSessionStart(widget.password);
+
+    // Slide the card in immediately after the first frame so the opening
+    // spinner is always visible regardless of server response timing.
+    // Previously the card started at Offset(0,1) (fully off-screen) and only
+    // animated in inside onAdminSessionOpened — but if that event arrived
+    // before Flutter's first frame was built, the setState was silently
+    // dropped and the card stayed invisible forever (black screen).
+    //
+    // adminSessionStart is deferred to the same callback so the server reply
+    // can never race ahead of _registerCallbacks() assigning the handler
+    // pointer.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_disposed) return;
+      _cardAnim.forward(from: 0);
+      _socket.adminSessionStart(widget.password);
+    });
   }
 
   // ── Video ─────────────────────────────────────────────
@@ -259,11 +274,26 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
         if (!mounted) return;
         _openingTimer?.cancel();
         _serverResponded();
+        final msg = data['message'] ?? 'session_error';
+
+        // 'no_active_mismatches' means the alarm briefly cleared between the
+        // alarm_triggered event and the session start (the alarm fires per-slot
+        // so it can resolve and re-trigger within ~200 ms).  Retry once after
+        // a short delay — by then the re-fired alarm will have registered its
+        // mismatches on the server.
+        if (msg == 'no_active_mismatches') {
+          Future.delayed(const Duration(milliseconds: 600), () {
+            if (!mounted || _disposed || _step != _Step.opening) return;
+            _startOpeningTimer();
+            _socket.adminSessionStart(widget.password);
+          });
+          return;
+        }
+
         setState(() {
           _step = _Step.error;
           _errorText = data['message'] ?? 'Session error';
         });
-        _cardAnim.forward(from: 0);
       },
       onAdminRemoveOk: (_) {
         if (!mounted) return;
