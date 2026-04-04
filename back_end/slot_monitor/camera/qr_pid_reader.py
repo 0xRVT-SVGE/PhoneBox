@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from back_end.slot_monitor.camera.top_camera import TopCamera
 
 logger = logging.getLogger(__name__)
-
+_qr_detector = cv2.QRCodeDetector()
 
 # ──────────────────────────────────────────────────────────────────────────────
 # PID parsing (shared by both paths)
@@ -69,12 +69,18 @@ def read_pid_from_camera(
             ret, frame = cap.read()
             if not ret or frame is None:
                 continue
-            for qr in decode(frame):
-                pid = _parse_pid(qr.data.decode("utf-8"))
+
+            # Convert once (faster detection)
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+            data, points, _ = _qr_detector.detectAndDecode(gray)
+
+            if data:
+                pid = _parse_pid(data)
                 if pid:
                     logger.info(f"QR scan (direct): PID={pid}")
                     return pid
-                logger.warning(f"QR scan: unrecognised format: {qr.data!r}")
+                logger.warning(f"QR scan: unrecognised format: {data!r}")
         logger.warning("QR scan (direct) timed out")
         return None
     finally:
@@ -146,14 +152,16 @@ def read_pid_from_buffer(
         if frame is None:
             continue
 
-        frame_copy = frame.copy()   # pyzbar needs a writeable frame
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-        for qr in decode(frame_copy):
-            pid = _parse_pid(qr.data.decode("utf-8"))
+        data, points, _ = _qr_detector.detectAndDecode(gray)
+
+        if data:
+            pid = _parse_pid(data)
             if pid:
                 logger.info(f"QR scan (buffer): PID={pid}")
                 return pid
-            logger.warning(f"QR scan (buffer): unrecognised format: {qr.data!r}")
+            logger.warning(f"QR scan (buffer): unrecognised format: {data!r}")
 
     if cancel_event is None or not cancel_event.is_set():
         logger.warning("QR scan (buffer) timed out")
