@@ -47,9 +47,17 @@ from pyzbar.pyzbar import decode
 logger = logging.getLogger(__name__)
 
 # ── Timing constants ──────────────────────────────────────
-DETECT_TIMEOUT    = 8.0
-PLACEMENT_TIMEOUT = 30.0
-QR_LOST_TIMEOUT   = 2.0
+DETECT_TIMEOUT        = 8.0
+PLACEMENT_TIMEOUT     = 30.0
+QR_LOST_TIMEOUT       = 2.0
+
+# ── ROI success constants ─────────────────────────────────
+# Fraction of the bounding-box area that must overlap the destination
+# ROI before we enter the stabilization phase (Phase 2→3).
+ROI_INTERSECT_THRESHOLD = 0.30
+# Maximum time (s) the phone may stay in the ROI with QR still visible.
+# If exceeded the student didn't put the phone down properly → FAIL.
+STABILIZATION_TIMEOUT  = 3.0
 
 # ── Detection constants ───────────────────────────────────
 MIN_PHONE_AREA   = 1500
@@ -449,10 +457,24 @@ class PhoneTracker:
         return None
 
     def _track(self, tracker, top_camera) -> None:
-        deadline      = time.time() + PLACEMENT_TIMEOUT
-        last_qr_seen  = time.time()
-        last_emit     = 0.0
-        frame_count   = 0   # for QR frame-skip
+        """
+        Three-phase tracking loop (per Thoughts spec).
+
+        Phase 1  — Before ROI: QR must stay visible; QR lost → FAIL qr_lost.
+        Phase 2  — Entering ROI: bbox intersects ROI by ≥ ROI_INTERSECT_THRESHOLD
+                   fraction; transition to Phase 3.
+        Phase 3  — Stabilization: inside ROI.
+                   • QR disappears (phone placed face-down) → SUCCESS.
+                   • Tracker lost while bbox last known inside ROI → SUCCESS.
+                   • Tracker lost / bbox exits frame while outside ROI → FAIL.
+                   • STABILIZATION_TIMEOUT exceeded (QR still visible) → FAIL timeout.
+        """
+        deadline     = time.time() + PLACEMENT_TIMEOUT
+        last_qr_seen = time.time()
+        last_emit    = 0.0
+        frame_count  = 0        # for QR frame-skip
+        in_roi       = False    # True once bbox overlaps ROI by threshold
+        roi_entry_ts: Optional[float] = None  # when we first entered the ROI
 
         while time.time() < deadline:
             if self._cancel_event.is_set():
@@ -468,25 +490,57 @@ class PhoneTracker:
 
             fh, fw = frame.shape[:2]
             ok, raw = tracker.update(frame)
+
+            # ── Tracker lost ───────────────────────────────────────────────
             if not ok:
-                self._fail("out_of_frame", top_camera)
+                if in_roi:
+                    # Subcase A: tracker lost while inside ROI → SUCCESS TRACKER
+                    top_camera.clear_tracker_overlay()
+                    logger.info(
+                        f"[Tracker] PID={self._pid} tracker lost inside ROI "
+                        "→ SUCCESS TRACKER"
+                    )
+                    if self._on_success:
+                        self._on_success()
+                else:
+                    # Subcase B: tracker lost outside ROI → FAIL
+                    self._fail("out_of_frame", top_camera)
                 return
 
             bx, by, bw, bh = (int(v) for v in raw)
+
+            # ── Bbox fully outside frame ───────────────────────────────────
             if bx + bw <= 0 or bx >= fw or by + bh <= 0 or by >= fh:
-                self._fail("out_of_frame", top_camera)
+                if in_roi:
+                    top_camera.clear_tracker_overlay()
+                    logger.info(
+                        f"[Tracker] PID={self._pid} left frame while inside "
+                        "ROI → SUCCESS TRACKER"
+                    )
+                    if self._on_success:
+                        self._on_success()
+                else:
+                    self._fail("out_of_frame", top_camera)
                 return
 
             self._bbox = (bx, by, bw, bh)
 
-            if self._centre_in_roi(bx, by, bw, bh):
-                top_camera.clear_tracker_overlay()
-                logger.info(f"[Tracker] PID={self._pid} reached slot {self._lid}")
-                if self._on_success:
-                    self._on_success()
-                return
+            # ── ROI phase transitions ──────────────────────────────────────
+            now_in_roi = self._intersects_roi(bx, by, bw, bh)
+            if now_in_roi and not in_roi:
+                in_roi       = True
+                roi_entry_ts = time.time()
+                logger.debug(
+                    f"[Tracker] PID={self._pid} entered destination ROI"
+                )
+            elif not now_in_roi and in_roi:
+                in_roi       = False
+                roi_entry_ts = None
+                logger.debug(
+                    f"[Tracker] PID={self._pid} exited destination ROI"
+                )
 
-            # QR check — every Nth frame only
+            # ── QR check (every Nth frame) ─────────────────────────────────
             frame_count += 1
             if frame_count % _QR_CHECK_EVERY_N == 0:
                 qr_now = self._check_qr(frame)
@@ -495,21 +549,50 @@ class PhoneTracker:
                 self._qr_visible = qr_now
 
             qr_absent = time.time() - last_qr_seen
-            if qr_absent > QR_LOST_TIMEOUT:
-                self._fail("qr_lost", top_camera)
-                return
 
+            # ── Phase 3 logic (inside ROI) ─────────────────────────────────
+            if in_roi:
+                # QR disappears inside ROI = phone placed face-down → SUCCESS QR
+                if qr_absent > QR_LOST_TIMEOUT:
+                    top_camera.clear_tracker_overlay()
+                    logger.info(
+                        f"[Tracker] PID={self._pid} QR disappeared inside "
+                        "ROI → SUCCESS QR"
+                    )
+                    if self._on_success:
+                        self._on_success()
+                    return
+                # Safety-valve: phone in ROI but QR still visible too long
+                if roi_entry_ts and (time.time() - roi_entry_ts) > STABILIZATION_TIMEOUT:
+                    self._fail("timeout", top_camera)
+                    return
+            else:
+                # ── Phase 1 logic (before ROI) ─────────────────────────────
+                if qr_absent > QR_LOST_TIMEOUT:
+                    self._fail("qr_lost", top_camera)
+                    return
+
+            # ── Progress update ────────────────────────────────────────────
             now = time.time()
             if now - last_emit > 0.5:
-                self._emit_update(self._qr_visible, False, qr_absent)
+                self._emit_update(self._qr_visible, in_roi, qr_absent)
                 last_emit = now
 
         self._fail("timeout", top_camera)
 
-    def _centre_in_roi(self, bx, by, bw, bh) -> bool:
-        cx, cy = bx + bw // 2, by + bh // 2
+    def _intersects_roi(self, bx: int, by: int, bw: int, bh: int) -> bool:
+        """
+        Returns True when the fraction of the bounding-box area that overlaps
+        the destination slot ROI is ≥ ROI_INTERSECT_THRESHOLD (default 30 %).
+        """
         rx, ry, rw, rh = self._slot_roi
-        return rx <= cx <= rx + rw and ry <= cy <= ry + rh
+        ix1 = max(bx, rx);  iy1 = max(by, ry)
+        ix2 = min(bx + bw, rx + rw);  iy2 = min(by + bh, ry + rh)
+        if ix2 <= ix1 or iy2 <= iy1:
+            return False
+        inter     = (ix2 - ix1) * (iy2 - iy1)
+        bbox_area = bw * bh
+        return bbox_area > 0 and (inter / bbox_area) >= ROI_INTERSECT_THRESHOLD
 
     def _check_qr(self, frame: np.ndarray) -> bool:
         try:

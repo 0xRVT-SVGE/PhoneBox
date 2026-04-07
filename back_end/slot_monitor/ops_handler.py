@@ -3,6 +3,7 @@
 # ============================================================
 
 import logging
+import threading
 from flask_socketio import emit, SocketIO
 from flask import request
 
@@ -92,8 +93,16 @@ class DVWSocketHandler:
             "pid":     pid,
             "lid":     lid,
             "slot":    lid + 1,
-            "message": f"Scan QR for phone {pid}, then place it in slot {lid + 1}",
+            "message": f"Hold QR for phone {pid} under the top camera, then carry it to slot {lid + 1}",
         })
+
+        # Auto-start QR scan — no button press needed.
+        threading.Thread(
+            target=self._scan_and_dispatch,
+            args=(client_id,),
+            daemon=True,
+            name=f"QRScan-deposit-{pid[:8]}",
+        ).start()
 
     # ══════════════════════════════════════════════════════
     # WITHDRAW
@@ -125,8 +134,16 @@ class DVWSocketHandler:
             "pid":     pid,
             "lid":     lid,
             "slot":    lid + 1,
-            "message": f"Remove phone {pid} from slot {lid + 1}, then scan its QR code",
+            "message": f"Remove phone {pid} from slot {lid + 1}, then hold its QR under the top camera",
         })
+
+        # Auto-start QR scan — no button press needed.
+        threading.Thread(
+            target=self._scan_and_dispatch,
+            args=(client_id,),
+            daemon=True,
+            name=f"QRScan-withdraw-{pid[:8]}",
+        ).start()
 
     # ══════════════════════════════════════════════════════
     # VERIFY
@@ -208,16 +225,43 @@ class DVWSocketHandler:
         })
 
     # ══════════════════════════════════════════════════════
-    # QR SCANNED
+    # QR SCANNED  (verify only — deposit/withdraw auto-scan above)
     # ══════════════════════════════════════════════════════
 
     def handle_qr_scanned(self, data: dict):
+        """
+        Client-triggered QR scan.  Only meaningful for *verify* operations;
+        deposit and withdraw start scanning automatically in handle_deposit /
+        handle_withdraw so this event is a no-op for those op types.
+        """
         client_id = request.sid
-        if not op_ctx.is_active(client_id):
+        op = op_ctx.get(client_id)
+        if op is None:
             emit("operation_error", {"status": "error", "message": "no_active_operation"})
             return
+        if op.op_type in ("deposit", "withdraw"):
+            # Scan already running in background — ignore.
+            return
+        # verify: kick off scan in a background thread so we don’t block SocketIO.
+        threading.Thread(
+            target=self._scan_and_dispatch,
+            args=(client_id,),
+            daemon=True,
+            name=f"QRScan-verify-{op.pid[:8]}",
+        ).start()
 
+    # ══════════════════════════════════════════════════════
+    # SCAN WORKER  (runs in daemon thread for all op types)
+    # ══════════════════════════════════════════════════════
+
+    def _scan_and_dispatch(self, client_id: str) -> None:
+        """
+        Blocking QR scan + dispatch to the correct completion handler.
+        Always runs in a daemon thread — uses self.socketio.emit (never Flask emit).
+        """
         op = op_ctx.get(client_id)
+        if op is None:
+            return
 
         top_camera.start()
         try:
@@ -237,18 +281,24 @@ class DVWSocketHandler:
             return
 
         if scan_result["status"] != "success":
-            emit("operation_error", scan_result)
+            self.socketio.emit(
+                "operation_error", scan_result, to=client_id, namespace="/"
+            )
             op_ctx.clear(client_id)
             return
 
         scanned_pid = scan_result["pid"]
         if scanned_pid != op.pid:
-            emit("operation_error", {
-                "status":       "error",
-                "message":      "pid_mismatch",
-                "expected_pid": op.pid,
-                "scanned_pid":  scanned_pid,
-            })
+            self.socketio.emit(
+                "operation_error",
+                {
+                    "status":       "error",
+                    "message":      "pid_mismatch",
+                    "expected_pid": op.pid,
+                    "scanned_pid":  scanned_pid,
+                },
+                to=client_id, namespace="/",
+            )
             op_ctx.clear(client_id)
             return
 

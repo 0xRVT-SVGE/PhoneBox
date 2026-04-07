@@ -24,6 +24,7 @@ The overlay is built by make_admin_session_overlay() from phone_tracker.py.
 import json
 import logging
 import os
+import threading
 from typing import Optional
 
 from flask import request
@@ -89,9 +90,10 @@ class StagingConfig:
 
 class AdminOpsHandler:
 
-    def __init__(self, slot_ops: SlotOperations, alarm: AlarmController):
+    def __init__(self, slot_ops: SlotOperations, alarm: AlarmController, socketio: SocketIO):
         self.slot_ops = slot_ops
         self.alarm    = alarm
+        self.socketio = socketio
         self._recorder: Optional[EvidenceRecorder] = None
 
     # ── Overlay management ────────────────────────────────
@@ -279,9 +281,13 @@ class AdminOpsHandler:
             ),
         })
 
-    # ── STEP 2a — QR SCAN ────────────────────────────────
+    # ── STEP 2a — QR SCAN ────────────────────────────────────
 
     def handle_qr_scanned(self, data: dict):
+        """
+        Validation is synchronous; the blocking pyzbar scan runs in a
+        daemon thread to avoid stalling the SocketIO event loop.
+        """
         session = admin_ctx.get()
         if session is None:
             emit("admin_operation_error", {"message": "no_active_session"})
@@ -297,10 +303,25 @@ class AdminOpsHandler:
             return
 
         self._check_timeout(session)
+        client_id = request.sid
 
+        threading.Thread(
+            target=self._scan_qr_background,
+            args=(session, client_id),
+            daemon=True,
+            name="AdminQRScan",
+        ).start()
+
+    def _scan_qr_background(self, session, client_id: str) -> None:
+        """
+        Runs in a daemon thread.  Uses self.socketio.emit (not Flask emit).
+        Contains the exact logic that was previously inline in handle_qr_scanned.
+        """
         scan = scan_and_validate_pid_from_buffer(top_camera, timeout_sec=QR_SCAN_TIMEOUT)
         if scan["status"] != "success":
-            emit("admin_operation_error", scan)
+            self.socketio.emit(
+                "admin_operation_error", scan, to=client_id, namespace="/"
+            )
             return
 
         pid      = scan["pid"]
@@ -327,10 +348,9 @@ class AdminOpsHandler:
             session.in_transit_from_lid      = None
             session.in_transit_qr_confirmed  = False
 
-            # Reset overlay to staging only
             self._refresh_overlay(session)
 
-            emit("admin_qr_result", {
+            self.socketio.emit("admin_qr_result", {
                 "pid":          pid,
                 "needs_deposit": True,
                 "message": (
@@ -338,7 +358,7 @@ class AdminOpsHandler:
                     f"Slot {from_lid} has been cleared. "
                     "Initiate a normal deposit operation for this phone."
                 ),
-            })
+            }, to=client_id, namespace="/")
             return
 
         # Normal case: restart clip under real PID
@@ -347,23 +367,21 @@ class AdminOpsHandler:
 
         expected_lid = SlotMonitorDB.get_lid_for_pid(pid)
 
-        # Same-slot case — bypass occupancy check (phone is in admin's hand,
-        # slot is physically empty even though DB still shows it occupied)
+        # Same-slot case
         if expected_lid == from_lid:
             session.in_transit_pid          = pid
             session.in_transit_qr_confirmed = True
             session.current_same_slot       = True
 
-            # Overlay: source == dest (same slot highlighted orange)
             self._refresh_overlay(session, source_lid=from_lid, dest_lid=expected_lid)
 
-            emit("admin_qr_result", {
+            self.socketio.emit("admin_qr_result", {
                 "pid":             pid,
                 "expected_lid":    expected_lid,
                 "target_occupied": False,
                 "needs_deposit":   False,
                 "same_slot":       True,
-            })
+            }, to=client_id, namespace="/")
             return
 
         # Different slot — check occupancy
@@ -388,10 +406,9 @@ class AdminOpsHandler:
         session.in_transit_qr_confirmed = True
         session.current_same_slot       = False
 
-        # Overlay: source slot (orange) + destination slot (yellow pulsing)
         self._refresh_overlay(session, source_lid=from_lid, dest_lid=expected_lid)
 
-        emit("admin_qr_result", {
+        self.socketio.emit("admin_qr_result", {
             "pid":             pid,
             "expected_lid":    expected_lid,
             "target_occupied": target_occupied,
@@ -403,7 +420,7 @@ class AdminOpsHandler:
                 if target_occupied else
                 f"Phone {pid}: place it in slot {expected_lid}."
             ),
-        })
+        }, to=client_id, namespace="/")
 
     # ── STEP 2b — NO QR FOUND ────────────────────────────
 
@@ -542,9 +559,15 @@ class AdminOpsHandler:
             "message": f"Phone {pid} retrieved from staging. Place it in its target slot.",
         })
 
-    # ── STEP 3 — PLACE PHONE ─────────────────────────────
+    # ── STEP 3 — PLACE PHONE (with motion tracking) ────────────────
 
     def handle_place_phone(self, data: dict):
+        """
+        Admin taps “Start placement tracking”.
+        Captures a background frame, launches PhoneTracker, and emits
+        tracking_started.  The tracker callback (_admin_finalize_placement
+        or _admin_placement_failed) runs in the tracker daemon thread.
+        """
         session = admin_ctx.get()
         if session is None:
             emit("admin_operation_error", {"message": "no_active_session"})
@@ -574,8 +597,82 @@ class AdminOpsHandler:
                 "DB updated to reflect actual placement."
             )
 
+        # Pause destination slot so the monitor doesn’t fire during tracking.
         self._pause_slot(to_lid)
 
+        # Create a fresh cancel event for this placement attempt.
+        cancel_event = threading.Event()
+        session.placement_cancel_event = cancel_event
+
+        # Capture background frame NOW (admin holds phone away from slot).
+        top_camera.start()
+        top_camera.wait_for_frame(timeout=0.5)
+        bg_frame = top_camera.get_frame()
+
+        client_id = request.sid
+
+        # Inform the client that tracking is starting.
+        emit("tracking_started", {
+            "pid":     pid,
+            "lid":     to_lid,
+            "slot":    to_lid + 1,
+            "message": (
+                f"Move phone {pid} to slot {to_lid + 1}. "
+                "Keep the QR code visible until the phone lands."
+            ),
+        })
+
+        # Load tracker prerequisites.
+        from back_end.slot_monitor.phone_tracker import (
+            PhoneTracker, _load_top_roi,
+        )
+        slot_roi = _load_top_roi(to_lid)
+
+        if slot_roi is None or bg_frame is None:
+            logger.warning(
+                f"[AdminOps] No slot ROI or background frame for lid={to_lid} — "
+                "falling back to immediate placement confirmation."
+            )
+            self._admin_finalize_placement(
+                session, to_lid, pid, from_lid, same_slot, client_id
+            )
+            return
+
+        tracker = PhoneTracker(
+            pid              = pid,
+            lid              = to_lid,
+            slot_roi         = slot_roi,
+            background_frame = bg_frame,
+            cancel_event     = cancel_event,
+            socketio         = self.socketio,
+            client_id        = client_id,
+        )
+        tracker.start(
+            on_success = lambda: self._admin_finalize_placement(
+                session, to_lid, pid, from_lid, same_slot, client_id
+            ),
+            on_failure = lambda reason: self._admin_placement_failed(
+                session, to_lid, pid, from_lid, reason, client_id
+            ),
+        )
+
+    def _admin_finalize_placement(
+        self,
+        session,
+        to_lid:   int,
+        pid:      str,
+        from_lid: Optional[int],
+        same_slot: bool,
+        client_id: str,
+    ) -> None:
+        """
+        Called by PhoneTracker on success (or immediately as fallback).
+        Runs in the tracker daemon thread — uses self.socketio.emit.
+        """
+        top_camera.clear_context_overlay()
+        session.placement_cancel_event = None
+
+        # Update DB: move the storage record to the actual destination slot.
         if not same_slot and from_lid != to_lid:
             if not SlotMonitorDB.update_storage_lid(pid, to_lid):
                 logger.error(
@@ -583,7 +680,11 @@ class AdminOpsHandler:
                     f"DB update failed for PID={pid} to lid={to_lid}"
                 )
                 self._stop_clip(keep=True, reason="db_update_failed")
-                emit("admin_operation_error", {"message": "db_update_failed"})
+                self.socketio.emit(
+                    "admin_operation_error",
+                    {"message": "db_update_failed"},
+                    to=client_id, namespace="/",
+                )
                 self._restore_slot(to_lid, is_occupied=False)
                 return
 
@@ -618,8 +719,6 @@ class AdminOpsHandler:
         session.in_transit_qr_confirmed  = False
 
         self._stop_clip(keep=False, reason="placed_successfully")
-
-        # Reset overlay: phone placed, back to staging-only view
         self._refresh_overlay(session)
 
         remaining = sorted(session.pending_pids())
@@ -828,7 +927,7 @@ def register_admin_handlers(
     slot_operations: SlotOperations,
     alarm: AlarmController,
 ) -> None:
-    handler = AdminOpsHandler(slot_operations, alarm)
+    handler = AdminOpsHandler(slot_operations, alarm, socketio)
 
     @socketio.on("admin_session_start")
     def on_session_start(data):

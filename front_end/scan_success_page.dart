@@ -180,8 +180,9 @@ class _ScanSuccessPageState extends State<ScanSuccessPage> {
 
 enum _DvwStep {
   waiting,
-  readyToScan,
-  scanning,
+  autoScanning,   // server auto-scanning; no button needed
+  readyToScan,    // kept for future verify flow
+  scanning,       // kept for future verify flow
   tracking,
   success,
   error,
@@ -223,14 +224,16 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
         if (!mounted) return;
         setState(() {
           _slot = data['slot'] as int? ?? ((data['lid'] as int? ?? 0) + 1);
-          _step = _DvwStep.readyToScan;
+          // Server already started scanning — go straight to autoScanning UI.
+          _step = _DvwStep.autoScanning;
         });
       },
       onWithdrawWaiting: (data) {
         if (!mounted) return;
         setState(() {
           _slot = data['slot'] as int? ?? ((data['lid'] as int? ?? 0) + 1);
-          _step = _DvwStep.readyToScan;
+          // Server already started scanning — go straight to autoScanning UI.
+          _step = _DvwStep.autoScanning;
         });
       },
       onDepositResult:  (data) => _handleResult(data),
@@ -349,14 +352,45 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
           _cancelButton(),
         ];
 
-      case _DvwStep.readyToScan:
-      // _slot is already 1-based as sent by the server
+      case _DvwStep.autoScanning:
+        // Server is scanning; show instruction + spinner, no button.
         final slotLabel = 'slot ${_slot ?? '?'}';
+        final instruction = widget.isDeposit
+            ? 'Hold the QR code under the top camera,\n'
+              'then carry the phone to $slotLabel.'
+            : 'Remove your phone from $slotLabel,\n'
+              'then hold its QR code under the camera.';
+        return [
+          const SizedBox(
+              width: 36, height: 36,
+              child: CircularProgressIndicator(strokeWidth: 3)),
+          const SizedBox(height: 16),
+          Icon(
+            widget.isDeposit ? Icons.login_outlined : Icons.logout_outlined,
+            size: 40,
+            color: widget.isDeposit ? Colors.blue : Colors.green,
+          ),
+          const SizedBox(height: 10),
+          Text(
+            instruction,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Scanning for QR code… (up to 15 s)',
+            style: TextStyle(fontSize: 13, color: Colors.grey[500]),
+          ),
+          const SizedBox(height: 24),
+          _cancelButton(),
+        ];
+
+      case _DvwStep.readyToScan:
+        // Reserved for verify; deposit/withdraw skip this step.
+        final slotLabel2 = 'slot ${_slot ?? '?'}';
         final action = widget.isDeposit
-            ? "Go to $slotLabel and place the phone in it.\n"
-            "Hold its QR code under the top camera and tap Scan."
-            : "Remove your phone from $slotLabel.\n"
-            "Hold its QR code under the top camera and tap Scan.";
+            ? 'Hold QR under the top camera, then carry to $slotLabel2.'
+            : 'Remove phone from $slotLabel2, hold QR under camera.';
         return [
           Icon(
             widget.isDeposit ? Icons.login_outlined : Icons.logout_outlined,
@@ -370,21 +404,6 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
             style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 24),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              icon: const Icon(Icons.qr_code_scanner),
-              label: const Text("Scan QR Code",
-                  style: TextStyle(fontSize: 16)),
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                backgroundColor:
-                widget.isDeposit ? Colors.blue : Colors.green,
-              ),
-              onPressed: _onScanQr,
-            ),
-          ),
-          const SizedBox(height: 10),
           _cancelButton(),
         ];
 
@@ -394,14 +413,15 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
               width: 36, height: 36,
               child: CircularProgressIndicator(strokeWidth: 3)),
           const SizedBox(height: 16),
-          const Text("Scanning QR code…",
+          const Text('Scanning QR code…',
               style: TextStyle(fontSize: 16)),
           const SizedBox(height: 6),
-          Text("Keep it still — up to 15 seconds",
+          Text('Keep it still — up to 15 seconds',
               style: TextStyle(fontSize: 13, color: Colors.grey[500])),
           const SizedBox(height: 24),
           _cancelButton(),
         ];
+
 
       case _DvwStep.tracking:
         final qrColor = _qrVisible ? Colors.green : Colors.orange;

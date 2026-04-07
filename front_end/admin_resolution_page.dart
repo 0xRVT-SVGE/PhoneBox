@@ -11,6 +11,7 @@ enum _Step {
   awaitingScan,
   scanning,
   placing,
+  trackingAdmin,   // PhoneTracker running for admin placement
   stagingNeeded,
   unstageNext,
   noQrHandled,
@@ -54,6 +55,7 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
   String? _infoMessage;
   String? _errorText;
   String? _scanError;
+  bool _qrVisible = true;    // updated by tracking_update during trackingAdmin
 
   Map<String, dynamic>? _summary;
   bool _evidenceKept = false;
@@ -401,9 +403,47 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
           });
           return;
         }
+        // If tracking failed during admin placement, revert to placing.
+        if (_step == _Step.trackingAdmin) {
+          setState(() {
+            _step = _Step.placing;
+            _scanError = msg;
+          });
+          return;
+        }
         setState(() => _scanError = _friendlyError(msg));
       },
+      onTrackingStarted: (data) {
+        if (!mounted) return;
+        setState(() {
+          _step      = _Step.trackingAdmin;
+          _qrVisible = true;
+          _scanError = null;
+        });
+      },
+      onTrackingUpdate: (data) {
+        if (!mounted) return;
+        setState(() => _qrVisible = data['qr_visible'] as bool? ?? true);
+      },
+      onTrackingFailed: (data) {
+        if (!mounted) return;
+        final reason = data['reason'] as String? ?? '';
+        setState(() {
+          _step      = _Step.placing;
+          _scanError = _trackingFailureMsg(reason);
+        });
+      },
     );
+  }
+
+  String _trackingFailureMsg(String reason) {
+    const map = {
+      'qr_lost':      'QR code disappeared before the phone reached the slot. Retry.',
+      'out_of_frame': 'Phone left the camera view. Move directly toward the slot and retry.',
+      'timeout':      'Placement timed out. Retry.',
+      'detect_timeout': 'Phone not detected. Make sure it enters the camera view and retry.',
+    };
+    return map[reason] ?? 'Tracking failed ($reason). Retry.';
   }
 
   String _friendlyError(String code) {
@@ -807,11 +847,11 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
             ? 'Place it back in ${_slotLabel(_expectedLid)}'
             : 'Place ${_displayPid(_currentPid)} in ${_slotLabel(_expectedLid)}';
         final subtitle = _sameSlot
-            ? 'This phone belongs here. Slide it back in and tap Done.'
-            : "Slide it in without covering it. Tap Done when it's in.";
+            ? 'This phone belongs here. Tap to start tracking, then slide it back in.'
+            : 'Tap to start tracking, then slide it into the slot keeping QR visible.';
         final btnLabel = _sameSlot
-            ? 'Done — back in ${_slotLabel(_expectedLid)}'
-            : 'Done — placed in ${_slotLabel(_expectedLid)}';
+            ? 'Start tracking — return to ${_slotLabel(_expectedLid)}'
+            : 'Start tracking — move to ${_slotLabel(_expectedLid)}';
         return _stepContent(
           icon: _sameSlot ? Icons.undo_outlined : Icons.download_done_outlined,
           color: Colors.greenAccent,
@@ -819,6 +859,40 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
           subtitle: subtitle,
           error: _scanError,
           actions: [_primaryBtn(btnLabel, Colors.green, _onPlaced)],
+        );
+      case _Step.trackingAdmin:
+        final qrColor = _qrVisible ? Colors.green : Colors.orange;
+        final qrIcon  = _qrVisible ? Icons.qr_code_2 : Icons.qr_code_2_outlined;
+        final qrLabel = _qrVisible
+            ? 'QR code visible — keep it facing up'
+            : 'QR code not detected — keep the QR visible!';
+        return _stepContent(
+          icon: Icons.my_location_outlined,
+          color: Colors.greenAccent,
+          title: 'Move phone to ${_slotLabel(_expectedLid)}',
+          subtitle: 'Keep the QR visible until the phone lands in the slot.',
+          error: _scanError,
+          actions: [
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 300),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              decoration: BoxDecoration(
+                color: qrColor.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: qrColor.withOpacity(0.4)),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(qrIcon, color: qrColor, size: 20),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(qrLabel,
+                      style: TextStyle(
+                          color: qrColor, fontSize: 13,
+                          fontWeight: FontWeight.w500)),
+                ),
+              ]),
+            ),
+          ],
         );
       case _Step.stagingNeeded:
         return _stepContent(

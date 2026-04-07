@@ -16,6 +16,7 @@ admin_ops_handler reads and writes directly on the session object.
 """
 
 import logging
+import threading
 import time
 from typing import Dict, Optional, Set
 
@@ -25,7 +26,7 @@ logger = logging.getLogger(__name__)
 # considered expired.  _check_timeout in admin_ops_handler logs a
 # warning when this is exceeded but does NOT forcibly close the session —
 # the admin must close it explicitly.
-SESSION_TIMEOUT = 1800.0   # 30 minutes
+SESSION_TIMEOUT = 120   # 30 minutes
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -62,6 +63,9 @@ class ResolutionSession:
     in_transit_from_lid     int|None   lid it was removed from
     in_transit_qr_confirmed bool       True after admin_qr_scanned succeeds
     current_same_slot       bool       True when expected_lid == from_lid
+
+    placement_cancel_event  Event|None  Set to abort an in-flight placement
+                                       tracker; cleared on completion.
     """
 
     def __init__(
@@ -91,6 +95,9 @@ class ResolutionSession:
         self.in_transit_qr_confirmed: bool          = False
         self.current_same_slot:       bool          = False
 
+        # Active placement-tracking cancel event (None when no tracking running)
+        self.placement_cancel_event: Optional[threading.Event] = None
+
         logger.info(
             f"[ResolutionSession] {self.session_id} opened — "
             f"{len(self.initial_mismatches)} mismatches, "
@@ -116,8 +123,19 @@ class ResolutionSession:
         ]
         return pending
 
+    @property
+    def resolve_count(self) -> int:
+        """Number of phones fully resolved (placed or declared missing)."""
+        return len(self.resolved_pids) + len(self.declared_missing_pids)
+
     def is_expired(self) -> bool:
-        return (time.time() - self._opened_at) > SESSION_TIMEOUT
+        """
+        Session expires after SESSION_TIMEOUT seconds, extended by 30 s
+        for every phone that has been resolved or declared missing
+        (per Timeout System spec: +30 s per resolved mismatch).
+        """
+        allowed = SESSION_TIMEOUT + self.resolve_count * 30.0
+        return (time.time() - self._opened_at) > allowed
 
     def elapsed(self) -> float:
         return time.time() - self._opened_at
