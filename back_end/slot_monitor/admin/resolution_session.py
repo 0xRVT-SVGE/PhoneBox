@@ -16,6 +16,7 @@ admin_ops_handler reads and writes directly on the session object.
 """
 
 import logging
+import secrets
 import threading
 import time
 from typing import Dict, Optional, Set
@@ -26,7 +27,7 @@ logger = logging.getLogger(__name__)
 # considered expired.  _check_timeout in admin_ops_handler logs a
 # warning when this is exceeded but does NOT forcibly close the session —
 # the admin must close it explicitly.
-SESSION_TIMEOUT = 120   # 30 minutes
+SESSION_TIMEOUT = 120   # 2 minutes
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -74,7 +75,7 @@ class ResolutionSession:
         initial_mismatches: Dict[str, int],
         phone_count:        int,
     ):
-        self.session_id   = f"res-{int(time.time())}-{client_id[:6]}"
+        self.session_id   = secrets.token_hex(4)
         self.client_id    = client_id
         self._opened_at   = time.time()
 

@@ -67,6 +67,10 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
   bool _pendingServer = false;
   Timer? _serverTimer;
 
+  // True only if the server confirmed the session opened (admin_session_opened).
+  // Used by AlarmPage to decide whether to call unsilenceAlarm() on return.
+  bool _sessionWasOpened = false;
+
   late AnimationController _cardAnim;
   late Animation<Offset> _cardSlide;
 
@@ -263,6 +267,7 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
         if (!mounted) return;
         _openingTimer?.cancel();
         _serverResponded();
+        _sessionWasOpened = true;
         _sessionId = data['session_id'];
         final List raw = data['mismatches'] ?? [];
         _mismatchMap = {
@@ -975,7 +980,8 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
         _primaryBtn('Retry', Colors.orange, _retrySession),
         const SizedBox(height: 8),
         TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
+            onPressed: () => Navigator.of(context).pop(
+                _sessionWasOpened ? false : null),
             child: const Text('Cancel',
                 style: TextStyle(color: Colors.white54))),
       ]);
@@ -1237,7 +1243,8 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
         style: const TextStyle(color: Colors.white54, fontSize: 13)),
     const SizedBox(height: 24),
     _primaryBtn('Close', Colors.grey,
-            () => Navigator.of(context).pop(false)),
+            () => Navigator.of(context).pop(
+            _sessionWasOpened ? false : null)),
   ]);
 
   Widget _primaryBtn(String label, Color? color, VoidCallback onPressed) =>

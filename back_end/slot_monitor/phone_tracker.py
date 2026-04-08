@@ -401,7 +401,7 @@ class PhoneTracker:
                 self._fail(reason, top_camera)
                 return
 
-            frame = top_camera.get_frame()
+            frame = top_camera.get_raw_frame() or top_camera.get_frame()
             if frame is None:
                 self._fail("detect_timeout", top_camera)
                 return
@@ -483,7 +483,7 @@ class PhoneTracker:
 
             if not top_camera.wait_for_frame(timeout=0.05):
                 continue
-            frame = top_camera.get_frame()
+            frame = top_camera.get_raw_frame() or top_camera.get_frame()
             top_camera.clear_frame_event()
             if frame is None:
                 continue
@@ -494,16 +494,16 @@ class PhoneTracker:
             # ── Tracker lost ───────────────────────────────────────────────
             if not ok:
                 if in_roi:
-                    # Subcase A: tracker lost while inside ROI → SUCCESS TRACKER
+                    # Subcase A: tracker lost while inside ROI -> SUCCESS TRACKER
                     top_camera.clear_tracker_overlay()
                     logger.info(
                         f"[Tracker] PID={self._pid} tracker lost inside ROI "
-                        "→ SUCCESS TRACKER"
+                        "-> SUCCESS TRACKER"
                     )
                     if self._on_success:
                         self._on_success()
                 else:
-                    # Subcase B: tracker lost outside ROI → FAIL
+                    # Subcase B: tracker lost outside ROI -> FAIL
                     self._fail("out_of_frame", top_camera)
                 return
 
@@ -515,7 +515,7 @@ class PhoneTracker:
                     top_camera.clear_tracker_overlay()
                     logger.info(
                         f"[Tracker] PID={self._pid} left frame while inside "
-                        "ROI → SUCCESS TRACKER"
+                        "ROI -> SUCCESS TRACKER"
                     )
                     if self._on_success:
                         self._on_success()
@@ -552,12 +552,12 @@ class PhoneTracker:
 
             # ── Phase 3 logic (inside ROI) ─────────────────────────────────
             if in_roi:
-                # QR disappears inside ROI = phone placed face-down → SUCCESS QR
+                # QR disappears inside ROI = phone placed face-down -> SUCCESS QR
                 if qr_absent > QR_LOST_TIMEOUT:
                     top_camera.clear_tracker_overlay()
                     logger.info(
                         f"[Tracker] PID={self._pid} QR disappeared inside "
-                        "ROI → SUCCESS QR"
+                        "ROI -> SUCCESS QR"
                     )
                     if self._on_success:
                         self._on_success()

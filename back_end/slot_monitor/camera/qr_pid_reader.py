@@ -146,7 +146,10 @@ def read_pid_from_buffer(
         if not got_frame:
             continue
 
-        frame = frame_buffer.get_frame()
+        # Use raw (pre-overlay) frame for accurate QR decoding
+        frame = (frame_buffer.get_raw_frame()
+                 if hasattr(frame_buffer, "get_raw_frame")
+                 else frame_buffer.get_frame())
         frame_buffer.clear_frame_event()
 
         if frame is None:

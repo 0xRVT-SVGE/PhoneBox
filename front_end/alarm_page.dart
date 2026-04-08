@@ -270,11 +270,22 @@ class _AlarmPageState extends State<AlarmPage>
     if (!mounted) return;
 
     if (resolved == true) {
+      // Session completed cleanly — dismiss the alarm page too.
       Navigator.of(context).pop();
       return;
     }
 
-    _socketService.unsilenceAlarm();
+    if (resolved == false) {
+      // Session was opened on the server but the admin abandoned it
+      // (e.g. closed the page mid-resolution). Restart the alarm sound
+      // so a subsequent admin knows resolution is still needed.
+      _socketService.unsilenceAlarm();
+    }
+    // resolved == null means the session never opened (wrong password,
+    // server error before open, session_already_active, etc.).
+    // In that case we intentionally do NOT unsilence — the alarm is already
+    // silenced and no resolution was attempted, so there is nothing to revert.
+
     setState(() => _authenticated = false);
     if (_cleared && mounted) Navigator.of(context).pop();
   }

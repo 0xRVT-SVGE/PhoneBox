@@ -281,6 +281,14 @@ class AdminOpsHandler:
             ),
         })
 
+        # Auto-start QR scan immediately — no extra button press needed.
+        threading.Thread(
+            target=self._scan_qr_background,
+            args=(session, client_id),
+            daemon=True,
+            name="AdminQRScan",
+        ).start()
+
     # ── STEP 2a — QR SCAN ────────────────────────────────────
 
     def handle_qr_scanned(self, data: dict):
@@ -727,14 +735,42 @@ class AdminOpsHandler:
             f"PID={pid} placed lid={to_lid}. remaining={remaining} "
             f"staged={list(session.staged_phones.keys())}"
         )
-        emit("admin_place_result", {
+        self.socketio.emit("admin_place_result", {
             "pid":       pid,
             "from_lid":  from_lid,
             "to_lid":    to_lid,
             "same_slot": same_slot,
             "remaining": remaining,
             "staged":    list(session.staged_phones.keys()),
-        })
+        }, to=client_id, namespace="/")
+
+    def _admin_placement_failed(
+        self,
+        session,
+        to_lid:   int,
+        pid:      str,
+        from_lid: Optional[int],
+        reason:   str,
+        client_id: str,
+    ) -> None:
+        """
+        Called by PhoneTracker on failure.  Runs in tracker daemon thread.
+        Restores the destination slot, keeps the clip, and notifies the client.
+        """
+        top_camera.clear_context_overlay()
+        session.placement_cancel_event = None
+        self._restore_slot(to_lid, is_occupied=False)
+        self._stop_clip(keep=True, reason=f"placement_failed_{reason}")
+        self._refresh_overlay(session)
+        logger.warning(
+            f"[AdminSession] {session.session_id} — "
+            f"placement failed: PID={pid} lid={to_lid} reason={reason}"
+        )
+        self.socketio.emit(
+            "admin_operation_error",
+            {"message": "placement_failed", "reason": reason},
+            to=client_id, namespace="/",
+        )
 
     # ── DECLARE MISSING ───────────────────────────────────
 

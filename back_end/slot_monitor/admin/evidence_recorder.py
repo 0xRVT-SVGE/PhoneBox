@@ -64,6 +64,8 @@ RECORD_FPS = 20.0
 
 def _db_create_session(session_id: str, opened_at: datetime):
     conn = get_conn()
+    # DB column is varchar — truncate to 64 chars defensively
+    db_sid = session_id[:64]
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -71,7 +73,7 @@ def _db_create_session(session_id: str, opened_at: datetime):
                 INSERT INTO evidence_sessions (session_id, opened_at)
                 VALUES (%s, %s) ON CONFLICT (session_id) DO NOTHING;
                 """,
-                (session_id, opened_at),
+                (db_sid, opened_at),
             )
         conn.commit()
     except Exception as e:
@@ -90,6 +92,7 @@ def _db_insert_clip(
     duration_s: float,
 ):
     """Record one video clip in evidence_items."""
+    db_sid = session_id[:64]
     conn = get_conn()
     try:
         with conn.cursor() as cur:
@@ -100,7 +103,7 @@ def _db_insert_clip(
                 VALUES (%s, %s, %s, %s, %s, %s);
                 """,
                 (
-                    session_id,
+                    db_sid,
                     "video_clip",
                     lid,
                     pid,
@@ -117,6 +120,7 @@ def _db_insert_clip(
 
 
 def _db_close_session(session_id: str, outcome: str, warnings: list, kept: bool):
+    db_sid = session_id[:64]
     conn = get_conn()
     try:
         with conn.cursor() as cur:
@@ -126,7 +130,7 @@ def _db_close_session(session_id: str, outcome: str, warnings: list, kept: bool)
                 SET closed_at = NOW(), outcome = %s, warnings = %s, kept = %s
                 WHERE session_id = %s;
                 """,
-                (outcome, json.dumps(warnings), kept, session_id),
+                (outcome, json.dumps(warnings), kept, db_sid),
             )
         conn.commit()
     except Exception as e:
@@ -137,11 +141,12 @@ def _db_close_session(session_id: str, outcome: str, warnings: list, kept: bool)
 
 
 def _db_delete_session(session_id: str):
+    db_sid = session_id[:64]
     conn = get_conn()
     try:
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM evidence_items WHERE session_id = %s;", (session_id,))
-            cur.execute("DELETE FROM evidence_sessions WHERE session_id = %s;", (session_id,))
+            cur.execute("DELETE FROM evidence_items WHERE session_id = %s;", (db_sid,))
+            cur.execute("DELETE FROM evidence_sessions WHERE session_id = %s;", (db_sid,))
         conn.commit()
     except Exception as e:
         conn.rollback()

@@ -195,7 +195,7 @@ class AsyncMonitorWorker:
                 frame = await self.frame_buffer.wait_for_frame(self._subscriber_id)
                 await self._process_frame(frame)
 
-                if self.metrics.frames_processed % 100 == 0:
+                if self.metrics.frames_processed % 1000 == 0:
                     self._log_metrics()
 
         except asyncio.CancelledError:

@@ -59,6 +59,7 @@ class TopCamera:
     def __init__(self):
         self._lock            = threading.Lock()
         self._frame:          Optional[np.ndarray] = None
+        self._raw_frame:      Optional[np.ndarray] = None   # pre-overlay, for QR/tracker
         self._frame_event     = threading.Event()
         self._running         = False
         self._thread:         Optional[threading.Thread] = None
@@ -167,6 +168,11 @@ class TopCamera:
         with self._lock:
             return self._frame.copy() if self._frame is not None else None
 
+    def get_raw_frame(self) -> Optional[np.ndarray]:
+        """Return the latest frame WITHOUT any overlays — for QR scanning and tracking."""
+        with self._lock:
+            return self._raw_frame.copy() if self._raw_frame is not None else None
+
     def wait_for_frame(self, timeout: float = 0.1) -> bool:
         return self._frame_event.wait(timeout=timeout)
 
@@ -200,6 +206,9 @@ class TopCamera:
                 time.sleep(0.1)
                 continue
 
+            # Store raw frame (no overlays) for QR scanning and CSRT tracking
+            raw = frame.copy()
+
             # ── Context overlay (grid / source / dest / staging) ──
             # Read without lock — atomic under CPython GIL
             ctx_fn = self._context_overlay
@@ -217,8 +226,9 @@ class TopCamera:
                 except Exception as e:
                     logger.warning(f"[TopCamera] Tracker overlay error: {e}")
 
-            # Store annotated frame
+            # Store raw and annotated frames
             with self._lock:
+                self._raw_frame = raw
                 self._frame = frame
             self._frame_event.set()
 
