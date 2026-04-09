@@ -348,13 +348,21 @@ def make_admin_session_overlay(
 
 class PhoneTracker:
     """
-    Tracks a phone from QR-scan-success to slot-placement.
+    Tracks a phone from QR-scan-success to slot-placement or staging.
 
     Draws only the bounding box and QR status via _tracker_overlay.
     The static context (dest, source, grid, staging) is drawn by
     _context_overlay, set in ops_handler before this tracker starts.
 
     QR check runs every _QR_CHECK_EVERY_N frames to reduce pyzbar CPU.
+
+    Staging zone detection
+    ──────────────────────
+    If staging_rois is provided, the tracker also watches those zones.
+    When the phone bbox substantially overlaps a staging zone and stays
+    there for STAGING_HOLD_TIME seconds, on_staged(zone_idx) is called.
+    This lets the admin physically place the phone in staging without
+    pressing any button — the tracker detects it automatically.
     """
 
     def __init__(
@@ -366,6 +374,7 @@ class PhoneTracker:
         cancel_event:     threading.Event,
         socketio,
         client_id:        str,
+        staging_rois:     Optional[List[Tuple]] = None,
     ):
         self._pid              = pid
         self._lid              = lid
@@ -374,19 +383,34 @@ class PhoneTracker:
         self._cancel_event     = cancel_event
         self._socketio         = socketio
         self._client_id        = client_id
+        self._staging_rois:    List[Tuple] = staging_rois or []
         self._bbox:            Optional[Tuple] = None
         self._qr_visible:      bool = True
         self._on_success:      Optional[Callable] = None
         self._on_failure:      Optional[Callable] = None
+        self._on_staged:       Optional[Callable] = None  # on_staged(zone_idx)
 
-    def start(self, on_success: Callable, on_failure: Callable) -> None:
+    def start(
+        self,
+        on_success: Callable,
+        on_failure: Callable,
+        on_staged:  Optional[Callable] = None,
+    ) -> None:
         self._on_success = on_success
         self._on_failure = on_failure
+        self._on_staged  = on_staged
         t = threading.Thread(
             target=self._run, daemon=True,
             name=f"PhoneTracker-{self._pid[:8]}-lid{self._lid}",
         )
         t.start()
+
+    @staticmethod
+    def _safe_frame(raw_fn, fallback_fn):
+        """Return raw frame if available; fall back to annotated frame.
+        Uses explicit None-check to avoid numpy truth-value ambiguity."""
+        frame = raw_fn()
+        return frame if frame is not None else fallback_fn()
 
     def _run(self) -> None:
         from back_end.slot_monitor.camera.top_camera import top_camera
@@ -401,7 +425,7 @@ class PhoneTracker:
                 self._fail(reason, top_camera)
                 return
 
-            frame = top_camera.get_raw_frame() or top_camera.get_frame()
+            frame = self._safe_frame(top_camera.get_raw_frame, top_camera.get_frame)
             if frame is None:
                 self._fail("detect_timeout", top_camera)
                 return
@@ -464,17 +488,25 @@ class PhoneTracker:
         Phase 2  — Entering ROI: bbox intersects ROI by ≥ ROI_INTERSECT_THRESHOLD
                    fraction; transition to Phase 3.
         Phase 3  — Stabilization: inside ROI.
-                   • QR disappears (phone placed face-down) → SUCCESS.
-                   • Tracker lost while bbox last known inside ROI → SUCCESS.
-                   • Tracker lost / bbox exits frame while outside ROI → FAIL.
-                   • STABILIZATION_TIMEOUT exceeded (QR still visible) → FAIL timeout.
+                   QR disappears (face-down) -> SUCCESS.
+                   Tracker lost inside ROI -> SUCCESS.
+                   Tracker lost / bbox exits frame outside ROI -> FAIL.
+                   STABILIZATION_TIMEOUT exceeded (QR still visible) -> FAIL.
+
+        Staging detection (parallel):
+                   If bbox substantially overlaps a staging zone for
+                   STAGING_HOLD_TIME seconds -> on_staged(zone_idx) called.
         """
-        deadline     = time.time() + PLACEMENT_TIMEOUT
-        last_qr_seen = time.time()
-        last_emit    = 0.0
-        frame_count  = 0        # for QR frame-skip
-        in_roi       = False    # True once bbox overlaps ROI by threshold
-        roi_entry_ts: Optional[float] = None  # when we first entered the ROI
+        STAGING_HOLD_TIME = 1.5
+
+        deadline          = time.time() + PLACEMENT_TIMEOUT
+        last_qr_seen      = time.time()
+        last_emit         = 0.0
+        frame_count       = 0
+        in_roi            = False
+        roi_entry_ts: Optional[float] = None
+        staging_idx_held: int           = -1
+        staging_hold_ts:  Optional[float] = None
 
         while time.time() < deadline:
             if self._cancel_event.is_set():
@@ -483,7 +515,7 @@ class PhoneTracker:
 
             if not top_camera.wait_for_frame(timeout=0.05):
                 continue
-            frame = top_camera.get_raw_frame() or top_camera.get_frame()
+            frame = self._safe_frame(top_camera.get_raw_frame, top_camera.get_frame)
             top_camera.clear_frame_event()
             if frame is None:
                 continue
@@ -494,7 +526,6 @@ class PhoneTracker:
             # ── Tracker lost ───────────────────────────────────────────────
             if not ok:
                 if in_roi:
-                    # Subcase A: tracker lost while inside ROI -> SUCCESS TRACKER
                     top_camera.clear_tracker_overlay()
                     logger.info(
                         f"[Tracker] PID={self._pid} tracker lost inside ROI "
@@ -502,8 +533,15 @@ class PhoneTracker:
                     )
                     if self._on_success:
                         self._on_success()
+                elif staging_hold_ts is not None:
+                    top_camera.clear_tracker_overlay()
+                    logger.info(
+                        f"[Tracker] PID={self._pid} tracker lost in staging "
+                        f"zone {staging_idx_held} -> STAGED"
+                    )
+                    if self._on_staged:
+                        self._on_staged(staging_idx_held)
                 else:
-                    # Subcase B: tracker lost outside ROI -> FAIL
                     self._fail("out_of_frame", top_camera)
                 return
 
@@ -525,20 +563,35 @@ class PhoneTracker:
 
             self._bbox = (bx, by, bw, bh)
 
-            # ── ROI phase transitions ──────────────────────────────────────
+            # ── Staging zone detection ─────────────────────────────────────
+            cur_staging = self._in_which_staging(bx, by, bw, bh)
+            if cur_staging >= 0:
+                if cur_staging != staging_idx_held:
+                    staging_idx_held = cur_staging
+                    staging_hold_ts  = time.time()
+                elif staging_hold_ts and (time.time() - staging_hold_ts) >= STAGING_HOLD_TIME:
+                    top_camera.clear_tracker_overlay()
+                    logger.info(
+                        f"[Tracker] PID={self._pid} held in staging zone "
+                        f"{staging_idx_held} -> STAGED"
+                    )
+                    if self._on_staged:
+                        self._on_staged(staging_idx_held)
+                    return
+            else:
+                staging_idx_held = -1
+                staging_hold_ts  = None
+
+            # ── Destination ROI phase transitions ─────────────────────────
             now_in_roi = self._intersects_roi(bx, by, bw, bh)
             if now_in_roi and not in_roi:
                 in_roi       = True
                 roi_entry_ts = time.time()
-                logger.debug(
-                    f"[Tracker] PID={self._pid} entered destination ROI"
-                )
+                logger.debug(f"[Tracker] PID={self._pid} entered destination ROI")
             elif not now_in_roi and in_roi:
                 in_roi       = False
                 roi_entry_ts = None
-                logger.debug(
-                    f"[Tracker] PID={self._pid} exited destination ROI"
-                )
+                logger.debug(f"[Tracker] PID={self._pid} exited destination ROI")
 
             # ── QR check (every Nth frame) ─────────────────────────────────
             frame_count += 1
@@ -550,9 +603,8 @@ class PhoneTracker:
 
             qr_absent = time.time() - last_qr_seen
 
-            # ── Phase 3 logic (inside ROI) ─────────────────────────────────
+            # ── Phase 3 logic (inside destination ROI) ────────────────────
             if in_roi:
-                # QR disappears inside ROI = phone placed face-down -> SUCCESS QR
                 if qr_absent > QR_LOST_TIMEOUT:
                     top_camera.clear_tracker_overlay()
                     logger.info(
@@ -562,13 +614,13 @@ class PhoneTracker:
                     if self._on_success:
                         self._on_success()
                     return
-                # Safety-valve: phone in ROI but QR still visible too long
                 if roi_entry_ts and (time.time() - roi_entry_ts) > STABILIZATION_TIMEOUT:
                     self._fail("timeout", top_camera)
                     return
             else:
-                # ── Phase 1 logic (before ROI) ─────────────────────────────
-                if qr_absent > QR_LOST_TIMEOUT:
+                # Phase 1: before destination ROI (QR must stay visible
+                # unless phone is being held over a staging zone)
+                if qr_absent > QR_LOST_TIMEOUT and staging_hold_ts is None:
                     self._fail("qr_lost", top_camera)
                     return
 
@@ -583,7 +635,7 @@ class PhoneTracker:
     def _intersects_roi(self, bx: int, by: int, bw: int, bh: int) -> bool:
         """
         Returns True when the fraction of the bounding-box area that overlaps
-        the destination slot ROI is ≥ ROI_INTERSECT_THRESHOLD (default 30 %).
+        the destination slot ROI is >= ROI_INTERSECT_THRESHOLD (default 30%).
         """
         rx, ry, rw, rh = self._slot_roi
         ix1 = max(bx, rx);  iy1 = max(by, ry)
@@ -593,6 +645,26 @@ class PhoneTracker:
         inter     = (ix2 - ix1) * (iy2 - iy1)
         bbox_area = bw * bh
         return bbox_area > 0 and (inter / bbox_area) >= ROI_INTERSECT_THRESHOLD
+
+    def _in_which_staging(self, bx: int, by: int, bw: int, bh: int) -> int:
+        """
+        Returns the index of the staging zone the bbox substantially overlaps,
+        or -1 if the bbox is not substantially inside any staging zone.
+        Uses the same ROI_INTERSECT_THRESHOLD as the destination ROI check.
+        """
+        for i, roi in enumerate(self._staging_rois):
+            if not roi or len(roi) < 4:
+                continue
+            rx, ry, rw, rh = int(roi[0]), int(roi[1]), int(roi[2]), int(roi[3])
+            ix1 = max(bx, rx);  iy1 = max(by, ry)
+            ix2 = min(bx + bw, rx + rw);  iy2 = min(by + bh, ry + rh)
+            if ix2 <= ix1 or iy2 <= iy1:
+                continue
+            inter     = (ix2 - ix1) * (iy2 - iy1)
+            bbox_area = bw * bh
+            if bbox_area > 0 and (inter / bbox_area) >= ROI_INTERSECT_THRESHOLD:
+                return i
+        return -1
 
     def _check_qr(self, frame: np.ndarray) -> bool:
         try:

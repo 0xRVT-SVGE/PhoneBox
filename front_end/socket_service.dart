@@ -42,6 +42,7 @@ class SocketService {
   Function(dynamic)? _onAdminNoQrResult;
   Function(dynamic)? _onAdminStageOk;
   Function(dynamic)? _onAdminUnstageOk;
+  Function(dynamic)? _onAdminAutoStaged;
   Function(dynamic)? _onAdminPlaceResult;
   Function(dynamic)? _onAdminMissingResult;
   Function(dynamic)? _onAdminSessionClosed;
@@ -74,6 +75,7 @@ class SocketService {
     Function(dynamic)? onAdminNoQrResult,
     Function(dynamic)? onAdminStageOk,
     Function(dynamic)? onAdminUnstageOk,
+    Function(dynamic)? onAdminAutoStaged,
     Function(dynamic)? onAdminPlaceResult,
     Function(dynamic)? onAdminMissingResult,
     Function(dynamic)? onAdminSessionClosed,
@@ -104,6 +106,7 @@ class SocketService {
       onAdminNoQrResult:        onAdminNoQrResult,
       onAdminStageOk:           onAdminStageOk,
       onAdminUnstageOk:         onAdminUnstageOk,
+      onAdminAutoStaged:        onAdminAutoStaged,
       onAdminPlaceResult:       onAdminPlaceResult,
       onAdminMissingResult:     onAdminMissingResult,
       onAdminSessionClosed:     onAdminSessionClosed,
@@ -161,6 +164,7 @@ class SocketService {
     Function(dynamic)? onAdminNoQrResult,
     Function(dynamic)? onAdminStageOk,
     Function(dynamic)? onAdminUnstageOk,
+    Function(dynamic)? onAdminAutoStaged,
     Function(dynamic)? onAdminPlaceResult,
     Function(dynamic)? onAdminMissingResult,
     Function(dynamic)? onAdminSessionClosed,
@@ -190,6 +194,7 @@ class SocketService {
     if (onAdminNoQrResult        != null) _onAdminNoQrResult        = onAdminNoQrResult;
     if (onAdminStageOk           != null) _onAdminStageOk           = onAdminStageOk;
     if (onAdminUnstageOk         != null) _onAdminUnstageOk         = onAdminUnstageOk;
+    if (onAdminAutoStaged        != null) _onAdminAutoStaged        = onAdminAutoStaged;
     if (onAdminPlaceResult       != null) _onAdminPlaceResult       = onAdminPlaceResult;
     if (onAdminMissingResult     != null) _onAdminMissingResult     = onAdminMissingResult;
     if (onAdminSessionClosed     != null) _onAdminSessionClosed     = onAdminSessionClosed;
@@ -226,6 +231,7 @@ class SocketService {
     socket!.on("admin_no_qr_result",       (d) => _onAdminNoQrResult?.call(d));
     socket!.on("admin_stage_ok",           (d) => _onAdminStageOk?.call(d));
     socket!.on("admin_unstage_ok",         (d) => _onAdminUnstageOk?.call(d));
+    socket!.on("admin_auto_staged",        (d) => _onAdminAutoStaged?.call(d));
     socket!.on("admin_place_result",       (d) => _onAdminPlaceResult?.call(d));
     socket!.on("admin_missing_result",     (d) => _onAdminMissingResult?.call(d));
     socket!.on("admin_session_closed",     (d) => _onAdminSessionClosed?.call(d));
@@ -307,6 +313,7 @@ class SocketService {
     _onAdminNoQrResult     = null;
     _onAdminStageOk        = null;
     _onAdminUnstageOk      = null;
+    _onAdminAutoStaged     = null;
     _onAdminPlaceResult    = null;
     _onAdminMissingResult  = null;
     _onAdminSessionClosed  = null;

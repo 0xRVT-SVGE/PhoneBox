@@ -7,15 +7,13 @@ import 'api_service.dart';
 enum _Step {
   opening,
   selectingPhone,
-  pickingUp,
-  awaitingScan,
-  scanning,
-  placing,
-  trackingAdmin,   // PhoneTracker running for admin placement
-  stagingNeeded,
-  unstageNext,
-  noQrHandled,
-  needsDeposit,
+  pickingUp,          // admin picks object from slot; QR scan starts automatically
+  scanning,           // QR scan running; "No QR" button visible after delay
+  trackingAdmin,      // PhoneTracker running; phone moving to dest / staging
+  autoStaged,         // tracker detected phone placed in staging zone
+  unstageNext,        // prompt admin to retrieve staged phone (tracking starts auto)
+  noQrHandled,        // foreign object handled
+  needsDeposit,       // phone has no DB record
   declaringMissing,
   sessionDone,
   error,
@@ -67,9 +65,12 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
   bool _pendingServer = false;
   Timer? _serverTimer;
 
-  // True only if the server confirmed the session opened (admin_session_opened).
-  // Used by AlarmPage to decide whether to call unsilenceAlarm() on return.
+  // True only if the server confirmed the session opened.
   bool _sessionWasOpened = false;
+
+  // "No QR" button appears after this delay once scanning starts
+  bool _noQrButtonVisible = false;
+  Timer? _noQrButtonTimer;
 
   late AnimationController _cardAnim;
   late Animation<Offset> _cardSlide;
@@ -245,7 +246,9 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
       _pendingServer = true;
       _scanError = null;
     });
-    _serverTimer = Timer(const Duration(seconds: 10), () {
+    // 30 s — QR scan itself can take up to QR_SCAN_TIMEOUT (90 s on server),
+    // but this timer only covers the initial round-trip before QR scanning starts.
+    _serverTimer = Timer(const Duration(seconds: 30), () {
       if (!mounted || !_pendingServer) return;
       setState(() {
         _pendingServer = false;
@@ -282,12 +285,6 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
         _openingTimer?.cancel();
         _serverResponded();
         final msg = data['message'] ?? 'session_error';
-
-        // 'no_active_mismatches' means the alarm briefly cleared between the
-        // alarm_triggered event and the session start (the alarm fires per-slot
-        // so it can resolve and re-trigger within ~200 ms).  Retry once after
-        // a short delay — by then the re-fired alarm will have registered its
-        // mismatches on the server.
         if (msg == 'no_active_mismatches') {
           Future.delayed(const Duration(milliseconds: 600), () {
             if (!mounted || _disposed || _step != _Step.opening) return;
@@ -296,69 +293,92 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
           });
           return;
         }
-
         setState(() {
           _step = _Step.error;
           _errorText = data['message'] ?? 'Session error';
         });
       },
+      // admin_remove_ok: QR scan is already running on server side.
+      // Show scanning UI immediately (no button needed).
       onAdminRemoveOk: (_) {
         if (!mounted) return;
         _serverResponded();
+        _noQrButtonVisible = false;
+        _noQrButtonTimer?.cancel();
+        // Show "No QR" button after 8 s to give the scanner time to find it
+        _noQrButtonTimer = Timer(const Duration(seconds: 8), () {
+          if (!mounted || _step != _Step.scanning) return;
+          setState(() => _noQrButtonVisible = true);
+        });
         setState(() {
-          _step = _Step.awaitingScan;
+          _step      = _Step.scanning;
           _scanError = null;
         });
       },
+      // QR found: server already auto-started tracking.
+      // Just update our state so the UI shows tracking.
       onAdminQrResult: (data) {
         if (!mounted) return;
         _serverResponded();
-        final pid       = data['pid'].toString();
-        final needsDep  = data['needs_deposit'] == true;
-        final occupied  = data['target_occupied'] == true;
-        final sameSlot  = data['same_slot'] == true;
-
+        _noQrButtonTimer?.cancel();
+        final pid      = data['pid'].toString();
+        final needsDep = data['needs_deposit'] == true;
         _currentPid  = pid;
-        _sameSlot    = sameSlot;
+        _sameSlot    = data['same_slot'] == true;
         _expectedLid = data['expected_lid'] != null
             ? int.parse(data['expected_lid'].toString())
             : null;
-
         if (needsDep) {
           setState(() {
-            _step = _Step.needsDeposit;
+            _step        = _Step.needsDeposit;
             _infoMessage = data['message'];
           });
-        } else if (occupied) {
-          setState(() => _step = _Step.stagingNeeded);
-        } else {
-          setState(() => _step = _Step.placing);
         }
+        // If auto_tracking == true the server already launched PhoneTracker.
+        // tracking_started event will arrive shortly and move us to trackingAdmin.
       },
       onAdminNoQrResult: (_) {
         if (!mounted) return;
         _serverResponded();
+        _noQrButtonTimer?.cancel();
         setState(() {
-          _step = _Step.noQrHandled;
+          _step       = _Step.noQrHandled;
           _currentPid = null;
         });
       },
-      onAdminStageOk: (data) {
+      // admin_auto_staged: tracker detected phone placed in staging zone.
+      // Server selected the next blocker automatically.
+      onAdminAutoStaged: (data) {
         if (!mounted) return;
         _serverResponded();
-        _staged.add(data['pid'].toString());
-        _currentPid = null;
-        _autoSelect();
-      },
-      onAdminUnstageOk: (data) {
-        if (!mounted) return;
-        _serverResponded();
-        final pid = data['pid'].toString();
-        _staged.remove(pid);
-        _currentPid  = pid;
-        _sameSlot    = false;
-        _expectedLid = _mismatchMap[pid];
-        setState(() => _step = _Step.placing);
+        final pid         = data['pid'].toString();
+        final destLid     = (data['dest_lid'] as num?)?.toInt();
+        final blockingPid = data['blocking_pid']?.toString();
+        _staged.add(pid);
+        _remaining = List<String>.from(data['remaining'] ?? _remaining);
+        setState(() {
+          _step      = _Step.autoStaged;
+          _scanError = null;
+          _currentPid  = null;
+          _currentLid  = destLid;
+          _expectedLid = destLid;
+        });
+        // Auto-advance: tell the admin which slot to open next
+        // by selecting the blocking phone immediately
+        Future.delayed(const Duration(milliseconds: 400), () {
+          if (!mounted) return;
+          if (blockingPid != null && _mismatchMap.containsKey(blockingPid)) {
+            _selectPhone(blockingPid);
+          } else if (destLid != null) {
+            // Unknown blocker — select by lid
+            final byLid = _remaining.firstWhere(
+                (p) => _mismatchMap[p] == destLid, orElse: () => '');
+            if (byLid.isNotEmpty) _selectPhone(byLid);
+            else _autoSelect();
+          } else {
+            _autoSelect();
+          }
+        });
       },
       onAdminPlaceResult: (data) {
         if (!mounted) return;
@@ -401,18 +421,19 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
         if (!mounted) return;
         _serverResponded();
         final msg = data['message']?.toString() ?? 'Unknown error';
-        if (_step == _Step.scanning) {
+        // Tracking failed: server reverted state, admin must pick up again
+        if (_step == _Step.trackingAdmin) {
           setState(() {
-            _step = _Step.awaitingScan;
-            _scanError = _friendlyError(msg);
+            _step      = _Step.pickingUp;
+            _scanError = _trackingFailureMsg(data['reason']?.toString() ?? msg);
           });
           return;
         }
-        // If tracking failed during admin placement, revert to placing.
-        if (_step == _Step.trackingAdmin) {
+        // QR scan error during scanning: show "No QR" button immediately
+        if (_step == _Step.scanning) {
           setState(() {
-            _step = _Step.placing;
-            _scanError = msg;
+            _noQrButtonVisible = true;
+            _scanError = _friendlyError(msg);
           });
           return;
         }
@@ -433,8 +454,9 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
       onTrackingFailed: (data) {
         if (!mounted) return;
         final reason = data['reason'] as String? ?? '';
+        // Tracking failed mid-flight — let admin retry from pickingUp
         setState(() {
-          _step      = _Step.placing;
+          _step      = _Step.pickingUp;
           _scanError = _trackingFailureMsg(reason);
         });
       },
@@ -540,37 +562,20 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
   void _onPickedUp() {
     if (_currentLid == null) return;
     _waitForServer();
+    // server auto-starts QR scan immediately after admin_remove_phone
     _socket.adminRemovePhone(_currentLid!);
   }
 
-  void _onScanQr() {
-    _waitForServer();
-    setState(() { _step = _Step.scanning; _scanError = null; });
-    _socket.adminQrScanned();
-  }
-
   void _onNoQrCode() {
+    _noQrButtonTimer?.cancel();
     _waitForServer();
-    setState(() { _step = _Step.scanning; _scanError = null; });
     _socket.adminNoQrFound();
   }
-
-  void _onPlaced() {
-    if (_expectedLid == null) {
-      setState(() => _scanError =
-      'Cannot place: expected slot is unknown. '
-          'Tap "Handle a different phone" and try again.');
-      return;
-    }
-    _waitForServer();
-    _socket.adminPlacePhone(_expectedLid!);
-  }
-
-  void _onStaged()     { _waitForServer(); _socket.adminStagePhone(); }
 
   void _onUnstageNext() {
     if (_staged.isEmpty) return;
     _waitForServer();
+    // server auto-starts tracking after unstage
     _socket.adminUnstagePhone(_staged.first);
   }
 
@@ -590,6 +595,7 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
     _disposed = true;
     _openingTimer?.cancel();
     _serverTimer?.cancel();
+    _noQrButtonTimer?.cancel();
     _cardAnim.dispose();
     _socket.clearAdminCallbacks();
     _pc?.onTrack = null;
@@ -697,7 +703,7 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(children: [
-              if (_step == _Step.awaitingScan || _step == _Step.scanning)
+              if (_step == _Step.scanning || _step == _Step.trackingAdmin)
                 _topBadge(Icons.fiber_manual_record, 'REC', Colors.red),
               const SizedBox(width: 8),
               _topBadge(Icons.videocam_outlined, 'TOP CAM', Colors.white24),
@@ -792,7 +798,8 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
           icon: Icons.pan_tool_alt_outlined,
           color: Colors.orange,
           title: 'Pick up the object from ${_slotLabel(_currentLid)}',
-          subtitle: 'Once you have it in hand, tap the button below.',
+          subtitle: 'Once you have it in hand, tap the button. '
+              'QR scan will start automatically.',
           error: _scanError,
           actions: [
             _primaryBtn("I've picked it up", Colors.orange, _onPickedUp),
@@ -807,8 +814,7 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
                   _canDeclareCurrentMissing
                       ? "Can't find it — declare missing"
                       : "Can't find it (check all other phones first)",
-                  style: const TextStyle(
-                      color: Colors.redAccent, fontSize: 13),
+                  style: const TextStyle(color: Colors.redAccent, fontSize: 13),
                 ),
                 onPressed: (_canDeclareCurrentMissing && !_pendingServer)
                     ? _onDeclareCurrentMissing
@@ -817,65 +823,41 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
             ),
           ],
         );
-      case _Step.awaitingScan:
+      case _Step.scanning:
         return _stepContent(
           icon: Icons.qr_code_scanner,
           color: Colors.blueAccent,
-          title: 'Hold the QR code under the camera',
-          subtitle: 'Keep it still and fully visible.',
+          title: 'Scanning for QR code…',
+          subtitle: 'Hold the QR code under the camera and keep it still. '
+              'Tracking will start as soon as it is found.',
+          loading: !_noQrButtonVisible,
           error: _scanError,
           actions: [
-            _primaryBtn('Scan QR Code', Colors.blueAccent, _onScanQr),
-            const SizedBox(height: 8),
-            OutlinedButton.icon(
-              icon: const Icon(Icons.hide_image_outlined, size: 18),
-              label: const Text('No QR Code on this object'),
-              style: OutlinedButton.styleFrom(
-                  minimumSize: const Size(double.infinity, 48),
-                  side: const BorderSide(color: Colors.white30)),
-              onPressed: _pendingServer ? null : _onNoQrCode,
-            ),
-            _changePhoneBtn(),
+            if (_noQrButtonVisible) ...[
+              OutlinedButton.icon(
+                icon: const Icon(Icons.hide_image_outlined, size: 18),
+                label: const Text('No QR code on this object'),
+                style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(double.infinity, 48),
+                    side: const BorderSide(color: Colors.white30)),
+                onPressed: _pendingServer ? null : _onNoQrCode,
+              ),
+              _changePhoneBtn(),
+            ],
           ],
-        );
-      case _Step.scanning:
-        return _stepContent(
-          icon: Icons.radar,
-          color: Colors.blueAccent,
-          title: 'Scanning…',
-          subtitle: 'Keep the QR code still — up to 15 seconds.',
-          loading: true,
-          actions: const [],
-        );
-      case _Step.placing:
-        final title = _sameSlot
-            ? 'Place it back in ${_slotLabel(_expectedLid)}'
-            : 'Place ${_displayPid(_currentPid)} in ${_slotLabel(_expectedLid)}';
-        final subtitle = _sameSlot
-            ? 'This phone belongs here. Tap to start tracking, then slide it back in.'
-            : 'Tap to start tracking, then slide it into the slot keeping QR visible.';
-        final btnLabel = _sameSlot
-            ? 'Start tracking — return to ${_slotLabel(_expectedLid)}'
-            : 'Start tracking — move to ${_slotLabel(_expectedLid)}';
-        return _stepContent(
-          icon: _sameSlot ? Icons.undo_outlined : Icons.download_done_outlined,
-          color: Colors.greenAccent,
-          title: title,
-          subtitle: subtitle,
-          error: _scanError,
-          actions: [_primaryBtn(btnLabel, Colors.green, _onPlaced)],
         );
       case _Step.trackingAdmin:
         final qrColor = _qrVisible ? Colors.green : Colors.orange;
         final qrIcon  = _qrVisible ? Icons.qr_code_2 : Icons.qr_code_2_outlined;
         final qrLabel = _qrVisible
-            ? 'QR code visible — keep it facing up'
-            : 'QR code not detected — keep the QR visible!';
+            ? 'QR visible — move phone to slot ${_slotLabel(_expectedLid)}'
+            : 'QR not visible — keep QR facing up!';
         return _stepContent(
           icon: Icons.my_location_outlined,
           color: Colors.greenAccent,
           title: 'Move phone to ${_slotLabel(_expectedLid)}',
-          subtitle: 'Keep the QR visible until the phone lands in the slot.',
+          subtitle: 'Move it directly to the slot — or into a staging zone '
+              'if the slot is occupied. The system detects both automatically.',
           error: _scanError,
           actions: [
             AnimatedContainer(
@@ -891,26 +873,22 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
                 const SizedBox(width: 8),
                 Flexible(
                   child: Text(qrLabel,
-                      style: TextStyle(
-                          color: qrColor, fontSize: 13,
+                      style: TextStyle(color: qrColor, fontSize: 13,
                           fontWeight: FontWeight.w500)),
                 ),
               ]),
             ),
           ],
         );
-      case _Step.stagingNeeded:
+      case _Step.autoStaged:
         return _stepContent(
-          icon: Icons.table_restaurant_outlined,
+          icon: Icons.hourglass_top,
           color: Colors.amber,
-          title: 'Target ${_slotLabel(_expectedLid)} is occupied — stage this phone',
-          subtitle:
-          'Place ${_displayPid(_currentPid)} in a staging zone '
-              '(marked area on the lid), then handle the blocking phone.',
-          error: _scanError,
-          actions: [
-            _primaryBtn("I've placed it in staging", Colors.amber, _onStaged),
-          ],
+          title: 'Phone staged — loading next step…',
+          subtitle: 'The system detected the phone in the staging zone and is '
+              'selecting the next phone to handle.',
+          loading: true,
+          actions: const [],
         );
       case _Step.unstageNext:
         final pid = _staged.isNotEmpty ? _staged.first : '?';
@@ -919,11 +897,11 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
           icon: Icons.unarchive_outlined,
           color: Colors.tealAccent,
           title: 'Retrieve ${_displayPid(pid)} from staging',
-          subtitle: 'Pick it up from the staging zone, '
-              'then place it in slot ${lid + 1}.',
+          subtitle: 'Pick it up from the staging zone. '
+              'Tracking to slot ${lid + 1} will start automatically.',
           error: _scanError,
           actions: [
-            _primaryBtn("I've retrieved it", Colors.teal, _onUnstageNext),
+            _primaryBtn("I've retrieved it from staging", Colors.teal, _onUnstageNext),
           ],
         );
       case _Step.noQrHandled:
@@ -1244,7 +1222,7 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
     const SizedBox(height: 24),
     _primaryBtn('Close', Colors.grey,
             () => Navigator.of(context).pop(
-            _sessionWasOpened ? false : null)),
+                _sessionWasOpened ? false : null)),
   ]);
 
   Widget _primaryBtn(String label, Color? color, VoidCallback onPressed) =>
