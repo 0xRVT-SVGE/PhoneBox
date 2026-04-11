@@ -418,16 +418,35 @@ class EvidenceRecorder:
 
         kept = self._any_kept
 
-        if kept:
+        if outcome == "force_closed":
+            kept = True
+
+        if kept or outcome == "force_closed":
+            # Rename session directory to NotFullyResolved-{date}-{session_id}
+            # so it is immediately recognisable on disk.
+            if outcome == "force_closed" and self._session_dir.exists():
+                date_str   = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+                safe_sid   = self.session_id.replace("/", "_").replace("\\", "_")[:16]
+                new_name   = f"NotFullyResolved-{date_str}-{safe_sid}"
+                new_dir    = EVIDENCE_BASE_DIR / new_name
+                try:
+                    self._session_dir.rename(new_dir)
+                    self._session_dir = new_dir
+                    logger.warning(
+                        f"[Evidence] Session dir renamed -> {new_dir.name}"
+                    )
+                except Exception as e:
+                    logger.error(f"[Evidence] Failed to rename session dir: {e}")
+
             _db_close_session(
                 session_id=self.session_id,
-                outcome="flagged",
+                outcome=outcome,
                 warnings=warnings,
                 kept=True,
             )
             logger.warning(
                 f"[Evidence] Session {self.session_id} evidence KEPT "
-                f"(clips_kept={self._any_kept}, warnings={len(warnings)})"
+                f"outcome={outcome!r} warnings={len(warnings)}"
             )
         else:
             # Clean session — delete everything

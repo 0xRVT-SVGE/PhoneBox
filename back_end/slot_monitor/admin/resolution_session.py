@@ -181,6 +181,7 @@ class AdminSessionContext:
         Raises RuntimeError if a session is already active.
         """
         if self._session is not None:
+            self.close()
             raise RuntimeError(
                 f"Session {self._session.session_id} is already active. "
                 "Close it before opening a new one."

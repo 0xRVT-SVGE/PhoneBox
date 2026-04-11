@@ -17,10 +17,7 @@ import re
 import threading
 import time
 from typing import Optional, TYPE_CHECKING
-
 import cv2
-from pyzbar.pyzbar import decode
-
 from back_end.slot_monitor.db_interface import SlotMonitorDB
 
 if TYPE_CHECKING:

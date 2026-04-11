@@ -289,6 +289,9 @@ class SocketService {
 
   void adminSessionClose() => _emit("admin_session_close", {});
 
+  void adminForceClose({bool safe = true}) =>
+      _emit("admin_force_close_session", {"safe": safe});
+
   // ── Cleanup ───────────────────────────────────────────
 
   void clearDvwCallbacks() {

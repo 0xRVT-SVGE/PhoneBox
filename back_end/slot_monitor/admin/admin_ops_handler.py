@@ -883,6 +883,11 @@ class AdminOpsHandler:
         session.placement_cancel_event = None
         self._restore_slot(to_lid, is_occupied=False)
         self._stop_clip(keep=True, reason=f"placement_failed_{reason}")
+        # Clear in-transit state — phone is no longer tracked, admin will retry
+        # from the pickingUp step or force-close.
+        session.in_transit_pid           = None
+        session.in_transit_from_lid      = None
+        session.in_transit_qr_confirmed  = False
         self._refresh_overlay(session)
         logger.warning(
             f"[AdminSession] {session.session_id} — "
@@ -1044,10 +1049,108 @@ class AdminOpsHandler:
             pass
 
         summary = admin_ctx.close().summary()
+        # Restart alarm if mismatches still remain after the session ends.
+        # silence() stopped the sound; the mismatches are still in the alarm set.
+        # unsilence() will restart the sound so a subsequent admin is alerted.
+        self.alarm.unsilence()
         emit("admin_session_closed", {
             "summary":       summary,
             "warnings":      warnings,
             "evidence_kept": evidence_kept,
+        })
+
+    # ── FORCE CLOSE SESSION ───────────────────────────────
+
+    def handle_force_close_session(self, data: dict):
+        """
+        Force-close the session early.
+
+        safe=True  (default): requires no phone in hand and no staged phones.
+        safe=False (debug):   closes regardless of state.
+
+        Evidence is always saved under the name:
+            NotFullyResolved-{session_id}-{date}
+        """
+        session = admin_ctx.get()
+        if session is None:
+            emit("admin_operation_error", {"message": "no_active_session"})
+            return
+
+        safe = data.get("safe", True)
+
+        if safe:
+            if session.has_phone_in_hand():
+                emit("admin_operation_error", {
+                    "message": "force_close_blocked",
+                    "reason":  "phone_in_hand",
+                    "detail":  "Put the phone down (or place it in staging) before force-closing.",
+                })
+                return
+            if session.staged_phones:
+                emit("admin_operation_error", {
+                    "message": "force_close_blocked",
+                    "reason":  "phones_staged",
+                    "detail":  f"Staged phones must be resolved first: {list(session.staged_phones.keys())}",
+                })
+                return
+        else:
+            logger.warning(
+                f"[AdminSession] {session.session_id} — UNSAFE force-close requested"
+            )
+
+        # Cancel any in-flight placement tracker
+        if session.placement_cancel_event is not None:
+            session.placement_cancel_event.set()
+
+        # Cancel any running QR scan
+        cancel_ev = getattr(session, "_qr_scan_cancel", None)
+        if cancel_ev is not None:
+            cancel_ev.set()
+
+        warnings = []
+        if session.has_phone_in_hand():
+            warnings.append(
+                f"Force-closed with phone in hand "
+                f"(from_lid={session.in_transit_from_lid}, pid={session.in_transit_pid!r})"
+            )
+        remaining = sorted(session.pending_pids())
+        if remaining:
+            warnings.append(f"Unresolved mismatches at force-close: {remaining}")
+        if session.staged_phones:
+            warnings.append(f"Staged phones at force-close: {list(session.staged_phones.keys())}")
+
+        # Restore all slots
+        for lid in session.initial_mismatches.values():
+            is_occ = SlotMonitorDB.is_slot_occupied(lid)
+            self._restore_slot(lid, is_occupied=bool(is_occ))
+
+        # Save evidence under the NotFullyResolved name
+        if self._recorder:
+            self._recorder.stop_current_clip_if_active(
+                keep=True, reason="force_close"
+            )
+            self._recorder.close(outcome="force_closed", warnings=warnings)
+            self._recorder = None
+
+        top_camera.clear_context_overlay()
+        try:
+            from back_end.slot_monitor.camera.rolling_buffer import top_rolling_buffer
+            top_rolling_buffer.set_active(False)
+        except Exception:
+            pass
+
+        summary = admin_ctx.close().summary()
+        logger.warning(
+            f"[AdminSession] {session.session_id} — FORCE CLOSED "
+            f"(safe={safe}, remaining={remaining})"
+        )
+        # Restart alarm if mismatches remain
+        self.alarm.unsilence()
+        emit("admin_session_closed", {
+            "summary":         summary,
+            "warnings":        warnings,
+            "evidence_kept":   True,
+            "force_closed":    True,
         })
 
     # ── Internal helpers ──────────────────────────────────
@@ -1122,5 +1225,9 @@ def register_admin_handlers(
     @socketio.on("admin_session_close")
     def on_session_close(data):
         handler.handle_session_close(data)
+
+    @socketio.on("admin_force_close_session")
+    def on_force_close_session(data):
+        handler.handle_force_close_session(data)
 
     logger.info("Admin resolution WebSocket handlers registered")
