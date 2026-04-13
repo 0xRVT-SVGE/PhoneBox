@@ -360,22 +360,13 @@ class AdminOpsHandler:
                 f"[AdminSession] {session.session_id} — "
                 f"PID={pid} found in lid={from_lid} but has no storage record."
             )
-            self._stop_clip(keep=False, reason="restarting_with_real_pid")
-            self._start_clip(pid=pid, lid=from_lid)
-            self._stop_clip(keep=True, reason="needs_deposit_no_storage_record")
-
-            self.slot_ops.capture_and_save_baseline(
-                lid=from_lid, is_occupied=False, wait_for_stable=1.5
-            )
-            self._resume_slot(from_lid)
-            self.alarm.resolve(f"unknown-{from_lid}", from_lid)
-
             session.needs_deposit_pids.add(pid)
             session.in_transit_pid           = None
             session.in_transit_from_lid      = None
             session.in_transit_qr_confirmed  = False
             self._refresh_overlay(session)
 
+            # Emit IMMEDIATELY — baseline capture + clip save are in background.
             self.socketio.emit("admin_qr_result", {
                 "pid":           pid,
                 "needs_deposit": True,
@@ -385,6 +376,14 @@ class AdminOpsHandler:
                     "Initiate a normal deposit for this phone."
                 ),
             }, to=client_id, namespace="/")
+
+            # Background: swap clips + baseline + resume + alarm.resolve
+            threading.Thread(
+                target=self._needs_deposit_bg,
+                args=(pid, from_lid),
+                daemon=True,
+                name=f"NeedsDepBg-{pid[:8]}",
+            ).start()
             return
 
         # ── Normal case ───────────────────────────────────────────────────
@@ -558,18 +557,11 @@ class AdminOpsHandler:
             cancel_ev.set()
 
         from_lid = session.in_transit_from_lid
-        self._stop_clip(keep=True, reason="no_qr_found_unidentified_object")
 
         logger.warning(
             f"[AdminSession] {session.session_id} — "
             f"Foreign object (no QR) removed from lid={from_lid}. Evidence KEPT."
         )
-
-        self.slot_ops.capture_and_save_baseline(
-            lid=from_lid, is_occupied=False, wait_for_stable=1.5
-        )
-        self._resume_slot(from_lid)
-        self.alarm.resolve(f"unknown-{from_lid}", from_lid)
 
         unknown_pid = f"unknown-{from_lid}"
         if unknown_pid in session.initial_mismatches:
@@ -582,6 +574,8 @@ class AdminOpsHandler:
         # Reset overlay to staging only
         self._refresh_overlay(session)
 
+        # Emit result IMMEDIATELY — baseline capture and clip saving happen
+        # in the background so the admin can continue without waiting.
         emit("admin_no_qr_result", {
             "from_lid": from_lid,
             "message": (
@@ -589,6 +583,15 @@ class AdminOpsHandler:
                 "Slot cleared. Evidence permanently recorded."
             ),
         })
+
+        # Background: save evidence clip + capture baseline + resume slot.
+        # This must not block the socket handler.
+        threading.Thread(
+            target=self._no_qr_finalize_bg,
+            args=(from_lid,),
+            daemon=True,
+            name=f"NoQRFinalize-lid{from_lid}",
+        ).start()
 
     # ── STEP 2c — STAGE PHONE ────────────────────────────
 
@@ -798,47 +801,37 @@ class AdminOpsHandler:
         """
         Called by PhoneTracker on success (or immediately as fallback).
         Runs in the tracker daemon thread — uses self.socketio.emit.
+
+        Critical ordering:
+          1. DB update + alarm resolves (fast, in-memory/sync-DB)
+          2. Emit success IMMEDIATELY so admin sees feedback at once
+          3. Baseline captures run in background (each has a sleep inside)
         """
         top_camera.clear_context_overlay()
         session.placement_cancel_event = None
 
-        # Update DB: move the storage record to the actual destination slot.
+        # ── 1. DB update ──────────────────────────────────────────────────
         if not same_slot and from_lid != to_lid:
             if not SlotMonitorDB.update_storage_lid(pid, to_lid):
                 logger.error(
                     f"[AdminSession] {session.session_id} — "
                     f"DB update failed for PID={pid} to lid={to_lid}"
                 )
-                self._stop_clip(keep=True, reason="db_update_failed")
+                # Error path: emit immediately, then background clip keep
                 self.socketio.emit(
                     "admin_operation_error",
                     {"message": "db_update_failed"},
                     to=client_id, namespace="/",
                 )
                 self._restore_slot(to_lid, is_occupied=False)
+                threading.Thread(
+                    target=self._stop_clip,
+                    args=(True, "db_update_failed"),
+                    daemon=True,
+                ).start()
                 return
 
-        result = self.slot_ops.capture_and_save_baseline(
-            lid=to_lid, is_occupied=True, wait_for_stable=1.5
-        )
-        if result["status"] != "success":
-            logger.warning(
-                f"[AdminSession] {session.session_id} — "
-                f"occupied baseline capture failed for lid={to_lid}: {result['message']}."
-            )
-        self._resume_slot(to_lid)
-
-        if from_lid is not None and from_lid != to_lid:
-            result = self.slot_ops.capture_and_save_baseline(
-                lid=from_lid, is_occupied=False, wait_for_stable=1.5
-            )
-            if result["status"] != "success":
-                logger.warning(
-                    f"[AdminSession] {session.session_id} — "
-                    f"empty baseline capture failed for lid={from_lid}."
-                )
-            self._resume_slot(from_lid)
-
+        # ── 2. Fast in-memory state updates ──────────────────────────────
         if from_lid is not None:
             self.alarm.resolve(pid, from_lid)
         self.alarm.resolve(pid, to_lid)
@@ -857,6 +850,8 @@ class AdminOpsHandler:
             f"PID={pid} placed lid={to_lid}. remaining={remaining} "
             f"staged={list(session.staged_phones.keys())}"
         )
+
+        # ── 3. Emit SUCCESS immediately ───────────────────────────────────
         self.socketio.emit("admin_place_result", {
             "pid":       pid,
             "from_lid":  from_lid,
@@ -865,6 +860,16 @@ class AdminOpsHandler:
             "remaining": remaining,
             "staged":    list(session.staged_phones.keys()),
         }, to=client_id, namespace="/")
+
+        # ── 4. Background: baseline captures + slot resumes ──────────────
+        # Each capture_and_save_baseline has a sleep(wait_for_stable) inside;
+        # running them in background keeps the UI response instantaneous.
+        threading.Thread(
+            target=self._finalize_placement_baselines_bg,
+            args=(to_lid, from_lid, same_slot),
+            daemon=True,
+            name=f"BaselineBg-{pid[:8]}",
+        ).start()
 
     def _admin_placement_failed(
         self,
@@ -877,14 +882,13 @@ class AdminOpsHandler:
     ) -> None:
         """
         Called by PhoneTracker on failure.  Runs in tracker daemon thread.
-        Restores the destination slot, keeps the clip, and notifies the client.
+        Restores the destination slot and notifies the client IMMEDIATELY.
+        Evidence clip saving is deferred so it never delays the UI response.
         """
         top_camera.clear_context_overlay()
         session.placement_cancel_event = None
         self._restore_slot(to_lid, is_occupied=False)
-        self._stop_clip(keep=True, reason=f"placement_failed_{reason}")
-        # Clear in-transit state — phone is no longer tracked, admin will retry
-        # from the pickingUp step or force-close.
+        # Clear in-transit state — phone is no longer tracked.
         session.in_transit_pid           = None
         session.in_transit_from_lid      = None
         session.in_transit_qr_confirmed  = False
@@ -893,11 +897,20 @@ class AdminOpsHandler:
             f"[AdminSession] {session.session_id} — "
             f"placement failed: PID={pid} lid={to_lid} reason={reason}"
         )
+        # Notify the client IMMEDIATELY — before any I/O.
         self.socketio.emit(
             "admin_operation_error",
             {"message": "placement_failed", "reason": reason},
             to=client_id, namespace="/",
         )
+        # Save evidence clip in a background thread so the face-cam
+        # encoding (~30 s) never delays the socket event above.
+        threading.Thread(
+            target=self._stop_clip,
+            args=(True, f"placement_failed_{reason}"),
+            daemon=True,
+            name=f"EvidenceStop-{pid[:8]}",
+        ).start()
 
     # ── DECLARE MISSING ───────────────────────────────────
 
@@ -942,33 +955,15 @@ class AdminOpsHandler:
 
         expected_lid = session.initial_mismatches[pid]
 
-        self._start_clip(pid=pid, lid=expected_lid)
-        self.slot_ops.capture_and_save_baseline(
-            lid=expected_lid, is_occupied=False, wait_for_stable=1.5
-        )
-        self._stop_clip(keep=True, reason="declared_missing")
+        # ── Fast state updates ────────────────────────────────────────────
+        session.declared_missing_pids.add(pid)
 
         logger.warning(
             f"[AdminSession] {session.session_id} — "
             f"PHONE DECLARED MISSING: PID={pid} expected_lid={expected_lid}"
         )
 
-        withdraw_result = self.slot_ops.withdraw_phone_db(pid)
-        if withdraw_result["status"] != "success":
-            logger.warning(
-                f"[AdminSession] {session.session_id} — "
-                f"withdraw_phone_db failed for missing PID={pid}: "
-                f"{withdraw_result['message']}."
-            )
-
-        self.slot_ops.capture_and_save_baseline(
-            lid=expected_lid, is_occupied=False, wait_for_stable=1.5
-        )
-        self._resume_slot(expected_lid)
-        self.alarm.resolve(pid, expected_lid)
-
-        session.declared_missing_pids.add(pid)
-
+        # ── Emit result IMMEDIATELY ───────────────────────────────────────
         emit("admin_missing_result", {
             "pid":          pid,
             "expected_lid": expected_lid,
@@ -977,6 +972,16 @@ class AdminOpsHandler:
                 "Evidence permanently recorded."
             ),
         })
+
+        # ── Background: evidence clip + DB withdraw + baseline + resume ───
+        # These all block (clip encoding, sleep in baseline) and must not
+        # delay the socket response above.
+        threading.Thread(
+            target=self._declare_missing_bg,
+            args=(pid, expected_lid),
+            daemon=True,
+            name=f"MissingBg-{pid[:8]}",
+        ).start()
 
     # ── SESSION CLOSE ─────────────────────────────────────
 
@@ -1153,6 +1158,105 @@ class AdminOpsHandler:
             "force_closed":    True,
         })
 
+    def _needs_deposit_bg(self, pid: str, from_lid: int) -> None:
+        """
+        Background work for the needs-deposit (no DB record) case.
+        Swaps the pending clip to the real PID, keeps it, then clears the slot.
+        """
+        self._stop_clip(keep=False, reason="restarting_with_real_pid")
+        self._start_clip(pid=pid, lid=from_lid)
+        self._stop_clip(keep=True, reason="needs_deposit_no_storage_record")
+        self.slot_ops.capture_and_save_baseline(
+            lid=from_lid, is_occupied=False, wait_for_stable=1.5
+        )
+        self._resume_slot(from_lid)
+        self.alarm.resolve(f"unknown-{from_lid}", from_lid)
+
+    def _declare_missing_bg(self, pid: str, expected_lid: int) -> None:
+        """
+        Background work after a phone is declared missing:
+        evidence clip, DB withdrawal, baseline, slot resume, alarm resolve.
+        """
+        self._start_clip(pid=pid, lid=expected_lid)
+        self.slot_ops.capture_and_save_baseline(
+            lid=expected_lid, is_occupied=False, wait_for_stable=1.5
+        )
+        self._stop_clip(keep=True, reason="declared_missing")
+
+        withdraw_result = self.slot_ops.withdraw_phone_db(pid)
+        if withdraw_result["status"] != "success":
+            logger.warning(
+                f"[AdminOps] withdraw_phone_db failed for missing PID={pid}: "
+                f"{withdraw_result['message']}."
+            )
+
+        self.slot_ops.capture_and_save_baseline(
+            lid=expected_lid, is_occupied=False, wait_for_stable=1.5
+        )
+        self._resume_slot(expected_lid)
+        self.alarm.resolve(pid, expected_lid)
+
+    def _finalize_placement_baselines_bg(
+        self,
+        to_lid:   int,
+        from_lid: Optional[int],
+        same_slot: bool,
+    ) -> None:
+        """
+        Background: capture baselines and resume slots after a successful placement.
+        Called after admin_place_result has already been emitted so the admin
+        sees instant feedback while the sleeps in capture_and_save_baseline run here.
+        """
+        result = self.slot_ops.capture_and_save_baseline(
+            lid=to_lid, is_occupied=True, wait_for_stable=1.5
+        )
+        if result["status"] != "success":
+            logger.warning(
+                f"[AdminOps] occupied baseline capture failed for lid={to_lid}: "
+                f"{result['message']}."
+            )
+        self._resume_slot(to_lid)
+
+        if from_lid is not None and from_lid != to_lid:
+            result = self.slot_ops.capture_and_save_baseline(
+                lid=from_lid, is_occupied=False, wait_for_stable=1.5
+            )
+            if result["status"] != "success":
+                logger.warning(
+                    f"[AdminOps] empty baseline capture failed for lid={from_lid}."
+                )
+            self._resume_slot(from_lid)
+
+    def _no_qr_finalize_bg(self, from_lid: int) -> None:
+        """
+        Background work after a foreign-object (no QR) removal.
+        Runs in a daemon thread so it never delays the socket response.
+        """
+        self._stop_clip(keep=True, reason="no_qr_found_unidentified_object")
+        self.slot_ops.capture_and_save_baseline(
+            lid=from_lid, is_occupied=False, wait_for_stable=1.5
+        )
+        self._resume_slot(from_lid)
+        self.alarm.resolve(f"unknown-{from_lid}", from_lid)
+
+    # ── PRE-HIGHLIGHT SLOT ────────────────────────────────
+
+    def handle_pre_highlight_slot(self, data: dict):
+        """
+        Frontend calls this when the admin selects a phone/slot to handle
+        — before they press "I've picked it up".  We highlight the source
+        slot on the top-camera overlay immediately so the admin has a visual
+        guide before any button is pressed.
+        """
+        session = admin_ctx.get()
+        if session is None:
+            return
+        lid = data.get("lid")
+        if lid is None:
+            return
+        lid = int(lid)
+        self._refresh_overlay(session, source_lid=lid, dest_lid=None)
+
     # ── Internal helpers ──────────────────────────────────
 
     def _pause_slot(self, lid: int):
@@ -1229,5 +1333,9 @@ def register_admin_handlers(
     @socketio.on("admin_force_close_session")
     def on_force_close_session(data):
         handler.handle_force_close_session(data)
+
+    @socketio.on("admin_pre_highlight_slot")
+    def on_pre_highlight_slot(data):
+        handler.handle_pre_highlight_slot(data)
 
     logger.info("Admin resolution WebSocket handlers registered")

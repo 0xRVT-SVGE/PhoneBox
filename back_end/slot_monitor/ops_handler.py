@@ -368,23 +368,13 @@ class DVWSocketHandler:
         """
         Called by PhoneTracker on success, or directly as fallback.
         Runs in tracker daemon thread — uses socketio.emit().
+
+        Order: DB record first (needed for correctness), then emit immediately,
+        then baseline capture in background (has a sleep inside).
         """
         pid, lid, client_id = op.pid, op.lid, op.client_id
 
         top_camera.clear_context_overlay()
-
-        baseline_result = self.slot_ops.capture_and_save_baseline(
-            lid=lid, is_occupied=True, wait_for_stable=2.0
-        )
-        if baseline_result["status"] != "success":
-            self.socketio.emit(
-                "deposit_result",
-                {"status": "error", "message": "baseline_capture_failed",
-                 "pid": pid, "lid": lid},
-                to=client_id, namespace="/",
-            )
-            op_ctx.clear(client_id)
-            return
 
         db_result = self.slot_ops.deposit_phone_db(pid, lid)
         if db_result["status"] != "success":
@@ -394,6 +384,8 @@ class DVWSocketHandler:
 
         self._resume_slot(lid)
         op_ctx.complete(client_id)
+
+        # Emit success IMMEDIATELY — baseline capture runs in background.
         self.socketio.emit(
             "deposit_result",
             {
@@ -405,6 +397,13 @@ class DVWSocketHandler:
             },
             to=client_id, namespace="/",
         )
+
+        threading.Thread(
+            target=self.slot_ops.capture_and_save_baseline,
+            kwargs={"lid": lid, "is_occupied": True, "wait_for_stable": 2.0},
+            daemon=True,
+            name=f"BaselineDep-{pid[:8]}",
+        ).start()
 
     def _on_tracking_failed(self, op, reason: str):
         """Called by PhoneTracker on any failure. Runs in tracker daemon thread."""
@@ -442,11 +441,10 @@ class DVWSocketHandler:
             op_ctx.clear(client_id)
             return
 
-        self.slot_ops.capture_and_save_baseline(
-            lid=lid, is_occupied=False, wait_for_stable=2.0
-        )
         self._resume_slot(lid)
         op_ctx.complete(client_id)
+
+        # Emit immediately — baseline capture runs in background.
         emit("withdraw_result", {
             "status":     "success",
             "pid":        pid,
@@ -454,6 +452,13 @@ class DVWSocketHandler:
             "slot":       lid + 1,
             "storage_id": db_result.get("storage_id"),
         })
+
+        threading.Thread(
+            target=self.slot_ops.capture_and_save_baseline,
+            kwargs={"lid": lid, "is_occupied": False, "wait_for_stable": 2.0},
+            daemon=True,
+            name=f"BaselineWith-{pid[:8]}",
+        ).start()
 
     def _complete_verify(self, op):
         """
@@ -522,6 +527,9 @@ class DVWSocketHandler:
         """
         Called by PhoneTracker on success, or directly as fallback.
         Runs in tracker daemon thread — uses socketio.emit().
+
+        Order: DB update first (needed), then emit immediately,
+        then background baseline captures.
         """
         pid, original_lid, target_lid, client_id = (
             op.pid, op.original_lid, op.lid, op.client_id
@@ -540,18 +548,13 @@ class DVWSocketHandler:
                 op_ctx.clear(client_id)
                 return
 
-        self.slot_ops.capture_and_save_baseline(
-            lid=target_lid, is_occupied=True, wait_for_stable=1.5
-        )
         self._resume_slot(target_lid)
-
         if not same_slot:
-            self.slot_ops.capture_and_save_baseline(
-                lid=original_lid, is_occupied=False, wait_for_stable=1.5
-            )
             self._resume_slot(original_lid)
 
         op_ctx.complete(client_id)
+
+        # Emit success IMMEDIATELY — baseline captures run in background.
         self.socketio.emit(
             "verify_result",
             {
@@ -563,6 +566,21 @@ class DVWSocketHandler:
             },
             to=client_id, namespace="/",
         )
+
+        def _baselines():
+            self.slot_ops.capture_and_save_baseline(
+                lid=target_lid, is_occupied=True, wait_for_stable=1.5
+            )
+            if not same_slot:
+                self.slot_ops.capture_and_save_baseline(
+                    lid=original_lid, is_occupied=False, wait_for_stable=1.5
+                )
+
+        threading.Thread(
+            target=_baselines,
+            daemon=True,
+            name=f"BaselineVerify-{pid[:8]}",
+        ).start()
 
     # ══════════════════════════════════════════════════════
     # SLOT HELPERS

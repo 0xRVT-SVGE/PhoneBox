@@ -292,6 +292,11 @@ class SocketService {
   void adminForceClose({bool safe = true}) =>
       _emit("admin_force_close_session", {"safe": safe});
 
+  /// Tell the server to highlight [lid] on the top camera overlay
+  /// as soon as a phone is selected — before the admin presses "picked up".
+  void adminPreHighlightSlot(int lid) =>
+      _emit("admin_pre_highlight_slot", {"lid": lid});
+
   // ── Cleanup ───────────────────────────────────────────
 
   void clearDvwCallbacks() {

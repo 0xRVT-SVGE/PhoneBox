@@ -560,6 +560,9 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
       _step        = _Step.pickingUp;
     });
     _cardAnim.forward(from: 0);
+    // Immediately highlight the slot on the top-camera overlay so the
+    // admin has a visual guide before pressing "I've picked it up".
+    _socket.adminPreHighlightSlot(lid);
   }
 
   void _onPickedUp() {
@@ -808,12 +811,21 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
       case _Step.selectingPhone:
         return _phoneSelectContent();
       case _Step.pickingUp:
+        // _currentLid = the mismatched slot (where to pick from).
+        // _expectedLid is the same until QR reveals otherwise.
+        // Show both so the admin knows the full plan before touching anything.
+        final destLabel = _expectedLid != null && _expectedLid != _currentLid
+            ? 'Move it to slot ${_displaySlot(_expectedLid)} after scanning.'
+            : 'Return it to the same slot after scanning.';
         return _stepContent(
           icon: Icons.pan_tool_alt_outlined,
           color: Colors.orange,
-          title: 'Pick up the object from ${_slotLabel(_currentLid)}',
-          subtitle: 'Once you have it in hand, tap the button. '
-              'QR scan will start automatically.',
+          title: 'Pick up from slot ${_displaySlot(_currentLid)}',
+          subtitle:
+              'The camera is now highlighting this slot.\n'
+              '$destLabel\n'
+              'Tap the button once the object is in your hand — '
+              'QR scan starts automatically.',
           error: _scanError,
           actions: [
             _primaryBtn("I've picked it up", Colors.orange, _onPickedUp),
