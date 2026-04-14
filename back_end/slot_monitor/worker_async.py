@@ -225,6 +225,8 @@ class AsyncMonitorWorker:
         Process a single slot.
 
         Skips processing if slot is paused (DVW operation in progress).
+        DB is only queried on the rare events (alarm trigger/clear/recalc),
+        not on every frame, eliminating the dominant hot-path overhead.
         """
         if self.is_slot_paused(slot.lid):
             return
@@ -236,23 +238,22 @@ class AsyncMonitorWorker:
             grace_period=self.grace_period,
         )
 
-        dist = result["distance"]
-        self.metrics.total_distance += dist
+        self.metrics.total_distance += result["distance"]
 
-        pid = await self.db.get_pid_for_lid(slot.lid)
-        if pid is None:
-            pid = f"unknown-{slot.lid}"
+        # Fast path: most frames are normal — skip DB entirely.
+        if not (result["trigger_alarm"] or result["stop_alarm"] or result["needs_recalc"]):
+            return
+
+        pid = await self.db.get_pid_for_lid(slot.lid) or f"unknown-{slot.lid}"
 
         if result["trigger_alarm"]:
             self.alarm.trigger(pid, slot.lid)
             self.metrics.alarms_triggered += 1
             logger.critical(
-                f"Worker {self.worker_id}: ALARM! LID={slot.lid} PID={pid} dist={dist:.4f}"
+                f"Worker {self.worker_id}: ALARM! LID={slot.lid} PID={pid} dist={result['distance']:.4f}"
             )
 
         if result["stop_alarm"]:
-            # resolve() removes this specific (pid, lid) pair and stops the
-            # alarm only if no other mismatches remain across the entire set.
             self.alarm.resolve(pid, slot.lid)
             logger.info(f"Worker {self.worker_id}: mismatch resolved for LID={slot.lid}")
 
@@ -261,7 +262,7 @@ class AsyncMonitorWorker:
             await self.db.save_baseline(slot.lid, result["embedding"])
             self.metrics.baselines_adapted += 1
             logger.info(
-                f"Worker {self.worker_id}: baseline adapted LID={slot.lid} dist={dist:.4f}"
+                f"Worker {self.worker_id}: baseline adapted LID={slot.lid} dist={result['distance']:.4f}"
             )
 
     def _log_metrics(self):

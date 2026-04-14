@@ -53,6 +53,12 @@ _QR_CHECK_EVERY_N       = 3      # pyzbar every Nth frame
 QR_ABSENT_FAIL_TIMEOUT  = 0.8    # s QR may be absent in Phase 1 before FAIL
                                   # (0.5s was too tight for rapid hand movement)
 
+# Pre-compiled once; _check_qr is called every _QR_CHECK_EVERY_N frames.
+_UUID_RE_TRACKER = re.compile(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+    re.IGNORECASE,
+)
+
 # ── Hybrid tracker ────────────────────────────────────────
 MOTION_BLUR_K           = 15     # Gaussian kernel for frame-diff
 MOTION_THRESH           = 20     # pixel-diff threshold
@@ -684,16 +690,11 @@ class PhoneTracker:
     def _check_qr(self, frame: np.ndarray) -> bool:
         """Check for this PID's QR code in the frame. UUID format only."""
         try:
-            import re
-            _UUID_RE = re.compile(
-                r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
-                re.IGNORECASE,
-            )
             for obj in decode(frame):
                 raw = obj.data.decode("utf-8", errors="ignore").strip()
                 if raw.upper().startswith("PID:"):
                     raw = raw[4:].strip()
-                if _UUID_RE.match(raw) and raw.lower() == self._pid.lower():
+                if _UUID_RE_TRACKER.match(raw) and raw.lower() == self._pid.lower():
                     return True
         except Exception:
             pass
@@ -726,18 +727,17 @@ class PhoneTracker:
         col = _COL_BBOX_OK if self._qr_visible else _COL_BBOX_WARN
         cv2.rectangle(frame, (bx, by), (bx + bw, by + bh), col, 2)
         arm = max(6, min(14, bw // 5, bh // 5))
-        for (ax, ay), (cx, cy) in [
-            ((bx + arm,    by),        (bx,    by + arm)),
-            ((bx+bw-arm,   by),        (bx+bw, by + arm)),
-            ((bx,          by+bh-arm), (bx+arm,    by+bh)),
-            ((bx+bw,       by+bh-arm), (bx+bw-arm, by+bh)),
+        x2, y2 = bx + bw, by + bh
+        # Corner brackets (4 L-shapes)
+        for (ax, ay, ex, ey, cx, cy) in [
+            (bx + arm, by,      bx,  by,      bx,  by + arm),
+            (x2 - arm, by,      x2,  by,      x2,  by + arm),
+            (bx,       y2-arm,  bx,  y2,      bx+arm,  y2),
+            (x2,       y2-arm,  x2,  y2,      x2-arm,  y2),
         ]:
-            left = ax < bx + bw // 2
-            ex = bx if left else bx + bw
-            cv2.line(frame, (ax, ay), (ex, ay), col, 2)
-            cv2.line(frame, (ex, ay), (ex, cy), col, 2)
-        qr_text = "QR OK" if self._qr_visible else "QR NOT VISIBLE!"
-        _label(frame, qr_text, bx, by + bh + 16, col)
+            cv2.line(frame, (ax, ay), (ex, ey), col, 2)
+            cv2.line(frame, (ex, ey), (cx, cy), col, 2)
+        _label(frame, "QR OK" if self._qr_visible else "QR NOT VISIBLE!", bx, y2 + 16, col)
 
 
 # ══════════════════════════════════════════════════════════

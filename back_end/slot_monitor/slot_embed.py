@@ -38,22 +38,25 @@ def compute_embedding(roi_bgr: np.ndarray) -> np.ndarray:
     gray = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2GRAY)
     gray = cv2.resize(gray, (IMG_SIZE, IMG_SIZE), interpolation=cv2.INTER_AREA)
 
-    # 1. Histogram features (lighting-tolerant)
+    # 1. Histogram features — normalize in-place into a pre-sized buffer
     hist = cv2.calcHist([gray], [0], None, [HIST_BINS], [0, 256])
-    hist = cv2.normalize(hist, hist).flatten()
+    cv2.normalize(hist, hist)
+    hist_flat = hist.ravel()  # view, no copy
 
-    # 2. DCT features (structure-sensitive)
-    gray_f = np.float32(gray) / 255.0
-    dct = cv2.dct(gray_f)
-    dct_low = dct[:DCT_SIZE, :DCT_SIZE].flatten()
+    # 2. DCT features — convert uint8→float32 in one step
+    gray_f = gray.astype(np.float32) * (1.0 / 255.0)
+    dct_low = cv2.dct(gray_f)[:DCT_SIZE, :DCT_SIZE].ravel()  # view, no copy
 
-    # Combine and normalize
-    emb = np.concatenate([hist, dct_low])
+    # 3. Combine into pre-allocated output
+    emb = np.empty(EMBEDDING_DIM, dtype=np.float32)
+    emb[:HIST_BINS] = hist_flat
+    emb[HIST_BINS:] = dct_low
+
     norm = np.linalg.norm(emb)
     if norm > 1e-8:
-        emb = emb / norm
+        emb /= norm  # in-place divide
 
-    return emb.astype(np.float32)
+    return emb
 
 
 def embedding_distance(e1: np.ndarray, e2: np.ndarray) -> float:

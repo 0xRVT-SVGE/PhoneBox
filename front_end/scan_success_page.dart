@@ -342,7 +342,8 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
             ? 'Hold the QR code under the top camera,\nthen carry the phone to $slotLabel.'
             : 'Remove your phone from $slotLabel,\nthen hold its QR code under the camera.';
         return [
-          const SizedBox(width: 36, height: 36,
+          const SizedBox(
+              width: 36, height: 36,
               child: CircularProgressIndicator(strokeWidth: 3)),
           const SizedBox(height: 16),
           Icon(
@@ -363,6 +364,10 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
 
       case DvwStep.tracking:
         final qrColor = _qrVisible ? Colors.green : Colors.orange;
+        final qrIcon  = _qrVisible ? Icons.qr_code_2 : Icons.qr_code_2_outlined;
+        final qrLabel = _qrVisible
+            ? 'QR code visible — keep it facing up'
+            : 'QR code not detected — keep the QR visible!';
         return [
           const SizedBox(width: 36, height: 36,
               child: CircularProgressIndicator(strokeWidth: 3)),
@@ -376,29 +381,7 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
             style: TextStyle(fontSize: 14, color: Colors.grey),
           ),
           const SizedBox(height: 16),
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 300),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            decoration: BoxDecoration(
-              color: qrColor.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: qrColor.withOpacity(0.4)),
-            ),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              Icon(_qrVisible ? Icons.qr_code_2 : Icons.qr_code_2_outlined,
-                  color: qrColor, size: 20),
-              const SizedBox(width: 8),
-              Flexible(
-                child: Text(
-                  _qrVisible
-                      ? 'QR code visible — keep it facing up'
-                      : 'QR code not detected — keep the QR visible!',
-                  style: TextStyle(
-                      color: qrColor, fontSize: 13, fontWeight: FontWeight.w500),
-                ),
-              ),
-            ]),
-          ),
+          _QrStatusBadge(color: qrColor, icon: qrIcon, label: qrLabel),
           const SizedBox(height: 24),
           _cancelBtn(),
         ];
@@ -432,4 +415,41 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
         onPressed: _onCancel,
         child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
       );
+}
+
+// ── QR status badge — extracted to prevent unnecessary decoration allocations ─
+
+class _QrStatusBadge extends StatelessWidget {
+  final Color color;
+  final IconData icon;
+  final String label;
+  const _QrStatusBadge({
+    required this.color,
+    required this.icon,
+    required this.label,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withOpacity(0.4)),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(icon, color: color, size: 20),
+        const SizedBox(width: 8),
+        Flexible(
+          child: Text(
+            label,
+            style: TextStyle(
+                color: color, fontSize: 13, fontWeight: FontWeight.w500),
+          ),
+        ),
+      ]),
+    );
+  }
 }

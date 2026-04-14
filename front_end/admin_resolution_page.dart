@@ -560,9 +560,6 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
       _step        = _Step.pickingUp;
     });
     _cardAnim.forward(from: 0);
-    // Immediately highlight the slot on the top-camera overlay so the
-    // admin has a visual guide before pressing "I've picked it up".
-    _socket.adminPreHighlightSlot(lid);
   }
 
   void _onPickedUp() {
@@ -692,68 +689,12 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
   Widget _buildTopBar() {
     final total = _mismatchMap.length;
     final done  = total - _remaining.length;
-    final pct   = total > 0 ? done / total : 0.0;
-
-    return Positioned(
-      top: 0, left: 0, right: 0,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Colors.black87, Colors.transparent],
-          ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(children: [
-              if (_step == _Step.scanning || _step == _Step.trackingAdmin)
-                _topBadge(Icons.fiber_manual_record, 'REC', Colors.red),
-              const SizedBox(width: 8),
-              _topBadge(Icons.videocam_outlined, 'TOP CAM', Colors.white24),
-              const Spacer(),
-              if (total > 0)
-                Text('$done / $total',
-                    style: const TextStyle(
-                        color: Colors.white70, fontSize: 13)),
-            ]),
-            if (total > 0) ...[
-              const SizedBox(height: 6),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(2),
-                child: LinearProgressIndicator(
-                  value: pct,
-                  minHeight: 3,
-                  backgroundColor: Colors.white24,
-                  valueColor: AlwaysStoppedAnimation(
-                      _remaining.isEmpty
-                          ? Colors.green
-                          : Colors.deepOrangeAccent),
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
+    return _TopProgressBar(
+      total: total,
+      done: done,
+      isRecording: _step == _Step.scanning || _step == _Step.trackingAdmin,
     );
   }
-
-  Widget _topBadge(IconData icon, String label, Color bg) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-    decoration: BoxDecoration(
-        color: bg, borderRadius: BorderRadius.circular(5)),
-    child: Row(mainAxisSize: MainAxisSize.min, children: [
-      Icon(icon, color: Colors.white, size: 11),
-      const SizedBox(width: 4),
-      Text(label,
-          style: const TextStyle(
-              color: Colors.white,
-              fontSize: 10,
-              fontWeight: FontWeight.w600)),
-    ]),
-  );
 
   // ── Card ──────────────────────────────────────────────
 
@@ -811,21 +752,12 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
       case _Step.selectingPhone:
         return _phoneSelectContent();
       case _Step.pickingUp:
-        // _currentLid = the mismatched slot (where to pick from).
-        // _expectedLid is the same until QR reveals otherwise.
-        // Show both so the admin knows the full plan before touching anything.
-        final destLabel = _expectedLid != null && _expectedLid != _currentLid
-            ? 'Move it to slot ${_displaySlot(_expectedLid)} after scanning.'
-            : 'Return it to the same slot after scanning.';
         return _stepContent(
           icon: Icons.pan_tool_alt_outlined,
           color: Colors.orange,
-          title: 'Pick up from slot ${_displaySlot(_currentLid)}',
-          subtitle:
-              'The camera is now highlighting this slot.\n'
-              '$destLabel\n'
-              'Tap the button once the object is in your hand — '
-              'QR scan starts automatically.',
+          title: 'Pick up the object from ${_slotLabel(_currentLid)}',
+          subtitle: 'Once you have it in hand, tap the button. '
+              'QR scan will start automatically.',
           error: _scanError,
           actions: [
             _primaryBtn("I've picked it up", Colors.orange, _onPickedUp),
@@ -873,11 +805,6 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
           ],
         );
       case _Step.trackingAdmin:
-        final qrColor = _qrVisible ? Colors.green : Colors.orange;
-        final qrIcon  = _qrVisible ? Icons.qr_code_2 : Icons.qr_code_2_outlined;
-        final qrLabel = _qrVisible
-            ? 'QR visible — move phone to slot ${_slotLabel(_expectedLid)}'
-            : 'QR not visible — keep QR facing up!';
         return _stepContent(
           icon: Icons.my_location_outlined,
           color: Colors.greenAccent,
@@ -886,24 +813,7 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
               'if the slot is occupied. The system detects both automatically.',
           error: _scanError,
           actions: [
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 300),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              decoration: BoxDecoration(
-                color: qrColor.withOpacity(0.12),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: qrColor.withOpacity(0.4)),
-              ),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(qrIcon, color: qrColor, size: 20),
-                const SizedBox(width: 8),
-                Flexible(
-                  child: Text(qrLabel,
-                      style: TextStyle(color: qrColor, fontSize: 13,
-                          fontWeight: FontWeight.w500)),
-                ),
-              ]),
-            ),
+            _TrackingQrBadge(qrVisible: _qrVisible),
           ],
         );
       case _Step.autoStaged:
@@ -1399,4 +1309,108 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
 
   String _nextLabel() =>
       (_remaining.isEmpty && _staged.isEmpty) ? 'Finish Session' : 'Next';
+}
+
+// ── QR status badge — only this widget rebuilds on tracking_update ────────────
+
+class _TrackingQrBadge extends StatelessWidget {
+  final bool qrVisible;
+  const _TrackingQrBadge({required this.qrVisible});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = qrVisible ? Colors.green : Colors.orange;
+    final icon  = qrVisible ? Icons.qr_code_2 : Icons.qr_code_2_outlined;
+    final label = qrVisible
+        ? 'QR visible — move phone to destination slot'
+        : 'QR not visible — keep QR facing up!';
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withOpacity(0.4)),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(icon, color: color, size: 20),
+        const SizedBox(width: 8),
+        Flexible(
+          child: Text(label,
+              style: TextStyle(
+                  color: color, fontSize: 13, fontWeight: FontWeight.w500)),
+        ),
+      ]),
+    );
+  }
+}
+
+// ── Session progress bar overlay (Positioned, StatelessWidget) ────────────────
+
+class _TopProgressBar extends StatelessWidget {
+  final int total;
+  final int done;
+  final bool isRecording;
+  const _TopProgressBar({
+    required this.total,
+    required this.done,
+    required this.isRecording,
+  });
+
+  static Widget _badge(IconData icon, String label, Color bg) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+    decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(5)),
+    child: Row(mainAxisSize: MainAxisSize.min, children: [
+      Icon(icon, color: Colors.white, size: 11),
+      const SizedBox(width: 4),
+      Text(label,
+          style: const TextStyle(
+              color: Colors.white, fontSize: 10, fontWeight: FontWeight.w600)),
+    ]),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final pct = total > 0 ? done / total : 0.0;
+    return Positioned(
+      top: 0, left: 0, right: 0,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Colors.black87, Colors.transparent],
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              if (isRecording) _badge(Icons.fiber_manual_record, 'REC', Colors.red),
+              const SizedBox(width: 8),
+              _badge(Icons.videocam_outlined, 'TOP CAM', Colors.white24),
+              const Spacer(),
+              if (total > 0)
+                Text('$done / $total',
+                    style: const TextStyle(color: Colors.white70, fontSize: 13)),
+            ]),
+            if (total > 0) ...[
+              const SizedBox(height: 6),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(2),
+                child: LinearProgressIndicator(
+                  value: pct,
+                  minHeight: 3,
+                  backgroundColor: Colors.white24,
+                  valueColor: AlwaysStoppedAnimation(
+                      done >= total ? Colors.green : Colors.deepOrangeAccent),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
 }

@@ -324,26 +324,28 @@ class _AlarmPageState extends State<AlarmPage>
       children: [
         connected && renderer.srcObject != null
             ? RTCVideoView(renderer,
-            objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain)
+                objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain)
             : Container(
-          color: Colors.black,
-          child: Center(
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              const SizedBox(
-                  width: 22, height: 22,
-                  child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Colors.white24)),
-              const SizedBox(height: 8),
-              Text('Connecting $camLabel…',
-                  style: const TextStyle(
-                      color: Colors.white38, fontSize: 12)),
-            ]),
-          ),
-        ),
+                color: Colors.black,
+                child: Center(
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    const SizedBox(
+                        width: 22, height: 22,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white24)),
+                    const SizedBox(height: 8),
+                    Text('Connecting $camLabel…',
+                        style: const TextStyle(
+                            color: Colors.white38, fontSize: 12)),
+                  ]),
+                ),
+              ),
+        // Static camera-type badge
         Positioned(
           bottom: 10, left: 12,
           child: _camBadge(camIcon, camLabel),
         ),
+        // Animated REC badge — scoped so only this widget rebuilds on pulse
         Positioned(
           bottom: 10, right: 12,
           child: AnimatedBuilder(
@@ -432,6 +434,8 @@ class _AlarmPageState extends State<AlarmPage>
           color: const Color(0xFFE5484D).withOpacity(0.2), width: 1),
     ),
     child: Row(children: [
+      // Only this icon pulses — scope AnimatedBuilder so the text/count
+      // widgets are not rebuilt on every animation tick.
       AnimatedBuilder(
         animation: _pulseAnim,
         builder: (_, __) => Opacity(

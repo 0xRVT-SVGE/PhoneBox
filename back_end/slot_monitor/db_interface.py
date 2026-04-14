@@ -351,6 +351,11 @@ class SlotMonitorDB:
 # ASYNC DATABASE INTERFACE (Real-time Monitoring)
 # ============================================================
 
+# Sentinel for the PID cache — distinguishes a cached None (empty slot) from
+# a cache miss.  Using `object()` instead of None avoids an ambiguous check.
+_CACHE_MISS = object()
+
+
 class AsyncSlotMonitorDB:
     """
     Async database interface for slot monitoring.
@@ -556,24 +561,33 @@ class AsyncSlotMonitorDB:
     async def get_pid_for_lid(self, lid: int) -> Optional[str]:
         """
         Get phone ID for a location (with internal caching).
-        Cache is invalidated automatically after mutating operations.
+
+        In asyncio there is only one running coroutine at a time, so the
+        dict read is safe without a lock.  We only acquire the lock when
+        populating the cache to prevent a double-fetch if two coroutines
+        miss simultaneously (unlikely but possible in a large worker pool).
         """
-        async with self._cache_lock:
-            if lid in self._pid_cache:
-                return self._pid_cache[lid]
+        # Fast path: no lock needed for a dict read in single-threaded asyncio.
+        cached = self._pid_cache.get(lid, _CACHE_MISS)
+        if cached is not _CACHE_MISS:
+            return cached  # type: ignore[return-value]
 
         self._require_pool()
-        row = await self._pool.fetchrow(
-            """
-            SELECT pid
-            FROM phone_storage
-            WHERE lid = $1
-              AND retrieved_at IS NULL
-            """,
-            lid
-        )
-
         async with self._cache_lock:
+            # Re-check inside lock to avoid redundant DB queries.
+            cached = self._pid_cache.get(lid, _CACHE_MISS)
+            if cached is not _CACHE_MISS:
+                return cached  # type: ignore[return-value]
+
+            row = await self._pool.fetchrow(
+                """
+                SELECT pid
+                FROM phone_storage
+                WHERE lid = $1
+                  AND retrieved_at IS NULL
+                """,
+                lid,
+            )
             value = row["pid"] if row else None
             self._pid_cache[lid] = value
             return value

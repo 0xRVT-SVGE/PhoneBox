@@ -12,6 +12,7 @@ import os
 import time
 import logging
 import numpy as np
+from collections import deque
 from typing import Optional, Tuple, Dict
 from back_end.slot_monitor.slot_embed import compute_embedding, embedding_distance
 
@@ -48,8 +49,8 @@ class Slot:
         # that are already wrong at startup — fires alarm on first frame.
         self._grace_start_ts: Optional[float] = None
 
-        self.distances_history: list[float] = []
-        self.max_history = 10
+        # deque(maxlen) gives O(1) append+evict; list.pop(0) was O(n).
+        self.distances_history: deque = deque(maxlen=10)
 
     # ── Pre-flag (startup mismatches) ─────────────────────
 
@@ -103,9 +104,7 @@ class Slot:
             grace_period: float,
     ) -> dict:
         self.last_dist = dist
-        self.distances_history.append(dist)
-        if len(self.distances_history) > self.max_history:
-            self.distances_history.pop(0)
+        self.distances_history.append(dist)  # deque(maxlen) auto-evicts oldest
 
         now = time.time()
 
@@ -151,7 +150,7 @@ class Slot:
     def _should_recalculate(self, recalc_threshold: float) -> bool:
         if len(self.distances_history) < 5:
             return False
-        recent = self.distances_history[-5:]
+        recent = list(self.distances_history)[-5:]
         return all(recalc_threshold < d < self.last_dist * 1.5 for d in recent)
 
     def get_status(self) -> dict:
@@ -161,7 +160,7 @@ class Slot:
             "is_occupied":      self.is_occupied,
             "mismatch":         self.mismatch,
             "last_distance":    self.last_dist,
-            "distance_history": self.distances_history.copy(),
+            "distance_history": list(self.distances_history),
             "grace_active":     self._grace_start_ts is not None,
         }
 

@@ -247,16 +247,26 @@ class PhoneRecorder:
                     f"[Evidence] Top-cam clip KEPT: {self._path.name} "
                     f"({self._frame_count} frames, {duration:.1f}s)"
                 )
-                # Save face camera clip in a background thread.
-                # Encoding 30s of face footage is slow (~25s) and must never
-                # block the caller — admin_ops_handler needs to emit socket
-                # events immediately after stop() returns.
-                threading.Thread(
-                    target=self._save_face_clip_bg,
-                    args=(duration,),
-                    daemon=True,
-                    name=f"FaceClip-{self.pid[:8]}",
-                ).start()
+                # Also save a face camera clip for the same window
+                # (shows who was at the box during this admin action)
+                try:
+                    from back_end.slot_monitor.camera.rolling_buffer import (
+                        face_rolling_buffer
+                    )
+                    face_path = face_rolling_buffer.save_session_clip(
+                        session_id=self.session_id, pid=self.pid
+                    )
+                    if face_path:
+                        _db_insert_clip(
+                            session_id=self.session_id,
+                            pid=self.pid,
+                            lid=self.lid,
+                            clip_path=str(face_path),
+                            outcome="kept_face_cam",
+                            duration_s=duration,
+                        )
+                except Exception as e:
+                    logger.warning(f"[Evidence] Face clip save failed: {e}")
             else:
                 logger.warning(
                     f"[Evidence] Clip was flagged to keep but file is empty or missing: "
@@ -274,28 +284,6 @@ class PhoneRecorder:
 
         return duration
 
-    def _save_face_clip_bg(self, duration: float) -> None:
-        """
-        Save the face-camera rolling buffer clip in a background thread.
-        Called from stop(keep=True) so it never blocks the caller.
-        """
-        try:
-            from back_end.slot_monitor.camera.rolling_buffer import face_rolling_buffer
-            face_path = face_rolling_buffer.save_session_clip(
-                session_id=self.session_id, pid=self.pid
-            )
-            if face_path:
-                _db_insert_clip(
-                    session_id=self.session_id,
-                    pid=self.pid,
-                    lid=self.lid,
-                    clip_path=str(face_path),
-                    outcome="kept_face_cam",
-                    duration_s=duration,
-                )
-        except Exception as e:
-            logger.warning(f"[Evidence] Face clip save failed: {e}")
-
     def _record_loop(self, pre_frames: list):
         """Background thread: write pre-buffer frames then live frames."""
         from back_end.slot_monitor.camera.top_camera import top_camera
@@ -305,7 +293,7 @@ class PhoneRecorder:
         # ── Phase 1: write pre-buffer snapshot (the "before" footage) ────────
         for _, jpeg_bytes in pre_frames:
             frame = cv2.imdecode(
-                np.frombuffer(jpeg_bytes, dtype=np.uint8),
+                np.frombuffer(jpeg_bytes, np.uint8),
                 cv2.IMREAD_COLOR,
             )
             if frame is None:

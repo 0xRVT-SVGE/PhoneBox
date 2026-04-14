@@ -48,24 +48,25 @@ _Frame = Tuple[float, bytes]
 
 # ── Core buffer ───────────────────────────────────────────────────────────────
 
+_JPEG_ENCODE_PARAMS = [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY]
+
+
 class RollingBuffer:
     def __init__(self, duration_s: float = BUFFER_DURATION_S,
                  jpeg_quality: int = JPEG_QUALITY):
         self._duration = duration_s
-        self._quality  = jpeg_quality
+        self._encode_params = [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality]
         self._lock     = threading.Lock()
         self._frames: deque[_Frame] = deque()
 
     def push(self, frame: np.ndarray):
-        ok, buf = cv2.imencode(
-            ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self._quality]
-        )
+        ok, buf = cv2.imencode(".jpg", frame, self._encode_params)
         if not ok:
             return
         now = time.time()
+        cutoff = now - self._duration
         with self._lock:
             self._frames.append((now, buf.tobytes()))
-            cutoff = now - self._duration
             while self._frames and self._frames[0][0] < cutoff:
                 self._frames.popleft()
 
@@ -88,8 +89,9 @@ class RollingBuffer:
         if not frames:
             logger.warning(f"[RollingBuffer] Empty buffer — nothing to save to {path}")
             return False
+        # Decode only the first frame to get dimensions
         first = cv2.imdecode(
-            np.frombuffer(frames[0][1], dtype=np.uint8), cv2.IMREAD_COLOR
+            np.frombuffer(frames[0][1], np.uint8), cv2.IMREAD_COLOR
         )
         if first is None:
             return False
@@ -108,10 +110,11 @@ class RollingBuffer:
             logger.error(f"[RollingBuffer] VideoWriter failed for {path}")
             return False
         try:
-            for _, jpeg_bytes in frames:
-                f = cv2.imdecode(
-                    np.frombuffer(jpeg_bytes, dtype=np.uint8), cv2.IMREAD_COLOR
-                )
+            writer.write(first)  # write already-decoded first frame
+            _buf = np.empty(0, dtype=np.uint8)  # reused decode buffer name
+            for _, jpeg_bytes in frames[1:]:
+                _buf = np.frombuffer(jpeg_bytes, np.uint8)
+                f = cv2.imdecode(_buf, cv2.IMREAD_COLOR)
                 if f is not None:
                     writer.write(f)
         finally:

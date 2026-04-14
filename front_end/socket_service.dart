@@ -170,6 +170,7 @@ class SocketService {
     Function(dynamic)? onAdminSessionClosed,
     Function(dynamic)? onAdminOperationError,
   }) {
+    // Only overwrite a stored callback when the caller supplies a non-null value.
     if (onScanStatus             != null) _onScanStatus             = onScanStatus;
     if (onDepositWaiting         != null) _onDepositWaiting         = onDepositWaiting;
     if (onDepositResult          != null) _onDepositResult          = onDepositResult;
@@ -291,11 +292,6 @@ class SocketService {
 
   void adminForceClose({bool safe = true}) =>
       _emit("admin_force_close_session", {"safe": safe});
-
-  /// Tell the server to highlight [lid] on the top camera overlay
-  /// as soon as a phone is selected — before the admin presses "picked up".
-  void adminPreHighlightSlot(int lid) =>
-      _emit("admin_pre_highlight_slot", {"lid": lid});
 
   // ── Cleanup ───────────────────────────────────────────
 

@@ -206,25 +206,28 @@ class TopCamera:
                 time.sleep(0.1)
                 continue
 
-            # Store raw frame (no overlays) for QR scanning and CSRT tracking
-            raw = frame.copy()
-
-            # ── Context overlay (grid / source / dest / staging) ──
-            # Read without lock — atomic under CPython GIL
+            # Read overlay hooks once (atomic under CPython GIL).
             ctx_fn = self._context_overlay
-            if ctx_fn is not None:
+            trk_fn = self._tracker_overlay
+
+            if ctx_fn is not None or trk_fn is not None:
+                # Overlays will mutate `frame` in-place, so we need a clean copy
+                # for QR scanning / tracker (raw).
+                raw = frame.copy()
                 try:
-                    ctx_fn(frame)
+                    if ctx_fn is not None:
+                        ctx_fn(frame)
                 except Exception as e:
                     logger.warning(f"[TopCamera] Context overlay error: {e}")
-
-            # ── Tracker overlay (bbox + QR status) ────────────────
-            trk_fn = self._tracker_overlay
-            if trk_fn is not None:
                 try:
-                    trk_fn(frame)
+                    if trk_fn is not None:
+                        trk_fn(frame)
                 except Exception as e:
                     logger.warning(f"[TopCamera] Tracker overlay error: {e}")
+            else:
+                # No overlays — frame is never mutated; raw and annotated are
+                # the same object.  Both getters call .copy() so callers are safe.
+                raw = frame
 
             # Store raw and annotated frames
             with self._lock:
