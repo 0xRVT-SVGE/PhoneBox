@@ -8,6 +8,8 @@ Shutdown ownership: scanner_loop calls stop_scan() when it exits.
 This module does not need to know about the global stop_event.
 """
 
+import json
+import re
 import time
 import threading
 import cv2
@@ -30,6 +32,14 @@ _executor = ThreadPoolExecutor(max_workers=1)
 _scan_start_event = threading.Event()
 _scan_stop_event = threading.Event()
 
+# Pre-compiled regex for parse_pg_array (was imported+compiled inside the fn).
+_PG_ARRAY_SPLIT_RE = re.compile(r",\s*")
+
+# Cached resize scale factor: SCALED_WIDTH / camera_width.
+# Camera resolution is fixed for the lifetime of the process.  Computed once
+# on first face-scan call then reused — avoids a float division every 0.5 s.
+_resize_scale: float | None = None
+
 
 # ============================================================
 # UTILITIES
@@ -41,7 +51,7 @@ def l2_normalize(vec):
 
 
 def parse_pg_array(embed_value):
-    import json, re
+    # json and re are now module-level imports — no per-call overhead.
     if embed_value is None:
         return None
     if isinstance(embed_value, (list, tuple, np.ndarray)):
@@ -54,7 +64,8 @@ def parse_pg_array(embed_value):
                 clean = embed_value.strip("{}").strip()
                 if not clean:
                     return None
-                return np.array(list(map(float, re.split(r",\s*", clean))), dtype=np.float32)
+                return np.array(list(map(float, _PG_ARRAY_SPLIT_RE.split(clean))),
+                                dtype=np.float32)
         except Exception:
             return None
     return None
@@ -100,6 +111,8 @@ def emit_if_changed(new_auth, new_results):
 
 def run_scan_session():
     """Execute a single scan session until completion or stop signal."""
+    global _resize_scale
+
     emit_if_changed(
         {"authorized": False, "user": None},
         {
@@ -169,7 +182,13 @@ def run_scan_session():
         if barcode_ok and scanner_state.current_embed is not None:
             if timestamp - last_face_scan > FACE_INTERVAL:
                 last_face_scan = timestamp
-                scale = SCALED_WIDTH / frame.shape[1]
+
+                # Compute resize scale once per process lifetime — camera
+                # resolution is fixed, so the ratio never changes.
+                if _resize_scale is None:
+                    _resize_scale = SCALED_WIDTH / frame.shape[1]
+                scale = _resize_scale
+
                 resized = cv2.resize(frame, (SCALED_WIDTH, int(frame.shape[0] * scale)))
                 if face_future is None or face_future.done():
                     face_future = _executor.submit(_deepface_represent, resized)
@@ -182,8 +201,9 @@ def run_scan_session():
                         results,
                         key=lambda f: f["facial_area"]["w"] * f["facial_area"]["h"],
                     )
+                    # np.asarray avoids a copy when the source is already array-like.
                     live_embed = l2_normalize(
-                        np.array(largest["embedding"], dtype=np.float32)
+                        np.asarray(largest["embedding"], dtype=np.float32)
                     )
                     sim = float(np.dot(live_embed, scanner_state.current_embed))
                     if sim >= SIMILARITY_THRESHOLD:

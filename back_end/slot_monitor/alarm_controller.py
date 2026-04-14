@@ -64,6 +64,7 @@ class AlarmController:
 
     def trigger(self, pid: str, lid: int):
         pid = str(pid)
+        snapshot = None
         with self._lock:
             if not self.active:
                 self._silenced = False
@@ -79,11 +80,15 @@ class AlarmController:
 
             self.mismatches.add((pid, lid))
             logger.warning(f"Mismatch added: PID={pid}, LID={lid}")
+            # Take a snapshot while we hold the lock; build the list outside.
             if self.socketio:
-                self.socketio.emit("alarm_updated", {
-                    "mismatch_count": len(self.mismatches),
-                    "mismatches": [[p, l] for p, l in self.mismatches],
-                })
+                snapshot = list(self.mismatches)
+
+        if snapshot is not None:
+            self.socketio.emit("alarm_updated", {
+                "mismatch_count": len(snapshot),
+                "mismatches": [[p, l] for p, l in snapshot],
+            })
 
         # Save rolling-buffer clips in a background thread.
         # This MUST be outside the lock and non-blocking — each clip can take
@@ -103,6 +108,9 @@ class AlarmController:
         Runs in a daemon thread — never blocks trigger() or the event loop.
         """
         try:
+            # Import lazily on first alarm (avoids circular import at module load),
+            # but the module is cached by Python after the first call so subsequent
+            # alarms do not pay an import cost.
             from back_end.slot_monitor.camera.rolling_buffer import (
                 face_rolling_buffer, top_rolling_buffer
             )
@@ -157,10 +165,12 @@ class AlarmController:
         # TODO: Replace with proper authentication
         if password == "admin":
             with self._lock:
-                return {
-                    "authenticated": True,
-                    "mismatches": sorted([(str(p), l) for p, l in self.mismatches]),
-                }
+                # Copy the set inside the lock; sort outside to minimise lock hold time.
+                snapshot = list(self.mismatches)
+            return {
+                "authenticated": True,
+                "mismatches": sorted([(str(p), l) for p, l in snapshot]),
+            }
         return {"authenticated": False, "mismatches": []}
 
     def get_status(self) -> dict:

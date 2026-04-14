@@ -46,21 +46,23 @@ class ScannerState:
 
     # ---------------- RAW FRAME ----------------
     def set_rframe(self, frame):
+        # Lock needed: scanner_loop writes, WebRTC async thread reads.
         with self._rframe_lock:
-            self._latest_rframe = frame if frame is not None else None
+            self._latest_rframe = frame
 
     def get_rframe(self):
         with self._rframe_lock:
-            return self._latest_rframe if self._latest_rframe is not None else None
+            return self._latest_rframe
 
     # ---------------- FRAME WITH ROI ------------
     def set_frame(self, frame):
+        # Lock needed: scanner_loop writes, WebRTC async thread reads.
         with self._frame_lock:
-            self._latest_frame = frame if frame is not None else None
+            self._latest_frame = frame
 
     def get_frame(self):
         with self._frame_lock:
-            return self._latest_frame if self._latest_frame is not None else None
+            return self._latest_frame
 
     # ---------------- PROPERTIES ----------------
     @property
@@ -165,14 +167,17 @@ class ScannerState:
                 pass
 
     def _get_status_data(self):
+        # Read the two sub-dicts once each to avoid repeated attribute lookups.
+        auth    = self._auth_status
+        results = self._scan_results
         return {
-            "running": self._scan_request["running"],
-            "authorized": self._auth_status["authorized"],
-            "user": self._auth_status["user"],
-            "face_verified": self._scan_results["face_verified"],
-            "barcode_verified": self._scan_results["barcode_verified"],
-            "current_name": self._scan_results["current_name"],
-            "badge_timeout_exceeded": self._scan_results["badge_timeout_exceeded"],
+            "running":               self._scan_request["running"],
+            "authorized":            auth["authorized"],
+            "user":                  auth["user"],
+            "face_verified":         results["face_verified"],
+            "barcode_verified":      results["barcode_verified"],
+            "current_name":          results["current_name"],
+            "badge_timeout_exceeded": results["badge_timeout_exceeded"],
         }
 
     def _emit_socket(self):

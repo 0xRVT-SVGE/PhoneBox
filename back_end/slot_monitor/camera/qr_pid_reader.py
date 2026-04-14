@@ -129,6 +129,12 @@ def read_pid_from_buffer(
     logger.info(f"QR scan started via frame buffer (timeout={timeout_sec}s)")
     deadline = time.time() + timeout_sec
 
+    # Resolve the frame-getter once before the loop — avoids a hasattr() call
+    # (which does a dict lookup + exception catch) on every single frame.
+    get_frame_fn = (frame_buffer.get_raw_frame
+                    if hasattr(frame_buffer, "get_raw_frame")
+                    else frame_buffer.get_frame)
+
     while time.time() < deadline:
         # Check cancellation first — exits within one loop iteration
         if cancel_event is not None and cancel_event.is_set():
@@ -143,17 +149,13 @@ def read_pid_from_buffer(
         if not got_frame:
             continue
 
-        # Use raw (pre-overlay) frame for accurate QR decoding
-        frame = (frame_buffer.get_raw_frame()
-                 if hasattr(frame_buffer, "get_raw_frame")
-                 else frame_buffer.get_frame())
+        frame = get_frame_fn()
         frame_buffer.clear_frame_event()
 
         if frame is None:
             continue
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
         data, points, _ = _qr_detector.detectAndDecode(gray)
 
         if data:
