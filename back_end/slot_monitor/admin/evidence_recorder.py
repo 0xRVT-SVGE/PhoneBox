@@ -161,12 +161,19 @@ class PhoneRecorder:
     """
     Records a video clip from top_camera for one phone resolution attempt.
 
-    The clip starts with a prepended snapshot from top_rolling_buffer so it
-    includes up to 30s of footage BEFORE the admin picked up the phone.
+    Architecture change (performance fix)
+    ──────────────────────────────────────
+    The original implementation decoded up to 600 JPEG pre-buffer frames
+    synchronously before live capture could begin, causing lag on admin pick-up.
 
-    start()          → flushes buffer snapshot to disk + begins live capture thread
-    stop(keep=True)  → stops thread, keeps file + writes DB record
-    stop(keep=False) → stops thread, deletes file, no DB record
+    New model:
+        start()   → snapshot pre-buffer, submit to BackgroundEncoder (non-blocking),
+                    then start live capture thread immediately.
+        stop()    → stop live capture, flush VideoWriter.
+                    keep=True:  DB records inserted; pre-buffer DB record inserted
+                                via callback once BackgroundEncoder finishes.
+                    keep=False: live clip deleted; pre-buffer clip deleted by
+                                BackgroundEncoder delete-on-done flag.
     """
 
     def __init__(self, session_id: str, pid: str, lid: int, session_dir: Path):
@@ -176,54 +183,81 @@ class PhoneRecorder:
 
         ts = int(time.time())
         safe_pid = pid.replace("-", "")[:16]
-        self._path = session_dir / f"{safe_pid}_lid{lid}_{ts}.mp4"
+        self._path     = session_dir / f"{safe_pid}_lid{lid}_{ts}_live.mp4"
+        self._pre_path = session_dir / f"{safe_pid}_lid{lid}_{ts}_pre.mp4"
         self._started_at: float = 0.0
 
-        self._running = False
-        self._thread: Optional[threading.Thread] = None
-        self._writer: Optional[cv2.VideoWriter] = None
+        self._running   = False
+        self._keep_pre  = False
+        self._pre_done  = False
+        self._thread:  Optional[threading.Thread] = None
+        self._writer:  Optional[cv2.VideoWriter]  = None
         self._frame_count = 0
 
     def start(self):
         """
-        Snapshot the top rolling buffer (pre-action footage) then begin
-        live recording.  Returns immediately; live capture runs in background.
+        Submit pre-buffer clip to BackgroundEncoder (non-blocking), then
+        start live capture immediately.  Returns in microseconds.
         """
         from back_end.slot_monitor.camera.rolling_buffer import (
             top_rolling_buffer, TOP_FPS,
         )
+        from back_end.slot_monitor.admin.background_encoder import BackgroundEncoder
 
         self._running    = True
         self._started_at = time.time()
 
-        # Grab the rolling buffer snapshot synchronously before starting
-        # the live thread — this is the "before" footage
         pre_frames = top_rolling_buffer.snapshot()
+        if pre_frames:
+            BackgroundEncoder.instance().submit(
+                frames         = pre_frames,
+                path           = self._pre_path,
+                fps            = float(TOP_FPS),
+                callback       = self._on_pre_encoded,
+                delete_on_done = False,
+            )
 
         self._thread = threading.Thread(
-            target=self._record_loop,
-            args=(pre_frames,),
+            target=self._record_live,
             daemon=True,
             name=f"EvidenceRec-{self.pid[:8]}",
         )
         self._thread.start()
+
         logger.info(
             f"[Evidence] Recording started: PID={self.pid} LID={self.lid} "
-            f" {self._path.name}  (pre-buffer={len(pre_frames)} frames)"
+            f"live={self._path.name}  "
+            f"pre={'queued' if pre_frames else 'empty'} ({len(pre_frames)} frames)"
         )
 
+    def _on_pre_encoded(self, path: Path) -> None:
+        """Called by BackgroundEncoder when pre-buffer clip is encoded."""
+        self._pre_done = True
+        if not self._keep_pre:
+            try:
+                if path.exists():
+                    path.unlink()
+                    logger.debug(f"[Evidence] Pre-buffer clip discarded: {path.name}")
+            except Exception as e:
+                logger.warning(f"[Evidence] Could not delete pre-buffer clip: {e}")
+        else:
+            try:
+                _db_insert_clip(
+                    session_id = self.session_id,
+                    pid        = self.pid,
+                    lid        = self.lid,
+                    clip_path  = str(path),
+                    outcome    = "pre_buffer",
+                    duration_s = 0.0,
+                )
+                logger.info(f"[Evidence] Pre-buffer DB record inserted: {path.name}")
+            except Exception as e:
+                logger.warning(f"[Evidence] Pre-buffer DB insert failed: {e}")
+
     def stop(self, keep: bool) -> float:
-        """
-        Stop recording.
+        self._running  = False
+        self._keep_pre = keep
 
-        Args:
-            keep: If True, flush the file and insert a DB record.
-                  If False, delete the file silently.
-
-        Returns:
-            Duration in seconds.
-        """
-        self._running = False
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=3.0)
 
@@ -236,40 +270,57 @@ class PhoneRecorder:
         if keep:
             if self._path.exists() and self._frame_count > 0:
                 _db_insert_clip(
-                    session_id=self.session_id,
-                    pid=self.pid,
-                    lid=self.lid,
-                    clip_path=str(self._path),
-                    outcome="kept",
-                    duration_s=duration,
+                    session_id = self.session_id,
+                    pid        = self.pid,
+                    lid        = self.lid,
+                    clip_path  = str(self._path),
+                    outcome    = "kept_live",
+                    duration_s = duration,
                 )
                 logger.warning(
-                    f"[Evidence] Top-cam clip KEPT: {self._path.name} "
+                    f"[Evidence] Live clip KEPT: {self._path.name} "
                     f"({self._frame_count} frames, {duration:.1f}s)"
                 )
-                # Also save a face camera clip for the same window
-                # (shows who was at the box during this admin action)
+                # Face cam: async with DB-insert callback.
                 try:
                     from back_end.slot_monitor.camera.rolling_buffer import (
-                        face_rolling_buffer
+                        face_rolling_buffer,
                     )
-                    face_path = face_rolling_buffer.save_session_clip(
-                        session_id=self.session_id, pid=self.pid
+                    sid, pid_, lid_, dur = (
+                        self.session_id, self.pid, self.lid, duration
                     )
-                    if face_path:
-                        _db_insert_clip(
-                            session_id=self.session_id,
-                            pid=self.pid,
-                            lid=self.lid,
-                            clip_path=str(face_path),
-                            outcome="kept_face_cam",
-                            duration_s=duration,
-                        )
+                    def _insert_face_db(face_path: Path) -> None:
+                        try:
+                            _db_insert_clip(
+                                session_id = sid, pid = pid_, lid = lid_,
+                                clip_path  = str(face_path),
+                                outcome    = "kept_face_cam",
+                                duration_s = dur,
+                            )
+                        except Exception as ex:
+                            logger.warning(f"[Evidence] Face DB insert failed: {ex}")
+
+                    face_rolling_buffer.save_session_clip(
+                        session_id = self.session_id,
+                        pid        = self.pid,
+                        callback   = _insert_face_db,
+                    )
                 except Exception as e:
-                    logger.warning(f"[Evidence] Face clip save failed: {e}")
+                    logger.warning(f"[Evidence] Face clip queue failed: {e}")
+
+                # Pre-buffer: if already encoded insert DB now; else callback handles it.
+                if self._pre_done and self._pre_path.exists():
+                    try:
+                        _db_insert_clip(
+                            session_id = self.session_id, pid = self.pid,
+                            lid = self.lid, clip_path = str(self._pre_path),
+                            outcome = "pre_buffer", duration_s = 0.0,
+                        )
+                    except Exception:
+                        pass
             else:
                 logger.warning(
-                    f"[Evidence] Clip was flagged to keep but file is empty or missing: "
+                    f"[Evidence] Live clip flagged to keep but empty/missing: "
                     f"{self._path.name}"
                 )
         else:
@@ -277,38 +328,26 @@ class PhoneRecorder:
                 if self._path.exists():
                     self._path.unlink()
             except Exception as e:
-                logger.warning(f"[Evidence] Could not delete clip {self._path.name}: {e}")
-            logger.info(
-                f"[Evidence] Clip deleted (clean resolution): {self._path.name}"
-            )
+                logger.warning(f"[Evidence] Could not delete live clip: {e}")
+
+            if self._pre_done:
+                try:
+                    if self._pre_path.exists():
+                        self._pre_path.unlink()
+                except Exception as e:
+                    logger.warning(f"[Evidence] Could not delete pre-buffer clip: {e}")
+
+            logger.info(f"[Evidence] Clips discarded (clean): {self._path.name}")
 
         return duration
 
-    def _record_loop(self, pre_frames: list):
-        """Background thread: write pre-buffer frames then live frames."""
+    def _record_live(self) -> None:
+        """Phase 2: live capture from top_camera. Starts immediately."""
         from back_end.slot_monitor.camera.top_camera import top_camera
+
         writer_ready = False
         interval     = 1.0 / RECORD_FPS
 
-        # ── Phase 1: write pre-buffer snapshot (the "before" footage) ────────
-        for _, jpeg_bytes in pre_frames:
-            frame = cv2.imdecode(
-                np.frombuffer(jpeg_bytes, np.uint8),
-                cv2.IMREAD_COLOR,
-            )
-            if frame is None:
-                continue
-            if not writer_ready:
-                h, w = frame.shape[:2]
-                writer_ready = self._init_writer(w, h)
-                if not writer_ready:
-                    logger.error("[Evidence] VideoWriter init failed on pre-buffer")
-                    self._running = False
-                    return
-            self._writer.write(frame)
-            self._frame_count += 1
-
-        # ── Phase 2: live capture from top_camera ─────────────────────────────
         while self._running:
             loop_start = time.time()
 
@@ -318,7 +357,6 @@ class PhoneRecorder:
 
             frame = top_camera.get_frame()
             top_camera.clear_frame_event()
-
             if frame is None:
                 continue
 
@@ -339,9 +377,9 @@ class PhoneRecorder:
                 time.sleep(sleep)
 
     def _init_writer(self, width: int, height: int) -> bool:
-        """Try mp4v codec first, fall back to XVID."""
+        """Try XVID first (fastest encode), fall back to mp4v."""
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        for fourcc_str in ("mp4v", "XVID"):
+        for fourcc_str in ("XVID", "mp4v"):
             fourcc = cv2.VideoWriter_fourcc(*fourcc_str)
             writer = cv2.VideoWriter(
                 str(self._path), fourcc, RECORD_FPS, (width, height)
@@ -358,8 +396,6 @@ class PhoneRecorder:
         logger.error(f"[Evidence] Could not open VideoWriter for {self._path}")
         return False
 
-
-# ── EvidenceRecorder — session-level manager ─────────────────────────────────
 
 class EvidenceRecorder:
     """

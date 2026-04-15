@@ -3,7 +3,8 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'auth.dart';
 import 'api_service.dart';
 import 'socket_service.dart';
-import 'scan_success_page.dart'; // DVWBottomSheet + phoneLocationLabel
+import 'scan_success_page.dart';   // DVWBottomSheet + phoneLocationLabel
+import 'report_page.dart';         // new report page
 
 // ══════════════════════════════════════════════════════════
 // ADMIN MENU
@@ -31,7 +32,12 @@ class AdminMenu extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          ElevatedButton(
+          // ── Manage students ────────────────────────────
+          ElevatedButton.icon(
+            icon: const Icon(Icons.people_outline),
+            label: const Text('Manage Students'),
+            style: ElevatedButton.styleFrom(
+                minimumSize: const Size(double.infinity, 48)),
             onPressed: () async {
               final students = await ApiService.getStudents();
               if (!context.mounted) return;
@@ -43,7 +49,22 @@ class AdminMenu extends StatelessWidget {
                 ),
               );
             },
-            child: const Text('Manage Students'),
+          ),
+          const SizedBox(height: 12),
+
+          // ── Activity report ────────────────────────────
+          ElevatedButton.icon(
+            icon: const Icon(Icons.picture_as_pdf_outlined),
+            label: const Text('Print Activity Report'),
+            style: ElevatedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 48),
+              backgroundColor: Colors.deepOrange,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const ReportPage()),
+            ),
           ),
         ],
       ),
@@ -196,7 +217,7 @@ class _ManageStudentsPageState extends State<ManageStudentsPage> {
   }
 }
 
-// ── Student card (extracted to avoid rebuilding the whole list) ──
+// ── Student card ──────────────────────────────────────────
 
 class _StudentCard extends StatelessWidget {
   final Map<String, dynamic> student;
@@ -261,7 +282,7 @@ class _StudentCard extends StatelessWidget {
 }
 
 // ══════════════════════════════════════════════════════════
-// STUDENT PHONES PAGE  — now with DVW on Take / Put
+// STUDENT PHONES PAGE — with DVW + top camera
 // ══════════════════════════════════════════════════════════
 
 class StudentPhonesPage extends StatefulWidget {
@@ -337,6 +358,8 @@ class _StudentPhonesPageState extends State<StudentPhonesPage> {
       context: context,
       isDismissible: false,
       enableDrag: false,
+      isScrollControlled: true,           // allows full-height when camera shown
+      backgroundColor: Colors.transparent,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -352,9 +375,9 @@ class _StudentPhonesPageState extends State<StudentPhonesPage> {
   // ── Phone card ────────────────────────────────────────────
 
   Widget _buildPhoneCard(Map<String, dynamic> p) {
-    final pid      = p['pid'].toString();
-    final model    = p['model'] as String? ?? 'Unknown Model';
-    final stored   = p['is_stored'] == true;
+    final pid    = p['pid'].toString();
+    final model  = p['model'] as String? ?? 'Unknown Model';
+    final stored = p['is_stored'] == true;
     final location = phoneLocationLabel(p);
 
     return Card(
@@ -441,7 +464,7 @@ class _StudentPhonesPageState extends State<StudentPhonesPage> {
   }
 }
 
-// ── Shared action button (same as in scan_success_page) ──────
+// ── Shared action button ──────────────────────────────────
 
 class _ActionButton extends StatelessWidget {
   final String label;
@@ -844,12 +867,8 @@ class _CreatePhonePageState extends State<CreatePhonePage> {
 
   @override
   void dispose() {
-    _model.dispose();
-    _imei.dispose();
-    _adminNote.dispose();
-    _studNote.dispose();
-    _locX.dispose();
-    _locY.dispose();
+    _model.dispose(); _imei.dispose(); _adminNote.dispose();
+    _studNote.dispose(); _locX.dispose(); _locY.dispose();
     super.dispose();
   }
 
@@ -887,17 +906,13 @@ class _CreatePhonePageState extends State<CreatePhonePage> {
         child: Form(
           key: _formKey,
           child: ListView(children: [
-            TextFormField(
-              controller: _model,
-              decoration: const InputDecoration(labelText: 'Model'),
-              validator: (v) => (v == null || v.isEmpty) ? 'Required' : null,
-            ),
+            TextFormField(controller: _model,
+                decoration: const InputDecoration(labelText: 'Model'),
+                validator: (v) => (v == null || v.isEmpty) ? 'Required' : null),
             const SizedBox(height: 12),
-            TextFormField(
-              controller: _imei,
-              decoration: const InputDecoration(labelText: 'IMEI'),
-              validator: (v) => (v == null || v.isEmpty) ? 'Required' : null,
-            ),
+            TextFormField(controller: _imei,
+                decoration: const InputDecoration(labelText: 'IMEI'),
+                validator: (v) => (v == null || v.isEmpty) ? 'Required' : null),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
               value: _cond,
@@ -906,55 +921,36 @@ class _CreatePhonePageState extends State<CreatePhonePage> {
                   .toList(),
               decoration: const InputDecoration(labelText: 'Condition'),
               onChanged: (v) => setState(() => _cond = v),
-              validator: (v) =>
-                  (v == null || v.isEmpty) ? 'Required' : null,
+              validator: (v) => (v == null || v.isEmpty) ? 'Required' : null,
             ),
             const SizedBox(height: 12),
-            TextFormField(
-              controller: _adminNote,
-              decoration:
-                  const InputDecoration(labelText: 'Admin Note (optional)'),
-            ),
+            TextFormField(controller: _adminNote,
+                decoration: const InputDecoration(labelText: 'Admin Note (optional)')),
             const SizedBox(height: 12),
-            TextFormField(
-              controller: _studNote,
-              decoration:
-                  const InputDecoration(labelText: 'Student Note (optional)'),
-            ),
+            TextFormField(controller: _studNote,
+                decoration: const InputDecoration(labelText: 'Student Note (optional)')),
             const SizedBox(height: 12),
             Row(children: [
-              Expanded(
-                child: TextFormField(
-                  controller: _locX,
+              Expanded(child: TextFormField(controller: _locX,
                   decoration: const InputDecoration(labelText: 'Row (optional)'),
-                  keyboardType: TextInputType.number,
-                ),
-              ),
+                  keyboardType: TextInputType.number)),
               const SizedBox(width: 12),
-              Expanded(
-                child: TextFormField(
-                  controller: _locY,
+              Expanded(child: TextFormField(controller: _locY,
                   decoration: const InputDecoration(labelText: 'Col (optional)'),
-                  keyboardType: TextInputType.number,
-                ),
-              ),
+                  keyboardType: TextInputType.number)),
             ]),
             const SizedBox(height: 24),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                ElevatedButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('Cancel')),
-                ElevatedButton(
-                  onPressed: _loading ? null : _submit,
-                  child: _loading
-                      ? const SizedBox(width: 20, height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Text('Add Phone'),
-                ),
-              ],
-            ),
+            Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+              ElevatedButton(onPressed: () => Navigator.pop(context),
+                  child: const Text('Cancel')),
+              ElevatedButton(
+                onPressed: _loading ? null : _submit,
+                child: _loading
+                    ? const SizedBox(width: 20, height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Text('Add Phone'),
+              ),
+            ]),
           ]),
         ),
       ),
@@ -993,27 +989,19 @@ class _EditPhonePageState extends State<EditPhonePage> {
     _adminNote.text = widget.phone['admin_note'] as String? ?? '';
     _studNote.text  = widget.phone['stud_note']  as String? ?? '';
     final loc = widget.phone['location'];
-    if (loc != null) {
-      _locX.text = loc[0].toString();
-      _locY.text = loc[1].toString();
-    }
+    if (loc != null) { _locX.text = loc[0].toString(); _locY.text = loc[1].toString(); }
   }
 
   @override
   void dispose() {
-    _model.dispose();
-    _imei.dispose();
-    _adminNote.dispose();
-    _studNote.dispose();
-    _locX.dispose();
-    _locY.dispose();
+    _model.dispose(); _imei.dispose(); _adminNote.dispose();
+    _studNote.dispose(); _locX.dispose(); _locY.dispose();
     super.dispose();
   }
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _loading = true);
-
     final payload = <String, dynamic>{};
     if (_model.text.trim().isNotEmpty)     payload['model']      = _model.text.trim();
     if (_imei.text.trim().isNotEmpty)      payload['imei']       = _imei.text.trim();
@@ -1023,9 +1011,7 @@ class _EditPhonePageState extends State<EditPhonePage> {
     if (_locX.text.isNotEmpty && _locY.text.isNotEmpty) {
       payload['location'] = [int.parse(_locX.text), int.parse(_locY.text)];
     }
-
-    final ok = await ApiService.updatePhone(
-        widget.phone['pid'].toString(), payload);
+    final ok = await ApiService.updatePhone(widget.phone['pid'].toString(), payload);
     if (!mounted) return;
     setState(() => _loading = false);
     if (ok) {
@@ -1045,82 +1031,51 @@ class _EditPhonePageState extends State<EditPhonePage> {
         child: Form(
           key: _formKey,
           child: ListView(children: [
-            TextFormField(
-              controller: _model,
-              decoration: InputDecoration(
-                labelText: 'Model',
-                hintText: "${widget.phone['model']} (leave empty = no change)",
-              ),
-            ),
+            TextFormField(controller: _model,
+                decoration: InputDecoration(labelText: 'Model',
+                    hintText: "${widget.phone['model']} (leave empty = no change)")),
             const SizedBox(height: 12),
-            TextFormField(
-              controller: _imei,
-              decoration: InputDecoration(
-                labelText: 'IMEI',
-                hintText: "${widget.phone['imei'] ?? ''} (leave empty = no change)",
-              ),
-            ),
+            TextFormField(controller: _imei,
+                decoration: InputDecoration(labelText: 'IMEI',
+                    hintText: "${widget.phone['imei'] ?? ''} (leave empty = no change)")),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
               value: _cond,
               items: const ['New', 'Good', 'Fair', 'Damaged', 'Broken']
-                  .map((e) => DropdownMenuItem(value: e, child: Text(e)))
-                  .toList(),
+                  .map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
               decoration: const InputDecoration(labelText: 'Condition'),
               onChanged: (v) => setState(() => _cond = v),
             ),
             const SizedBox(height: 12),
-            TextFormField(
-              controller: _adminNote,
-              decoration: InputDecoration(
-                labelText: 'Admin Note',
-                hintText:
-                    "${widget.phone['admin_note'] ?? ''} (leave empty = no change)",
-              ),
-            ),
+            TextFormField(controller: _adminNote,
+                decoration: InputDecoration(labelText: 'Admin Note',
+                    hintText: "${widget.phone['admin_note'] ?? ''} (leave empty = no change)")),
             const SizedBox(height: 12),
-            TextFormField(
-              controller: _studNote,
-              decoration: InputDecoration(
-                labelText: 'Student Note',
-                hintText:
-                    "${widget.phone['stud_note'] ?? ''} (leave empty = no change)",
-              ),
-            ),
+            TextFormField(controller: _studNote,
+                decoration: InputDecoration(labelText: 'Student Note',
+                    hintText: "${widget.phone['stud_note'] ?? ''} (leave empty = no change)")),
             const SizedBox(height: 12),
             Row(children: [
-              Expanded(
-                child: TextFormField(
-                  controller: _locX,
+              Expanded(child: TextFormField(controller: _locX,
                   decoration: const InputDecoration(labelText: 'Row (optional)'),
-                  keyboardType: TextInputType.number,
-                ),
-              ),
+                  keyboardType: TextInputType.number)),
               const SizedBox(width: 12),
-              Expanded(
-                child: TextFormField(
-                  controller: _locY,
+              Expanded(child: TextFormField(controller: _locY,
                   decoration: const InputDecoration(labelText: 'Col (optional)'),
-                  keyboardType: TextInputType.number,
-                ),
-              ),
+                  keyboardType: TextInputType.number)),
             ]),
             const SizedBox(height: 24),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                ElevatedButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('Cancel')),
-                ElevatedButton(
-                  onPressed: _loading ? null : _submit,
-                  child: _loading
-                      ? const SizedBox(width: 20, height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Text('Save Changes'),
-                ),
-              ],
-            ),
+            Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+              ElevatedButton(onPressed: () => Navigator.pop(context),
+                  child: const Text('Cancel')),
+              ElevatedButton(
+                onPressed: _loading ? null : _submit,
+                child: _loading
+                    ? const SizedBox(width: 20, height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Text('Save Changes'),
+              ),
+            ]),
           ]),
         ),
       ),

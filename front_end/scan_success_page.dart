@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'api_service.dart';
 import 'socket_service.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 // ── Shared location label helper ─────────────────────────
 /// "slot N (row R, col C)" — lid is 0-based; x = row, y = col.
@@ -70,6 +71,8 @@ class _ScanSuccessPageState extends State<ScanSuccessPage> {
       context: context,
       isDismissible: false,
       enableDrag: false,
+      isScrollControlled: true,          // allows full-height when camera shown
+      backgroundColor: Colors.transparent,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -177,16 +180,10 @@ class _ActionButton extends StatelessWidget {
 }
 
 // ══════════════════════════════════════════════════════════
-// DVW BOTTOM SHEET  (exported — used by admin_menu too)
+// DVW BOTTOM SHEET
 // ══════════════════════════════════════════════════════════
 
-enum DvwStep {
-  waiting,
-  autoScanning,
-  tracking,
-  success,
-  error,
-}
+enum DvwStep { waiting, autoScanning, tracking, success, error }
 
 class DVWBottomSheet extends StatefulWidget {
   final String pid;
@@ -207,22 +204,86 @@ class DVWBottomSheet extends StatefulWidget {
 }
 
 class _DVWBottomSheetState extends State<DVWBottomSheet> {
-  DvwStep _step = DvwStep.waiting;
+  DvwStep _step     = DvwStep.waiting;
   int?    _slot;
   String? _errorText;
   bool    _qrVisible = true;
 
+  // ── Top-down camera ───────────────────────────────────
+  final RTCVideoRenderer _topRenderer = RTCVideoRenderer();
+  RTCPeerConnection?     _topPc;
+  bool _topConnected  = false;
+  bool _topConnecting = false;
+  bool _disposed      = false;
+
   @override
   void initState() {
     super.initState();
+    _topRenderer.initialize();
     _registerCallbacks();
   }
 
   @override
   void dispose() {
+    _disposed = true;
+    _disconnectTopCamera();
+    _topRenderer.dispose();
     widget.socketService.clearDvwCallbacks();
     super.dispose();
   }
+
+  // ── Top camera connection ─────────────────────────────
+
+  Future<void> _connectTopCamera() async {
+    if (_topConnecting || _topConnected || _disposed) return;
+    _topConnecting = true;
+    try {
+      await ApiService.cancelAdmin();
+      _topPc = await createPeerConnection({
+        'iceServers': [{'urls': 'stun:stun.l.google.com:19302'}],
+      });
+      _topPc!.onTrack = (event) {
+        if (_disposed || !mounted) return;
+        if (event.streams.isNotEmpty) {
+          setState(() {
+            _topRenderer.srcObject = event.streams[0];
+            _topConnected = true;
+          });
+        }
+      };
+      _topPc!.onConnectionState = (state) {
+        if (_disposed) return;
+        if (state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
+            state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
+          if (mounted) setState(() => _topConnected = false);
+        }
+      };
+      final offer = await _topPc!.createOffer(
+          {'offerToReceiveVideo': true, 'offerToReceiveAudio': false});
+      await _topPc!.setLocalDescription(offer);
+      final sdp = await ApiService.sendOffer(offer.sdp!, mode: 'admin', maxRetries: 2);
+      if (sdp != null && !_disposed) {
+        await _topPc!.setRemoteDescription(RTCSessionDescription(sdp, 'answer'));
+      }
+    } catch (_) {
+      if (mounted) setState(() => _topConnected = false);
+    } finally {
+      _topConnecting = false;
+    }
+  }
+
+  void _disconnectTopCamera() {
+    _topPc?.onTrack           = null;
+    _topPc?.onConnectionState = null;
+    _topPc?.close();
+    _topPc = null;
+    _topRenderer.srcObject = null;
+    _topConnected  = false;
+    _topConnecting = false;
+    ApiService.cancelAdmin();
+  }
+
+  // ── Socket callbacks ──────────────────────────────────
 
   void _registerCallbacks() {
     widget.socketService.connect(
@@ -248,6 +309,7 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
           _step      = DvwStep.error;
           _errorText = (data as Map)['message'] as String? ?? 'Unknown error';
         });
+        _disconnectTopCamera();
       },
       onOperationCancelled: (_) {
         if (mounted) Navigator.of(context).pop();
@@ -258,6 +320,8 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
           _step      = DvwStep.tracking;
           _qrVisible = true;
         });
+        // Connect to top-down camera now that tracking has started
+        _connectTopCamera();
       },
       onTrackingUpdate: (data) {
         if (!mounted) return;
@@ -270,12 +334,14 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
           _step      = DvwStep.error;
           _errorText = _trackingMsg((data as Map)['reason'] as String? ?? '');
         });
+        _disconnectTopCamera();
       },
     );
   }
 
   void _handleResult(Map data) {
     if (!mounted) return;
+    _disconnectTopCamera();
     if (data['status'] == 'success') {
       setState(() => _step = DvwStep.success);
       widget.onComplete();
@@ -292,6 +358,7 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
 
   void _onCancel() {
     widget.socketService.cancelOperation();
+    _disconnectTopCamera();
     Navigator.of(context).pop();
   }
 
@@ -300,25 +367,101 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
       'qr_lost':       'QR code disappeared before reaching the slot. Keep it visible.',
       'out_of_frame':  'Phone left the camera view. Move directly toward the slot.',
       'timeout':       'Placement timed out. Please retry.',
-      'detect_timeout':'Phone not detected. Make sure it enters the camera view.',
+      'detect_timeout': 'Phone not detected. Make sure it enters the camera view.',
     };
     return map[reason] ?? 'Placement failed. Please retry.';
   }
 
+  // ── Build ─────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
-      child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Container(
-          width: 40, height: 4,
-          decoration: BoxDecoration(
-              color: Colors.grey[300],
-              borderRadius: BorderRadius.circular(2)),
-        ),
-        const SizedBox(height: 20),
-        ..._buildContent(),
-      ]),
+    final screenH    = MediaQuery.of(context).size.height;
+    final showCamera = _step == DvwStep.tracking;
+
+    return Container(
+      // When showing camera: take up to 85% of screen height
+      // Otherwise: intrinsic (small) size
+      constraints: BoxConstraints(
+        maxHeight: showCamera ? screenH * 0.85 : screenH * 0.55,
+      ),
+      decoration: const BoxDecoration(
+        color: Color(0xFF1C1C1E),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Drag handle
+          Padding(
+            padding: const EdgeInsets.only(top: 10, bottom: 4),
+            child: Container(
+              width: 36, height: 4,
+              decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(2)),
+            ),
+          ),
+
+          // ── Top-down camera (tracking phase only) ──────
+          if (showCamera)
+            Expanded(
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  // Video
+                  ClipRRect(
+                    borderRadius: const BorderRadius.vertical(
+                        top: Radius.circular(16)),
+                    child: _topConnected && _topRenderer.srcObject != null
+                        ? RTCVideoView(_topRenderer,
+                            objectFit: RTCVideoViewObjectFit
+                                .RTCVideoViewObjectFitContain)
+                        : Container(
+                            color: Colors.black,
+                            child: Center(
+                              child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const SizedBox(
+                                        width: 24, height: 24,
+                                        child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: Colors.white38)),
+                                    const SizedBox(height: 8),
+                                    const Text('Connecting top camera…',
+                                        style: TextStyle(
+                                            color: Colors.white38,
+                                            fontSize: 12)),
+                                  ]),
+                            ),
+                          ),
+                  ),
+                  // Camera badge
+                  const Positioned(
+                    bottom: 10, left: 12,
+                    child: _CamBadge(label: 'TOP CAM', icon: Icons.videocam_outlined),
+                  ),
+                  // QR status badge — overlaid on video bottom-right
+                  Positioned(
+                    bottom: 10, right: 12,
+                    child: _QrStatusOverlayBadge(qrVisible: _qrVisible),
+                  ),
+                ],
+              ),
+            ),
+
+          // ── Card content ───────────────────────────────
+          Padding(
+            padding: EdgeInsets.fromLTRB(
+                24, 12, 24, MediaQuery.of(context).viewInsets.bottom + 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: _buildContent(),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -330,20 +473,19 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
           const SizedBox(height: 16),
           Text(
             widget.isDeposit ? 'Finding a free slot…' : 'Looking up your phone…',
-            style: const TextStyle(fontSize: 16),
+            style: const TextStyle(fontSize: 16, color: Colors.white),
           ),
           const SizedBox(height: 24),
           _cancelBtn(),
         ];
 
       case DvwStep.autoScanning:
-        final slotLabel = 'slot ${_slot ?? '?'}';
+        final slotLabel   = 'slot ${_slot ?? '?'}';
         final instruction = widget.isDeposit
             ? 'Hold the QR code under the top camera,\nthen carry the phone to $slotLabel.'
             : 'Remove your phone from $slotLabel,\nthen hold its QR code under the camera.';
         return [
-          const SizedBox(
-              width: 36, height: 36,
+          const SizedBox(width: 36, height: 36,
               child: CircularProgressIndicator(strokeWidth: 3)),
           const SizedBox(height: 16),
           Icon(
@@ -354,35 +496,27 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
           const SizedBox(height: 10),
           Text(instruction,
               textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              style: const TextStyle(
+                  fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
           const SizedBox(height: 8),
           Text('Scanning for QR code… (up to 15 s)',
               style: TextStyle(fontSize: 13, color: Colors.grey[500])),
-          const SizedBox(height: 24),
+          const SizedBox(height: 20),
           _cancelBtn(),
         ];
 
       case DvwStep.tracking:
-        final qrColor = _qrVisible ? Colors.green : Colors.orange;
-        final qrIcon  = _qrVisible ? Icons.qr_code_2 : Icons.qr_code_2_outlined;
-        final qrLabel = _qrVisible
-            ? 'QR code visible — keep it facing up'
-            : 'QR code not detected — keep the QR visible!';
+        // Camera is shown above; card area is compact instruction strip
         return [
-          const SizedBox(width: 36, height: 36,
-              child: CircularProgressIndicator(strokeWidth: 3)),
-          const SizedBox(height: 16),
-          Text('Place phone in slot ${_slot ?? '?'}',
-              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          const Text(
-            'Move the phone toward the slot.\nKeep the QR code visible until it lands.',
+          Text(
+            'Move to slot ${_slot ?? '?'} — keep QR visible until placed',
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 14, color: Colors.grey),
+            style: const TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                color: Colors.white),
           ),
-          const SizedBox(height: 16),
-          _QrStatusBadge(color: qrColor, icon: qrIcon, label: qrLabel),
-          const SizedBox(height: 24),
+          const SizedBox(height: 12),
           _cancelBtn(),
         ];
 
@@ -393,7 +527,10 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
           const SizedBox(height: 14),
           Text('Phone ${widget.pid} $verb successfully!',
               textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+              style: const TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white)),
         ];
 
       case DvwStep.error:
@@ -402,7 +539,7 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
           const SizedBox(height: 14),
           Text(_errorText ?? 'Something went wrong.',
               textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 15)),
+              style: const TextStyle(fontSize: 15, color: Colors.white70)),
           const SizedBox(height: 20),
           TextButton(
               onPressed: () => Navigator.of(context).pop(),
@@ -417,38 +554,57 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
       );
 }
 
-// ── QR status badge — extracted to prevent unnecessary decoration allocations ─
+// ── Small camera badge ────────────────────────────────────
 
-class _QrStatusBadge extends StatelessWidget {
-  final Color color;
-  final IconData icon;
+class _CamBadge extends StatelessWidget {
   final String label;
-  const _QrStatusBadge({
-    required this.color,
-    required this.icon,
-    required this.label,
-  });
+  final IconData icon;
+  const _CamBadge({required this.label, required this.icon});
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: Colors.black.withOpacity(0.55),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: Colors.white.withOpacity(0.1)),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon, color: Colors.white38, size: 12),
+          const SizedBox(width: 5),
+          Text(label,
+              style: const TextStyle(
+                  color: Colors.white54, fontSize: 11,
+                  fontWeight: FontWeight.w500)),
+        ]),
+      );
+}
+
+// ── QR status overlay badge shown on top of camera ───────
+
+class _QrStatusOverlayBadge extends StatelessWidget {
+  final bool qrVisible;
+  const _QrStatusOverlayBadge({required this.qrVisible});
 
   @override
   Widget build(BuildContext context) {
+    final color = qrVisible ? Colors.green : Colors.orange;
+    final icon  = qrVisible ? Icons.qr_code_2 : Icons.qr_code_2_outlined;
+    final label = qrVisible ? 'QR OK' : 'QR NOT VISIBLE';
     return AnimatedContainer(
       duration: const Duration(milliseconds: 300),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: color.withOpacity(0.4)),
+        color: Colors.black.withOpacity(0.65),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withOpacity(0.5)),
       ),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Icon(icon, color: color, size: 20),
-        const SizedBox(width: 8),
-        Flexible(
-          child: Text(
-            label,
+        Icon(icon, color: color, size: 14),
+        const SizedBox(width: 5),
+        Text(label,
             style: TextStyle(
-                color: color, fontSize: 13, fontWeight: FontWeight.w500),
-          ),
-        ),
+                color: color, fontSize: 11, fontWeight: FontWeight.w600)),
       ]),
     );
   }

@@ -48,25 +48,24 @@ _Frame = Tuple[float, bytes]
 
 # ── Core buffer ───────────────────────────────────────────────────────────────
 
-_JPEG_ENCODE_PARAMS = [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY]
-
-
 class RollingBuffer:
     def __init__(self, duration_s: float = BUFFER_DURATION_S,
                  jpeg_quality: int = JPEG_QUALITY):
         self._duration = duration_s
-        self._encode_params = [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality]
+        self._quality  = jpeg_quality
         self._lock     = threading.Lock()
         self._frames: deque[_Frame] = deque()
 
     def push(self, frame: np.ndarray):
-        ok, buf = cv2.imencode(".jpg", frame, self._encode_params)
+        ok, buf = cv2.imencode(
+            ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self._quality]
+        )
         if not ok:
             return
         now = time.time()
-        cutoff = now - self._duration
         with self._lock:
             self._frames.append((now, buf.tobytes()))
+            cutoff = now - self._duration
             while self._frames and self._frames[0][0] < cutoff:
                 self._frames.popleft()
 
@@ -89,9 +88,8 @@ class RollingBuffer:
         if not frames:
             logger.warning(f"[RollingBuffer] Empty buffer — nothing to save to {path}")
             return False
-        # Decode only the first frame to get dimensions
         first = cv2.imdecode(
-            np.frombuffer(frames[0][1], np.uint8), cv2.IMREAD_COLOR
+            np.frombuffer(frames[0][1], dtype=np.uint8), cv2.IMREAD_COLOR
         )
         if first is None:
             return False
@@ -110,11 +108,10 @@ class RollingBuffer:
             logger.error(f"[RollingBuffer] VideoWriter failed for {path}")
             return False
         try:
-            writer.write(first)  # write already-decoded first frame
-            _buf = np.empty(0, dtype=np.uint8)  # reused decode buffer name
-            for _, jpeg_bytes in frames[1:]:
-                _buf = np.frombuffer(jpeg_bytes, np.uint8)
-                f = cv2.imdecode(_buf, cv2.IMREAD_COLOR)
+            for _, jpeg_bytes in frames:
+                f = cv2.imdecode(
+                    np.frombuffer(jpeg_bytes, dtype=np.uint8), cv2.IMREAD_COLOR
+                )
                 if f is not None:
                     writer.write(f)
         finally:
@@ -145,26 +142,54 @@ class FaceRollingBuffer:
         self._buffer.push(frame)
 
     def save_alarm_clip(self, pid: str, lid: int) -> Optional[Path]:
-        """Save current buffer on alarm trigger — shows who was at the box."""
+        """
+        Queue an alarm clip for background encoding.
+
+        Returns the path immediately (file will exist once encoding completes).
+        Non-blocking — does NOT stall the alarm trigger thread.
+        """
+        frames = self._buffer.snapshot()
+        if not frames:
+            return None
         ts       = int(time.time())
         safe_pid = pid.replace("-", "")[:16]
         path     = EVIDENCE_BASE_DIR / "alarms" / f"{safe_pid}_lid{lid}_{ts}_face.mp4"
         fps      = self._estimate_fps()
-        ok       = self._buffer.save_to_mp4(path, fps=fps)
+
+        from back_end.slot_monitor.admin.background_encoder import BackgroundEncoder
+        ok = BackgroundEncoder.instance().submit(frames, path, fps)
         if ok:
-            logger.warning(f"[FaceRollingBuffer] Alarm clip saved: {path.name}")
+            logger.warning(f"[FaceRollingBuffer] Alarm clip queued: {path.name}")
             return path
         return None
 
-    def save_session_clip(self, session_id: str, pid: str) -> Optional[Path]:
-        """Save current buffer alongside a kept admin evidence clip."""
+    def save_session_clip(
+        self,
+        session_id: str,
+        pid: str,
+        callback=None,
+    ) -> Optional[Path]:
+        """
+        Queue a session evidence clip for background encoding.
+
+        Args:
+            callback: Called with `path` once encoding completes.
+                      Use this to do DB inserts that need the file to exist.
+
+        Returns the path immediately (file will exist once encoding completes).
+        """
+        frames = self._buffer.snapshot()
+        if not frames:
+            return None
         ts       = int(time.time())
         safe_pid = pid.replace("-", "")[:16]
         path     = EVIDENCE_BASE_DIR / session_id / f"{safe_pid}_face_{ts}.mp4"
         fps      = self._estimate_fps()
-        ok       = self._buffer.save_to_mp4(path, fps=fps)
+
+        from back_end.slot_monitor.admin.background_encoder import BackgroundEncoder
+        ok = BackgroundEncoder.instance().submit(frames, path, fps, callback=callback)
         if ok:
-            logger.warning(f"[FaceRollingBuffer] Session clip saved: {path.name}")
+            logger.warning(f"[FaceRollingBuffer] Session clip queued: {path.name}")
             return path
         return None
 
@@ -260,18 +285,29 @@ class TopRollingBuffer:
         return self._buffer.frame_count()
 
     def save_to_mp4(self, path: Path) -> bool:
+        """Synchronous save — kept for backward compat. Prefer save_alarm_clip."""
         fps = TOP_FPS if self._active else TOP_FPS_IDLE
         return self._buffer.save_to_mp4(path, fps=fps)
 
     def save_alarm_clip(self, pid: str, lid: int) -> Optional[Path]:
-        """Save current buffer on alarm trigger — top-down view of the slot."""
+        """
+        Queue a top-cam alarm clip for background encoding.
+
+        Returns the path immediately (file will exist once encoding completes).
+        Non-blocking — does NOT stall the alarm trigger thread.
+        """
+        frames = self._buffer.snapshot()
+        if not frames:
+            return None
         ts       = int(time.time())
         safe_pid = pid.replace("-", "")[:16]
         path     = EVIDENCE_BASE_DIR / "alarms" / f"{safe_pid}_lid{lid}_{ts}_top.mp4"
-        fps      = TOP_FPS if self._active else TOP_FPS_IDLE
-        ok       = self._buffer.save_to_mp4(path, fps=fps)
+        fps      = float(TOP_FPS if self._active else TOP_FPS_IDLE)
+
+        from back_end.slot_monitor.admin.background_encoder import BackgroundEncoder
+        ok = BackgroundEncoder.instance().submit(frames, path, fps)
         if ok:
-            logger.warning(f"[TopRollingBuffer] Alarm clip saved: {path.name}")
+            logger.warning(f"[TopRollingBuffer] Alarm clip queued: {path.name}")
             return path
         return None
 

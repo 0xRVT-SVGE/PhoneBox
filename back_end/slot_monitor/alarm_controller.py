@@ -90,34 +90,24 @@ class AlarmController:
                 "mismatches": [[p, l] for p, l in snapshot],
             })
 
-        # Save rolling-buffer clips in a background thread.
-        # This MUST be outside the lock and non-blocking — each clip can take
-        # 1–30 s to encode, and calling it synchronously stalls the async
-        # worker event loop, causing subsequent alarm triggers to queue up
-        # 30 s apart instead of firing immediately.
-        threading.Thread(
-            target=self._save_alarm_clips,
-            args=(pid, lid),
-            daemon=True,
-            name=f"AlarmClip-{pid[:8]}-lid{lid}",
-        ).start()
+        # save_alarm_clip() is now non-blocking (delegates to BackgroundEncoder),
+        # so we no longer need to spawn a separate thread for it.
+        # The call returns in microseconds.
+        self._save_alarm_clips(pid, lid)
 
     def _save_alarm_clips(self, pid: str, lid: int):
         """
-        Save face + top rolling-buffer clips for one alarm event.
-        Runs in a daemon thread — never blocks trigger() or the event loop.
+        Queue alarm clips for background encoding.
+        Both calls return immediately — actual encoding happens in BackgroundEncoder.
         """
         try:
-            # Import lazily on first alarm (avoids circular import at module load),
-            # but the module is cached by Python after the first call so subsequent
-            # alarms do not pay an import cost.
             from back_end.slot_monitor.camera.rolling_buffer import (
                 face_rolling_buffer, top_rolling_buffer
             )
             face_rolling_buffer.save_alarm_clip(pid=pid, lid=lid)
             top_rolling_buffer.save_alarm_clip(pid=pid, lid=lid)
         except Exception as e:
-            logger.warning(f"[Alarm] Failed to save alarm clips: {e}")
+            logger.warning(f"[Alarm] Failed to queue alarm clips: {e}")
 
     def resolve(self, pid: str, lid: int):
         with self._lock:

@@ -32,7 +32,7 @@ import os
 import threading
 import time
 from typing import Callable, Dict, List, Optional, Tuple
-
+import re
 import cv2
 import numpy as np
 from pyzbar.pyzbar import decode

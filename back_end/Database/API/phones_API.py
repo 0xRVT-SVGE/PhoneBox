@@ -3,7 +3,7 @@ from flask import Blueprint, jsonify, request
 from back_end.Database.phones import (
     create_phone, get_phones, list_phones, update_phone, delete_phone,
     phones_not_stored, phones_by_condition, phone_stats, reassign_phone,
-    get_phone_storage_history, get_phone_operation_history
+    get_phone_storage_history, get_phone_operation_history, get_activity_report
 )
 
 phones_bp = Blueprint("phones", __name__)
@@ -84,3 +84,18 @@ def route_phone_operation_history(pid):
     """Get operation audit log for a phone"""
     limit = request.args.get('limit', 50, type=int)
     return handle_response(get_phone_operation_history(pid, limit))
+
+
+@phones_bp.route("/activity", methods=["GET"])
+def route_activity_report():
+    """
+    GET /api/phones/activity?from=2024-01-01T00:00:00&to=2024-12-31T23:59:59
+
+    Returns a structured phone-movement report covering three categories:
+      deposited_and_withdrawn, withdrawn_only, deposited_only
+    """
+    from_dt = request.args.get("from")
+    to_dt = request.args.get("to")
+    if not from_dt or not to_dt:
+        return jsonify({"status": "error", "message": "Missing 'from' or 'to' query param"}), 400
+    return handle_response(get_activity_report(from_dt, to_dt))

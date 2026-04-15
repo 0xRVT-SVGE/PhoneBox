@@ -387,3 +387,104 @@ def get_phone_operation_history(pid, limit=50):
             return {"status": "success", "data": data}, 200
     finally:
         put_conn(conn)
+
+
+from datetime import datetime
+
+
+def get_activity_report(from_dt_str: str, to_dt_str: str) -> tuple:
+    """
+    Return a structured activity report for the given UTC interval.
+
+    Three categories:
+      deposited_and_withdrawn  – stored_at AND retrieved_at both inside [from, to]
+      withdrawn_only           – retrieved_at inside interval, stored_at outside
+      deposited_only           – stored_at inside interval, retrieved_at outside or NULL
+
+    Each record contains:
+      pid, model, sid, first_name, last_name, stored_at, retrieved_at
+    """
+    try:
+        # Accept ISO 8601 strings ("2024-03-01T08:00:00" or with tz offset)
+        from_dt = datetime.fromisoformat(from_dt_str)
+        to_dt   = datetime.fromisoformat(to_dt_str)
+    except (ValueError, TypeError) as e:
+        return {"status": "error", "message": f"Invalid datetime format: {e}"}, 400
+
+    if from_dt >= to_dt:
+        return {"status": "error", "message": "'from' must be before 'to'"}, 400
+
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    ps.pid,
+                    p.model,
+                    ps.stored_at,
+                    ps.retrieved_at,
+                    p.sid,
+                    s.first_name,
+                    s.last_name
+                FROM phone_storage ps
+                JOIN phones  p ON ps.pid  = p.pid
+                JOIN students s ON p.sid  = s.sid
+                WHERE
+                    (ps.stored_at     >= %(f)s AND ps.stored_at     <= %(t)s)
+                    OR
+                    (ps.retrieved_at IS NOT NULL
+                     AND ps.retrieved_at >= %(f)s
+                     AND ps.retrieved_at <= %(t)s)
+                ORDER BY p.sid, COALESCE(ps.stored_at, ps.retrieved_at)
+            """, {"f": from_dt, "t": to_dt})
+
+            rows    = cur.fetchall()
+            columns = [desc[0] for desc in cur.description]
+            records = [dict(zip(columns, row)) for row in rows]
+
+        # ── Categorise ────────────────────────────────────────────────────────
+        deposited_and_withdrawn = []
+        withdrawn_only          = []
+        deposited_only          = []
+
+        for r in records:
+            sa = r["stored_at"]
+            ra = r["retrieved_at"]
+
+            stored_in    = sa is not None and from_dt <= sa <= to_dt
+            withdrawn_in = ra is not None and from_dt <= ra <= to_dt
+
+            # Serialise datetimes
+            entry = {
+                "pid":        r["pid"],
+                "model":      r["model"] or "Unknown",
+                "sid":        r["sid"],
+                "first_name": r["first_name"] or "",
+                "last_name":  r["last_name"]  or "",
+                "stored_at":  sa.isoformat() if sa else None,
+                "retrieved_at": ra.isoformat() if ra else None,
+            }
+
+            if stored_in and withdrawn_in:
+                deposited_and_withdrawn.append(entry)
+            elif withdrawn_in and not stored_in:
+                withdrawn_only.append(entry)
+            elif stored_in and not withdrawn_in:
+                deposited_only.append(entry)
+
+        return {
+            "status": "success",
+            "data": {
+                "from":                     from_dt.isoformat(),
+                "to":                       to_dt.isoformat(),
+                "deposited_and_withdrawn":  deposited_and_withdrawn,
+                "withdrawn_only":           withdrawn_only,
+                "deposited_only":           deposited_only,
+            },
+        }, 200
+
+    except Exception as e:
+        logger.error(f"Activity report error: {e}")
+        return {"status": "error", "message": str(e)}, 500
+    finally:
+        put_conn(conn)
