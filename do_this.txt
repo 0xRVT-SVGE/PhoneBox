@@ -1,2 +1,5 @@
 pip uninstall opencv-python opencv-contrib-python -y
 pip install opencv-contrib-python==4.12.0.88
+
+
+this is exactly the part I wanted to strenghten "then the tracker confirming the phone physically enters the destination ROI and goes face-down (QR disappears)" I feel like someone (student or admin) can just make their phones intersect with the roi then hide the QR. think about a fix that is more secure and efficient. and apply all the fixes you talked about (now and earlier)
