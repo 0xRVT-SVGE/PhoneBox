@@ -347,6 +347,26 @@ class SlotMonitorDB:
             put_conn(conn)
 
 
+
+    @staticmethod
+    def get_sid_for_pid(pid: str):
+        """
+        Return the student SID that owns the phone identified by pid.
+        Used to verify a student is operating on their own phone.
+        Returns None if the phone does not exist.
+        """
+        conn = get_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT sid FROM phones WHERE pid = %s;", (pid,))
+                row = cur.fetchone()
+                return row[0] if row else None
+        except Exception as e:
+            logger.error(f"get_sid_for_pid PID={pid}: {e}")
+            return None
+        finally:
+            put_conn(conn)
+
 # ============================================================
 # ASYNC DATABASE INTERFACE (Real-time Monitoring)
 # ============================================================
@@ -647,6 +667,21 @@ class AsyncSlotMonitorDB:
     # ------------------------------------------------------------
     # INTERNAL CACHE MANAGEMENT
     # ------------------------------------------------------------
+
+
+    def invalidate_pid_cache_sync(self, lid=None):
+        """
+        Synchronously drop one or all entries from the PID cache.
+        Safe to call from any thread (dict.pop is GIL-atomic under CPython).
+        Called by SlotOperations after deposit/withdraw so monitoring
+        workers never serve stale cached PIDs.
+        """
+        if lid is not None:
+            self._pid_cache.pop(lid, None)
+            logger.debug(f"[AsyncDB] PID cache invalidated: LID={lid}")
+        else:
+            self._pid_cache.clear()
+            logger.debug("[AsyncDB] PID cache cleared (all)")
 
     async def _invalidate_cache(self, lid: Optional[int] = None):
         """

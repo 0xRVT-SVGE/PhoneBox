@@ -466,6 +466,13 @@ class AdminOpsHandler:
             self._admin_finalize_placement(session, to_lid, pid, from_lid, same_slot, client_id)
             return
 
+        # Build bottom-camera placement verifier
+        verify_fn = None
+        try:
+            verify_fn = self.slot_ops.make_placement_verifier(to_lid)
+        except Exception as exc:
+            logger.warning(f"[AdminOps] verify_fn lid={to_lid}: {exc}")
+
         tracker = PhoneTracker(
             pid              = pid,
             lid              = to_lid,
@@ -475,6 +482,7 @@ class AdminOpsHandler:
             socketio         = self.socketio,
             client_id        = client_id,
             staging_rois     = staging_rois,
+            verify_fn        = verify_fn,  # added
         )
         tracker.start(
             on_success = lambda: self._admin_finalize_placement(
@@ -766,6 +774,12 @@ class AdminOpsHandler:
                 session, to_lid, pid, from_lid, same_slot, client_id
             )
             return
+        # Build bottom-camera placement verifier
+        verify_fn = None
+        try:
+            verify_fn = self.slot_ops.make_placement_verifier(to_lid)
+        except Exception as exc:
+            logger.warning(f"[AdminOps] verify_fn lid={to_lid}: {exc}")
 
         tracker = PhoneTracker(
             pid              = pid,
@@ -776,6 +790,7 @@ class AdminOpsHandler:
             socketio         = self.socketio,
             client_id        = client_id,
             staging_rois     = staging_rois,
+            verify_fn        = verify_fn,  # ← ADD THIS
         )
         tracker.start(
             on_success = lambda: self._admin_finalize_placement(

@@ -472,6 +472,10 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
       'out_of_frame': 'Phone left the camera view. Move directly toward the slot and retry.',
       'timeout':      'Placement timed out. Retry.',
       'detect_timeout': 'Phone not detected. Make sure it enters the camera view and retry.',
+      'phone_not_in_slot':    'Phone not detected in slot by internal camera. Retry.',
+      'insertion_timeout':    'Phone did not complete insertion in time. Retry.',
+      'stabilization_timeout':'Phone did not settle in time. Hold flat and retry.',
+      'tracker_lost':         'Tracking lost before phone reached slot. Move steadily.',
     };
     return map[reason] ?? 'Tracking failed ($reason). Retry.';
   }

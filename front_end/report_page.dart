@@ -45,7 +45,7 @@ class _ReportPageState extends State<ReportPage> {
   // ── Interval ──────────────────────────────────────────
   DateTime _fromDate = DateTime.now().subtract(const Duration(days: 7));
   DateTime _toDate   = DateTime.now();
-  TimeOfDay _fromTime = TimeOfDay.zero;
+  TimeOfDay _fromTime = TimeOfDay(hour: 0, minute: 0);
   TimeOfDay _toTime   = const TimeOfDay(hour: 23, minute: 59);
 
   // ── Stress hours (optional — operations outside these hours get highlighted)

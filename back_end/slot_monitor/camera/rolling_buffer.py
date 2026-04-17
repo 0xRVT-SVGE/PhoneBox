@@ -26,6 +26,7 @@ Memory estimate (JPEG quality 70, 30s buffer):
 """
 
 import cv2
+from datetime import datetime
 import logging
 import threading
 import time
@@ -151,9 +152,10 @@ class FaceRollingBuffer:
         frames = self._buffer.snapshot()
         if not frames:
             return None
-        ts       = int(time.time())
+        dt_str   = datetime.now().strftime("%Y%m%d-%H%M%S")
+        slot_num = lid + 1
         safe_pid = pid.replace("-", "")[:16]
-        path     = EVIDENCE_BASE_DIR / "alarms" / f"{safe_pid}_lid{lid}_{ts}_face.mp4"
+        path     = EVIDENCE_BASE_DIR / "alarms" / f"{safe_pid}_slot{slot_num}_{dt_str}_face.mp4"
         fps      = self._estimate_fps()
 
         from back_end.slot_monitor.admin.background_encoder import BackgroundEncoder
@@ -181,9 +183,9 @@ class FaceRollingBuffer:
         frames = self._buffer.snapshot()
         if not frames:
             return None
-        ts       = int(time.time())
+        dt_str   = datetime.now().strftime("%Y%m%d-%H%M%S")
         safe_pid = pid.replace("-", "")[:16]
-        path     = EVIDENCE_BASE_DIR / session_id / f"{safe_pid}_face_{ts}.mp4"
+        path     = EVIDENCE_BASE_DIR / session_id / f"{safe_pid}_{dt_str}_face.mp4"
         fps      = self._estimate_fps()
 
         from back_end.slot_monitor.admin.background_encoder import BackgroundEncoder
@@ -299,9 +301,10 @@ class TopRollingBuffer:
         frames = self._buffer.snapshot()
         if not frames:
             return None
-        ts       = int(time.time())
+        dt_str   = datetime.now().strftime("%Y%m%d-%H%M%S")
+        slot_num = lid + 1
         safe_pid = pid.replace("-", "")[:16]
-        path     = EVIDENCE_BASE_DIR / "alarms" / f"{safe_pid}_lid{lid}_{ts}_top.mp4"
+        path     = EVIDENCE_BASE_DIR / "alarms" / f"{safe_pid}_slot{slot_num}_{dt_str}_top.mp4"
         fps      = float(TOP_FPS if self._active else TOP_FPS_IDLE)
 
         from back_end.slot_monitor.admin.background_encoder import BackgroundEncoder

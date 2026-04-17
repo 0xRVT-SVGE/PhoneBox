@@ -60,13 +60,11 @@ class DVWSocketHandler:
             return
 
         pid = str(pid)
-        if not SlotMonitorDB.pid_exists(pid):
-            emit("operation_error", {"status": "error", "message": "pid_not_found", "pid": pid})
-            return
-        if SlotMonitorDB.is_phone_stored(pid):
-            emit("operation_error", {"status": "error", "message": "phone_already_stored", "pid": pid})
-            return
 
+        # All DB validation (pid_exists, already_stored, slot_occupied) is
+        # handled atomically inside deposit_phone_db via a conditional INSERT
+        # + advisory lock.  Pre-checking here would add redundant round-trips
+        # and open a TOCTOU race window.
         lid = SlotMonitorDB.get_next_free_lid()
         if lid is None:
             emit("operation_error", {"status": "error", "message": "no_free_slots"})
@@ -88,6 +86,15 @@ class DVWSocketHandler:
         if op is not None:
             op.background_frame = top_camera.get_frame()
 
+        # Start camera and capture background frame BEFORE the thread starts
+        # so the QR scan has a warm camera and a valid empty-slot background.
+        top_camera.start()
+        op = op_ctx.get(client_id)
+        if op is not None:
+            top_camera.wait_for_frame(timeout=0.3)
+            raw = top_camera.get_raw_frame()
+            op.background_frame = raw if raw is not None else top_camera.get_frame()
+
         emit("deposit_waiting_for_qr", {
             "status":  "waiting",
             "pid":     pid,
@@ -96,7 +103,6 @@ class DVWSocketHandler:
             "message": f"Hold QR for phone {pid} under the top camera, then carry it to slot {lid + 1}",
         })
 
-        # Auto-start QR scan — no button press needed.
         threading.Thread(
             target=self._scan_and_dispatch,
             args=(client_id,),
@@ -337,7 +343,7 @@ class DVWSocketHandler:
                 )
             )
 
-        tracker = create_tracker_for_operation(op, self.socketio)
+        tracker = create_tracker_for_operation(op, self.socketio, self.slot_ops)
 
         if tracker is None:
             logger.warning(
@@ -418,10 +424,23 @@ class DVWSocketHandler:
                 "This may indicate a substitution attempt. Please retry.",
             "out_of_frame":
                 "Phone left the camera view before reaching the slot. Please retry.",
-            "timeout":      "Placement timed out. Please retry.",
+            "timeout":            "Placement timed out. Please retry.",
             "detect_timeout":
                 "Phone not detected entering the camera view. Please retry.",
-            "cancelled":    "Operation was cancelled.",
+            "cancelled":          "Operation was cancelled.",
+            "phone_not_in_slot":
+                "The QR was hidden but the phone was not detected in the slot "
+                "by the internal camera. Please actually place the phone in the "
+                "slot and retry.",
+            "insertion_timeout":
+                "The phone did not complete insertion within the allowed time. "
+                "Place it fully into the slot and retry.",
+            "stabilization_timeout":
+                "The phone did not become still in the slot in time. "
+                "Hold it flat in the slot for a moment and retry.",
+            "tracker_lost":
+                "Tracking was lost before the phone reached the slot. "
+                "Move the phone smoothly and retry.",
         }
         self.socketio.emit(
             "tracking_failed",
@@ -488,7 +507,7 @@ class DVWSocketHandler:
                 )
             )
 
-        tracker = create_tracker_for_operation(op, self.socketio)
+        tracker = create_tracker_for_operation(op, self.socketio, self.slot_ops)
 
         if tracker is None:
             logger.warning(

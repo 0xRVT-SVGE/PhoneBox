@@ -181,10 +181,11 @@ class PhoneRecorder:
         self.pid        = pid
         self.lid        = lid
 
-        ts = int(time.time())
+        slot_num = lid + 1
         safe_pid = pid.replace("-", "")[:16]
-        self._path     = session_dir / f"{safe_pid}_lid{lid}_{ts}_live.mp4"
-        self._pre_path = session_dir / f"{safe_pid}_lid{lid}_{ts}_pre.mp4"
+        dt_str   = datetime.now().strftime("%Y%m%d-%H%M%S")
+        self._path     = session_dir / f"{safe_pid}_slot{slot_num}_{dt_str}_live.mp4"
+        self._pre_path = session_dir / f"{safe_pid}_slot{slot_num}_{dt_str}_pre.mp4"
         self._started_at: float = 0.0
 
         self._running   = False
