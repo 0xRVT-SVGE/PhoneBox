@@ -6,6 +6,7 @@ import threading
 import cv2
 from back_end.scanner_state import scanner_state
 from back_end.scanner_worker import stop_scan
+from back_end.camera_manager import cam_mgr
 
 # Import once at module level — previously this was inside process_frame(),
 # causing a dotted attribute walk on every single frame (~30/s × runtime).
@@ -132,7 +133,7 @@ def scanner_loop(stop_event: threading.Event, debugwindow=True, debugroi=True):
         debugwindow: Show local OpenCV preview window.
         debugroi:    Draw ROI rectangle and status overlay on frames.
     """
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture(cam_mgr.index("front_cam"))
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
 

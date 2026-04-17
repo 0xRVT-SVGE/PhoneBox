@@ -27,6 +27,7 @@ import threading
 import logging
 import signal
 import os
+from back_end.camera_manager import cam_mgr
 from back_end.slot_monitor.admin.admin_ops_handler import register_admin_handlers
 from back_end.server.app import (
     create_app, get_slot_monitor, get_slot_operations, set_monitor_components
@@ -45,12 +46,23 @@ logger = logging.getLogger(__name__)
 
 DEBUG_ROI    = True
 DEBUG_WINDOW = False
+DEV_MODE = os.getenv("PHONEBOX_DEV", "0") == "1"
 
 _stop_event = threading.Event()
+
+# Runs interactive UI once if camera_config.json is missing,
+# then resolves all roles to current indices.
+cam_mgr._dev_mode = DEV_MODE
+cam_mgr._roles = cam_mgr._roles  # unchanged
+cam_mgr.setup_if_needed()
 
 app, socketio = create_app(stop_event=_stop_event)
 app.register_blueprint(webrtc_bp, url_prefix="/webrtc")
 scanner_state.set_socketio(socketio)
+
+logger.info(f"Camera indices: {cam_mgr.all_indices()}")
+if DEV_MODE:
+    logger.warning("DEV MODE active — same camera may serve multiple roles")
 
 
 # ============================================================
@@ -107,6 +119,58 @@ def handle_toggle_scan(_):
 @socketio.on("get_status")
 def handle_get_status(_):
     scanner_state.emit_to_requester()
+
+from flask import request
+
+@socketio.on("list_cameras")
+def on_list_cameras(_):
+    client_id = request.sid
+    socketio.emit(
+        "camera_list",
+        cam_mgr.status_dict(),
+        to=client_id,
+        namespace="/"
+    )
+
+
+@socketio.on("set_camera")
+def on_set_camera(data):
+    client_id = request.sid
+
+    role  = data.get("role")
+    index = data.get("index")
+
+    if role is None or index is None:
+        socketio.emit(
+            "camera_set_result",
+            {"status": "error", "message": "missing role or index"},
+            to=client_id,
+            namespace="/"
+        )
+        return
+
+    try:
+        cam_mgr.update_role(role, index)
+
+        # Hot-switch top cam
+        if role == "top_cam":
+            from back_end.slot_monitor.camera import top_camera as tc_mod
+            tc_mod.CAMERA_INDEX = index
+
+        socketio.emit(
+            "camera_set_result",
+            {"status": "success", "role": role, "index": index},
+            to=client_id,
+            namespace="/"
+        )
+
+    except KeyError as e:
+        socketio.emit(
+            "camera_set_result",
+            {"status": "error", "message": str(e)},
+            to=client_id,
+            namespace="/"
+        )
 
 
 # ============================================================

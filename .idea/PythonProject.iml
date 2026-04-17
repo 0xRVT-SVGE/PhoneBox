@@ -5,7 +5,6 @@
       <excludeFolder url="file://$MODULE_DIR$/front_end/.dart_tool" />
       <excludeFolder url="file://$MODULE_DIR$/front_end/.pub" />
       <excludeFolder url="file://$MODULE_DIR$/front_end/build" />
-      <excludeFolder url="file://$MODULE_DIR$/.venv" />
     </content>
     <orderEntry type="jdk" jdkName="PythonProject" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />

@@ -1,10 +1,6 @@
 pip uninstall opencv-python opencv-contrib-python -y
 pip install opencv-contrib-python==4.12.0.88
 
-
-this is exactly the part I wanted to strenghten "then the tracker confirming the phone physically enters the destination ROI and goes face-down (QR disappears)" I feel like someone (student or admin) can just make their phones intersect with the roi then hide the QR. think about a fix that is more secure and efficient. and apply all the fixes you talked about (now and earlier)
-
-
 this is exactly the part I wanted to strenghten "then the tracker confirming the phone physically enters the destination ROI and goes face-down (QR disappears)" I feel like someone (student or admin) can just make their phones intersect with the roi then hide the QR. think about a fix that is more secure and efficient. and apply all the fixes you talked about (now and earlier) (this is my discussion with chatgpt (it's not very precise about how we're currently handling things but use it however you want (carefully, prioritize security and effectivity) ""Yes, Python trackers can track rotating objects, but their effectiveness depends on whether the algorithm is designed for rotation. Standard trackers often use axis-aligned bounding boxes (rectangles that stay "upright"), which may lose accuracy or fail entirely when an object rotates significantly. blog.savant-ai.io blog.savant-ai.io +3 Popular Tracking Approaches for Rotation CamShift: An improvement over MeanShift that specifically adjusts the search window's size and orientation to follow rotating objects. It is available via the OpenCV library. Rotated-SORT (SORT-R): A variation of the Simple Online and Realtime Tracking (SORT) algorithm adapted to support Oriented Bounding Boxes (OBB). It adds an "angle" value to its internal Kalman filter to predict and maintain the object's orientation. Feature-Based Trackers (ORB/SIFT): These methods track specific "keypoints" on an object. Because these features are often rotation-invariant, the tracker can stay locked on even as the object spins. Deep Learning (YOLO + OBB): Modern detectors like YOLOv8 can detect objects with rotated boxes. When paired with a tracker like ByteTrack or DeepSORT that has been modified for angle-awareness, they provide high-precision tracking for complex rotations. OpenCV OpenCV +4 Comparison Table: Rotation Handling Tracker Type Rotation Support Best Used For... MeanShift No Simple, non-rotating motion CamShift Yes Objects that rotate and change size SORT (Standard) Limited Horizontal/Vertical movement only Similari / SORT-R Yes Fast, angle-aware multi-object tracking KCF / CSRT Weak High accuracy but can fail if rotation changes appearance too much Key Challenges Appearance Change: If an object rotates in 3D (like a car turning around), the side visible to the camera changes completely. This can cause trackers to lose the object because the "features" they were following are now hidden. Bounding Box Jitter: Traditional trackers may struggle with the "extra" background included in a standard rectangular box when an object is at a 45-degree angle. Using Rotated Rectangles (blobs) is the recommended fix." I want to track the object (phone after the qr has been scanned) and not stop until the validation of deposit (phone rotates from horizontal back facing camera to vertical charging slot facing camera) how can I do that effectively knowing that currently I'm validating the operation using the intersection of a certain percentage of the bounding box with the slot's roi and qr disappearance in a certain interval
 
 Show moreShow less
@@ -256,3 +252,48 @@ Your current approach is event-based and brittle. You need:
 * rotation awareness
 
 * state-based validation")
+
+
+"6. Development: single-camera setup
+bash# Use index 0 for all three roles (laptop with one webcam):
+PHONEBOX_DEV=1 python -m back_end.server.server_main
+Or manually:
+bashpython -m back_end.camera_manager --dev --setup
+This writes camera_config.json with "DEV_MODE": true and lets you
+assign the same physical index to bottom_cam, top_cam, and front_cam."
+
+
+7. Production: stable USB cameras
+bash# First run — interactive setup with preview windows:
+python -m back_end.camera_manager --setup
+
+# Subsequent runs — load persisted config automatically.
+# Force reconfigure after changing USB ports:
+python -m back_end.camera_manager --setup
+The persisted camera_config.json (stored next to camera_manager.py):
+json{
+  "bottom_cam": {
+    "index": 1,
+    "name": "HD USB Camera",
+    "uid": "usb-0c45_6366_SN0001-video-index0",
+    "path": "/dev/video1"
+  },
+  "top_cam": {
+    "index": 2,
+    "name": "Logitech C270",
+    "uid": "usb-046d_0825_AB12CD-video-index0",
+    "path": "/dev/video2"
+  },
+  "front_cam": {
+    "index": 0,
+    "name": "Integrated Camera",
+    "uid": "usb-0000_0001_00-video-index0",
+    "path": "/dev/video0"
+  },
+  "DEV_MODE": false
+}
+If a camera is unplugged and re-plugged on a different port, Linux may
+assign it a new /dev/videoN index.  The UID (symlink name from
+/dev/v4l/by-id) stays the same, so CameraManager.resolve() will
+find it automatically.  Call cam_mgr.resolve() after any hot-plug
+event to refresh the mapping without restarting.

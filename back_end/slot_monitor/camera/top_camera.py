@@ -45,12 +45,13 @@ import logging
 import threading
 import time
 from typing import Callable, Optional
+from back_end.camera_manager import cam_mgr
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
-CAMERA_INDEX     = 2
+CAMERA_INDEX     = cam_mgr.index("top_cam")
 _RECONNECT_DELAY = 1.0
 
 

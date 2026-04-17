@@ -14,6 +14,7 @@ from flask_socketio import SocketIO
 from back_end.Database.API.students_API import students_bp
 from back_end.Database.API.phones_API import phones_bp
 from back_end.Database.logging_config import setup_logging
+from back_end.camera_manager import cam_mgr
 
 # Setup logging first
 setup_logging(log_level=logging.INFO)
@@ -86,7 +87,7 @@ def _initialize_monitoring(socketio, stop_event: threading.Event):
             "stop_event": stop_event,
 
             # Camera
-            "camera_id": 1,
+            "camera_id": cam_mgr.index("bottom_cam"),   # slot monitor
             "camera_width": 1280,
             "camera_height": 720,
             "camera_fps": 30,
