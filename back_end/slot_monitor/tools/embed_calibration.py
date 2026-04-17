@@ -141,7 +141,7 @@ class _FrameBuffer:
 
         actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        logger.info(f"Camera {camera_id} → {actual_w}×{actual_h}")
+        logger.info(f"Camera {camera_id}  {actual_w}×{actual_h}")
 
         while self._running:
             ret, frame = cap.read()

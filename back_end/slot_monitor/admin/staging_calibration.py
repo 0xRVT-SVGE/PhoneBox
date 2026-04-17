@@ -159,7 +159,7 @@ def _save_staging_rois(filepath: str, rois: List[List[int]]) -> None:
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     with open(filepath, "w") as f:
         json.dump(rois, f, indent=2)
-    logger.info(f"[Staging] Saved staging ROIs → {filepath}")
+    logger.info(f"[Staging] Saved staging ROIs to {filepath}")
 
 
 def _clamp(roi: List[int], fw: int, fh: int) -> List[int]:

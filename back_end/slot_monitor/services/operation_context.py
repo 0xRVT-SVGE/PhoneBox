@@ -207,7 +207,7 @@ class OperationContext:
             if op is None:
                 return False
             op.stage = "tracking"
-        logger.info(f"Operation stage → tracking: client={client_id}")
+        logger.info(f"Operation stage tracking: client={client_id}")
         return True
 
     def complete(self, client_id: str):

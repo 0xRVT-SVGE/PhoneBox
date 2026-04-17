@@ -502,7 +502,8 @@ class PhoneTracker:
     # ── Phase 0: detect phone entering view ───────────────────────────────────
 
     def _detect_phone(self, tc):
-        bg=tc.get_raw_frame() or self._bg
+        _raw = tc.get_raw_frame()
+        bg = _raw if _raw is not None else self._bg
         bg_g=cv2.GaussianBlur(cv2.cvtColor(bg,cv2.COLOR_BGR2GRAY),(MOTION_BLUR_K,)*2,0)
         deadline=time.time()+DETECT_TIMEOUT
         while time.time()<deadline:
@@ -711,26 +712,26 @@ class PhoneTracker:
                     roi_count+=1
                     if roi_count>=ROI_APPROACH_FRAMES:
                         self._state=_TS.ENTERING; state_ts=time.time(); still_count=0
-                        logger.info(f"[Tracker] PID={self._pid} → ENTERING")
+                        logger.info(f"[Tracker] PID={self._pid}  ENTERING")
                 else:
                     roi_count=0
 
             elif self._state==_TS.ENTERING:
                 if not in_roi:
                     self._state=_TS.TRACKING; roi_count=0
-                    logger.debug(f"[Tracker] PID={self._pid} left ROI → TRACKING")
+                    logger.debug(f"[Tracker] PID={self._pid} left ROI  TRACKING")
                     prev_gray=curr_gray; continue
 
                 # Rotation / insertion path
                 if rotation_detected:
                     self._state=_TS.INSERTING; state_ts=time.time(); still_count=0
-                    logger.info(f"[Tracker] PID={self._pid} → INSERTING "
+                    logger.info(f"[Tracker] PID={self._pid}  INSERTING "
                                 f"area={area_ratio} angle={angle_delta}")
 
                 # Flat placement path: QR gone + still
                 elif qr_confirmed and qr_absent>QR_ABSENT_FAIL_S and still_count>=STILL_REQUIRED_FRAMES:
                     self._state=_TS.STABILIZING; state_ts=time.time()
-                    logger.info(f"[Tracker] PID={self._pid} → STABILIZING (flat)")
+                    logger.info(f"[Tracker] PID={self._pid}  STABILIZING (flat)")
 
                 elif time.time()-state_ts>TRACKER_SUCCESS_TIMEOUT:
                     return self._fail("stabilization_timeout",tc)
@@ -738,7 +739,7 @@ class PhoneTracker:
             elif self._state==_TS.INSERTING:
                 if still_count>=STILL_REQUIRED_FRAMES:
                     self._state=_TS.STABILIZING; state_ts=time.time()
-                    logger.info(f"[Tracker] PID={self._pid} → STABILIZING (insertion)")
+                    logger.info(f"[Tracker] PID={self._pid}  STABILIZING (insertion)")
                 elif time.time()-state_ts>INSERTION_TIMEOUT:
                     return self._fail("insertion_timeout",tc)
 

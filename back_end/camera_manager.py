@@ -695,7 +695,7 @@ class CameraManager:
 
         self._log_dev_warnings()
         logger.info("[CamMgr] Resolved camera indices: " +
-                    " | ".join(f"{r}→{i}" for r, i in self._resolved.items()))
+                    " | ".join(f"{r} {i}" for r, i in self._resolved.items()))
 
     def _log_dev_warnings(self) -> None:
         """Extracted so both resolve paths log consistently."""
