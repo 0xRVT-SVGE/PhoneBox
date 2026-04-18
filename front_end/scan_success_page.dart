@@ -1,10 +1,10 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
-import 'api_service.dart';
-import 'socket_service.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'socket_service.dart';
+import 'api_service.dart';
 
 // ── Shared location label helper ─────────────────────────
-/// "slot N (row R, col C)" — lid is 0-based; x = row, y = col.
 String phoneLocationLabel(Map<String, dynamic> p) {
   final lid = p['lid'];
   final x   = p['x'];
@@ -71,7 +71,7 @@ class _ScanSuccessPageState extends State<ScanSuccessPage> {
       context: context,
       isDismissible: false,
       enableDrag: false,
-      isScrollControlled: true,          // allows full-height when camera shown
+      isScrollControlled: true,
       backgroundColor: Colors.transparent,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
@@ -209,6 +209,10 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
   String? _errorText;
   bool    _qrVisible = true;
 
+  // ── Auto-close timer after success ───────────────────
+  Timer? _successTimer;
+  int    _successCountdown = 2;
+
   // ── Top-down camera ───────────────────────────────────
   final RTCVideoRenderer _topRenderer = RTCVideoRenderer();
   RTCPeerConnection?     _topPc;
@@ -226,6 +230,7 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
   @override
   void dispose() {
     _disposed = true;
+    _successTimer?.cancel();
     _disconnectTopCamera();
     _topRenderer.dispose();
     widget.socketService.clearDvwCallbacks();
@@ -233,6 +238,8 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
   }
 
   // ── Top camera connection ─────────────────────────────
+  // Pre-connect as soon as the server confirms the slot (autoScanning state)
+  // so the feed is ready when tracking starts.
 
   Future<void> _connectTopCamera() async {
     if (_topConnecting || _topConnected || _disposed) return;
@@ -261,7 +268,8 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
       final offer = await _topPc!.createOffer(
           {'offerToReceiveVideo': true, 'offerToReceiveAudio': false});
       await _topPc!.setLocalDescription(offer);
-      final sdp = await ApiService.sendOffer(offer.sdp!, mode: 'admin', maxRetries: 2);
+      final sdp = await ApiService.sendOffer(offer.sdp!, mode: 'admin',
+          maxRetries: 2);
       if (sdp != null && !_disposed) {
         await _topPc!.setRemoteDescription(RTCSessionDescription(sdp, 'answer'));
       }
@@ -283,6 +291,21 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
     ApiService.cancelAdmin();
   }
 
+  // ── Success auto-close ────────────────────────────────
+
+  void _startSuccessTimer() {
+    _successCountdown = 2;
+    _successTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) { t.cancel(); return; }
+      if (_successCountdown <= 1) {
+        t.cancel();
+        if (mounted) Navigator.of(context).pop();
+      } else {
+        setState(() => _successCountdown--);
+      }
+    });
+  }
+
   // ── Socket callbacks ──────────────────────────────────
 
   void _registerCallbacks() {
@@ -293,6 +316,9 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
           _slot = data['slot'] as int? ?? ((data['lid'] as int? ?? 0) + 1);
           _step = DvwStep.autoScanning;
         });
+        // Pre-connect top camera NOW while QR is being scanned (~5-15 s).
+        // By the time tracking starts the ICE negotiation will be complete.
+        _connectTopCamera();
       },
       onWithdrawWaiting: (data) {
         if (!mounted) return;
@@ -300,6 +326,8 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
           _slot = data['slot'] as int? ?? ((data['lid'] as int? ?? 0) + 1);
           _step = DvwStep.autoScanning;
         });
+        // Same pre-connect optimization for withdraw.
+        _connectTopCamera();
       },
       onDepositResult:  (data) => _handleResult(data as Map),
       onWithdrawResult: (data) => _handleResult(data as Map),
@@ -320,7 +348,7 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
           _step      = DvwStep.tracking;
           _qrVisible = true;
         });
-        // Connect to top-down camera now that tracking has started
+        // Connection was already started in autoScanning — no-op if connected.
         _connectTopCamera();
       },
       onTrackingUpdate: (data) {
@@ -343,11 +371,12 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
     if (!mounted) return;
     _disconnectTopCamera();
     if (data['status'] == 'success') {
-      setState(() => _step = DvwStep.success);
       widget.onComplete();
-      Future.delayed(const Duration(seconds: 1), () {
-        if (mounted) Navigator.of(context).pop();
+      setState(() {
+        _step             = DvwStep.success;
+        _successCountdown = 2;
       });
+      _startSuccessTimer();
     } else {
       setState(() {
         _step      = DvwStep.error;
@@ -377,11 +406,11 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
   @override
   Widget build(BuildContext context) {
     final screenH    = MediaQuery.of(context).size.height;
-    final showCamera = _step == DvwStep.tracking;
+    // Show camera during tracking AND autoScanning (pre-connect warms up,
+    // showing a connecting indicator is better than nothing).
+    final showCamera = _step == DvwStep.tracking || _step == DvwStep.autoScanning;
 
     return Container(
-      // When showing camera: take up to 85% of screen height
-      // Otherwise: intrinsic (small) size
       constraints: BoxConstraints(
         maxHeight: showCamera ? screenH * 0.85 : screenH * 0.55,
       ),
@@ -403,13 +432,12 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
             ),
           ),
 
-          // ── Top-down camera (tracking phase only) ──────
+          // ── Top-down camera (during autoScanning + tracking) ────
           if (showCamera)
             Expanded(
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  // Video
                   ClipRRect(
                     borderRadius: const BorderRadius.vertical(
                         top: Radius.circular(16)),
@@ -429,10 +457,12 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
                                             strokeWidth: 2,
                                             color: Colors.white38)),
                                     const SizedBox(height: 8),
-                                    const Text('Connecting top camera…',
-                                        style: TextStyle(
-                                            color: Colors.white38,
-                                            fontSize: 12)),
+                                    Text(
+                                      _step == DvwStep.autoScanning
+                                          ? 'Preparing top camera...'
+                                          : 'Connecting top camera...',
+                                      style: const TextStyle(
+                                          color: Colors.white38, fontSize: 12)),
                                   ]),
                             ),
                           ),
@@ -440,21 +470,24 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
                   // Camera badge
                   const Positioned(
                     bottom: 10, left: 12,
-                    child: _CamBadge(label: 'TOP CAM', icon: Icons.videocam_outlined),
+                    child: _CamBadge(
+                        label: 'TOP CAM', icon: Icons.videocam_outlined),
                   ),
-                  // QR status badge — overlaid on video bottom-right
-                  Positioned(
-                    bottom: 10, right: 12,
-                    child: _QrStatusOverlayBadge(qrVisible: _qrVisible),
-                  ),
+                  // QR status badge — only during tracking
+                  if (_step == DvwStep.tracking)
+                    Positioned(
+                      bottom: 10, right: 12,
+                      child: _QrStatusOverlayBadge(qrVisible: _qrVisible),
+                    ),
                 ],
               ),
             ),
 
-          // ── Card content ───────────────────────────────
+          // ── Card content ────────────────────────────────
           Padding(
             padding: EdgeInsets.fromLTRB(
-                24, 12, 24, MediaQuery.of(context).viewInsets.bottom + 24),
+                24, 12, 24,
+                MediaQuery.of(context).viewInsets.bottom + 24),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: _buildContent(),
@@ -472,7 +505,7 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
           const CircularProgressIndicator(),
           const SizedBox(height: 16),
           Text(
-            widget.isDeposit ? 'Finding a free slot…' : 'Looking up your phone…',
+            widget.isDeposit ? 'Finding a free slot...' : 'Looking up your phone...',
             style: const TextStyle(fontSize: 16, color: Colors.white),
           ),
           const SizedBox(height: 24),
@@ -499,14 +532,13 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
               style: const TextStyle(
                   fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
           const SizedBox(height: 8),
-          Text('Scanning for QR code… (up to 15 s)',
+          Text('Scanning for QR code... (up to 15 s)',
               style: TextStyle(fontSize: 13, color: Colors.grey[500])),
           const SizedBox(height: 20),
           _cancelBtn(),
         ];
 
       case DvwStep.tracking:
-        // Camera is shown above; card area is compact instruction strip
         return [
           Text(
             'Move to slot ${_slot ?? '?'} — keep QR visible until placed',
@@ -531,6 +563,29 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
                   fontSize: 17,
                   fontWeight: FontWeight.bold,
                   color: Colors.white)),
+          const SizedBox(height: 20),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green,
+              minimumSize: const Size(double.infinity, 48),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+            ),
+            onPressed: () {
+              _successTimer?.cancel();
+              Navigator.of(context).pop();
+            },
+            child: Text(
+              'Continue  ($_successCountdown)',
+              style: const TextStyle(
+                  fontSize: 15, fontWeight: FontWeight.w600, color: Colors.white),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Closing automatically in $_successCountdown second${_successCountdown == 1 ? '' : 's'}',
+            style: const TextStyle(color: Colors.white38, fontSize: 12),
+          ),
         ];
 
       case DvwStep.error:
@@ -580,7 +635,7 @@ class _CamBadge extends StatelessWidget {
       );
 }
 
-// ── QR status overlay badge shown on top of camera ───────
+// ── QR status overlay badge ───────────────────────────────
 
 class _QrStatusOverlayBadge extends StatelessWidget {
   final bool qrVisible;

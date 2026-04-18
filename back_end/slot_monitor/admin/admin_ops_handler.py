@@ -4,35 +4,35 @@
 """
 Admin Resolution WebSocket handlers.
 
-Overlay management
-──────────────────
-top_camera.set_context_overlay() is called after every action that
-changes what the admin needs to see:
+Changes from previous version
+──────────────────────────────
+• Session expiry watchdog: _start_session_watchdog() launches a daemon thread
+  that polls session.is_expired() every 5 s and calls _auto_force_close() when
+  the timeout is exceeded, emitting admin_session_closed so the Flutter client
+  knows to clean up.  Previously sessions could live forever if the admin
+  walked away without closing.
 
-  Session open    → staging zones (empty, initial state)
-  QR scanned      → staging zones + source slot (orange) + dest slot (yellow)
-  Same-slot QR    → source == dest drawn with orange + corner brackets
-  Stage phone     → staged PID fills staging zone (bright color)
-  Unstage phone   → staging zone empties + source/dest shown again
-  Place phone     → reset to staging zones only (no source/dest)
-  No QR           → reset to staging zones only
-  Session close   → clear all overlays
-
-The overlay is built by make_admin_session_overlay() from phone_tracker.py.
+• Unicode arrows removed from log strings — they crash cp1252 consoles on
+  Windows.
 """
 
 import json
 import logging
 import os
 import threading
+import time
 from typing import Optional
 
 from flask import request
 from flask_socketio import SocketIO, emit
 
-from back_end.slot_monitor.admin.resolution_session import admin_ctx, SESSION_TIMEOUT
+from back_end.slot_monitor.admin.resolution_session import (
+    admin_ctx, SESSION_TIMEOUT,
+)
 from back_end.slot_monitor.admin.evidence_recorder import EvidenceRecorder
-from back_end.slot_monitor.camera.qr_pid_reader import scan_and_validate_pid_from_buffer
+from back_end.slot_monitor.camera.qr_pid_reader import (
+    scan_and_validate_pid_from_buffer,
+)
 from back_end.slot_monitor.camera.top_camera import top_camera
 from back_end.slot_monitor.slot_operations import SlotOperations
 from back_end.slot_monitor.db_interface import SlotMonitorDB
@@ -51,11 +51,7 @@ _FALLBACK_ROIS    = [(50, 50, 150, 150), (250, 50, 150, 150)]
 
 
 class StagingConfig:
-    """
-    Pixel coordinates of the two physical staging zones.
-    Written by staging_calibration.py, stored in admin/staging_rois.json.
-    Completely separate from rois_top.json (slot ROIs used by the tracker).
-    """
+    """Pixel coordinates of the two physical staging zones."""
     _rois: Optional[list] = None
 
     @classmethod
@@ -68,12 +64,17 @@ class StagingConfig:
                     data = json.load(f)
                 if isinstance(data, list) and len(data) == 2:
                     cls._rois = [tuple(int(v) for v in r) for r in data]
-                    logger.info(f"[StagingConfig] Loaded 2 staging ROIs from {_STAGING_ROI_FILE}")
+                    logger.info(
+                        f"[StagingConfig] Loaded 2 staging ROIs from "
+                        f"{_STAGING_ROI_FILE}"
+                    )
                     return cls._rois
             except Exception as e:
-                logger.warning(f"[StagingConfig] Failed to load {_STAGING_ROI_FILE}: {e}")
+                logger.warning(
+                    f"[StagingConfig] Failed to load {_STAGING_ROI_FILE}: {e}"
+                )
         logger.warning(
-            f"[StagingConfig] {_STAGING_ROI_FILE} not found — using fallback ROIs. "
+            f"[StagingConfig] {_STAGING_ROI_FILE} not found -- using fallback ROIs. "
             "Run staging_calibration.py to configure staging zones."
         )
         cls._rois = list(_FALLBACK_ROIS)
@@ -90,11 +91,18 @@ class StagingConfig:
 
 class AdminOpsHandler:
 
-    def __init__(self, slot_ops: SlotOperations, alarm: AlarmController, socketio: SocketIO):
+    def __init__(
+        self,
+        slot_ops: SlotOperations,
+        alarm: AlarmController,
+        socketio: SocketIO,
+    ):
         self.slot_ops = slot_ops
         self.alarm    = alarm
         self.socketio = socketio
         self._recorder: Optional[EvidenceRecorder] = None
+        # Background watchdog thread — one per open session.
+        self._watchdog_thread: Optional[threading.Thread] = None
 
     # ── Overlay management ────────────────────────────────
 
@@ -104,21 +112,12 @@ class AdminOpsHandler:
         source_lid: Optional[int] = None,
         dest_lid:   Optional[int] = None,
     ) -> None:
-        """
-        Rebuild the top-camera context overlay from current session state.
-
-        Call this after every action that changes any of:
-          - staged_phones (stage / unstage / place)
-          - source slot  (after QR scan)
-          - destination  (after QR scan)
-        """
         try:
             from back_end.slot_monitor.phone_tracker import (
                 make_admin_session_overlay,
                 load_all_top_rois,
             )
             staged_pids = list(session.staged_phones.keys()) if session else []
-            # Build a 2-element list: zone 0 pid, zone 1 pid (None if empty)
             zone_pids = [
                 staged_pids[0] if len(staged_pids) > 0 else None,
                 staged_pids[1] if len(staged_pids) > 1 else None,
@@ -144,6 +143,118 @@ class AdminOpsHandler:
     def _stop_clip(self, keep: bool, reason: str = ""):
         if self._recorder:
             self._recorder.stop_clip(keep=keep, reason=reason)
+
+    # ── Session watchdog ──────────────────────────────────
+
+    def _start_session_watchdog(self, session, client_id: str) -> None:
+        """
+        Daemon thread that force-closes the session when is_expired() is True.
+        Polls every 5 s and exits immediately if the session closes normally.
+        """
+        session_id = session.session_id
+
+        def _watch():
+            while True:
+                time.sleep(5.0)
+                current = admin_ctx.get()
+                if current is None or current.session_id != session_id:
+                    return  # closed normally
+                if current.is_expired():
+                    logger.warning(
+                        f"[AdminSession] {session_id} timeout exceeded -- "
+                        "auto force-closing"
+                    )
+                    self._auto_force_close(current, client_id)
+                    return
+
+        t = threading.Thread(
+            target=_watch, daemon=True,
+            name=f"AdminWatchdog-{session_id[:8]}",
+        )
+        t.start()
+        self._watchdog_thread = t
+
+    def _auto_force_close(self, session, client_id: str) -> None:
+        """
+        Force-close a timed-out session from the watchdog background thread.
+        Must use self.socketio.emit (not Flask emit) -- outside request context.
+        """
+        if admin_ctx.get() is None:
+            return  # already closed concurrently
+
+        # Cancel any in-flight tracking or QR scan
+        if getattr(session, "placement_cancel_event", None):
+            session.placement_cancel_event.set()
+        cancel_ev = getattr(session, "_qr_scan_cancel", None)
+        if cancel_ev:
+            cancel_ev.set()
+
+        allowed_s = SESSION_TIMEOUT + session.resolve_count * 30
+        warnings = [f"Session auto-closed: {allowed_s:.0f}s timeout exceeded"]
+        remaining = sorted(session.pending_pids())
+        if remaining:
+            warnings.append(f"Unresolved mismatches at timeout: {remaining}")
+        if session.staged_phones:
+            warnings.append(
+                f"Staged phones at timeout: {list(session.staged_phones.keys())}"
+            )
+        if session.has_phone_in_hand():
+            warnings.append(
+                f"Phone in hand at timeout: lid={session.in_transit_from_lid}"
+            )
+
+        # Restore all paused slots
+        for lid in session.initial_mismatches.values():
+            try:
+                is_occ = SlotMonitorDB.is_slot_occupied(lid)
+                self._restore_slot(lid, is_occupied=bool(is_occ))
+            except Exception as e:
+                logger.warning(
+                    f"[AdminSession] slot restore error lid={lid}: {e}"
+                )
+
+        # Evidence
+        if self._recorder:
+            try:
+                self._recorder.stop_current_clip_if_active(
+                    keep=True, reason="session_timeout"
+                )
+                self._recorder.close(outcome="force_closed", warnings=warnings)
+            except Exception as e:
+                logger.warning(
+                    f"[AdminSession] evidence close on timeout error: {e}"
+                )
+            self._recorder = None
+
+        top_camera.clear_context_overlay()
+        try:
+            from back_end.slot_monitor.camera.rolling_buffer import top_rolling_buffer
+            top_rolling_buffer.set_active(False)
+        except Exception:
+            pass
+
+        try:
+            summary = admin_ctx.close().summary()
+        except Exception:
+            summary = {}
+
+        self.alarm.unsilence()
+
+        self.socketio.emit(
+            "admin_session_closed",
+            {
+                "summary":       summary,
+                "warnings":      warnings,
+                "evidence_kept": True,
+                "force_closed":  True,
+                "reason":        "timeout",
+            },
+            to=client_id,
+            namespace="/",
+        )
+        logger.warning(
+            f"[AdminSession] Auto force-close complete: {session.session_id}"
+        )
 
     # ── SESSION OPEN ──────────────────────────────────────
 
@@ -219,6 +330,9 @@ class AdminOpsHandler:
         # Initial overlay: staging zones empty, no source/dest yet
         self._refresh_overlay(session)
 
+        # ── Start session expiry watchdog ─────────────────
+        self._start_session_watchdog(session, request.sid)
+
         emit("admin_session_opened", {
             "session_id":  session.session_id,
             "mismatches": [
@@ -266,24 +380,23 @@ class AdminOpsHandler:
 
         self._start_clip(pid=f"pending-lid{from_lid}", lid=from_lid)
 
-        # Overlay: highlight source slot only (destination unknown until QR)
+        # Overlay: highlight source slot only
         self._refresh_overlay(session, source_lid=from_lid, dest_lid=None)
 
-        client_id = request.sid   # must be captured here — request context is valid
+        client_id = request.sid
 
         logger.info(
-            f"[AdminSession] {session.session_id} — "
+            f"[AdminSession] {session.session_id} -- "
             f"object removed from lid={from_lid}, auto-starting QR scan"
         )
         emit("admin_remove_ok", {
             "from_lid": from_lid,
             "message": (
                 f"Slot {from_lid} selected. "
-                "Scanning for QR code now — scan will run until found."
+                "Scanning for QR code now -- scan will run until found."
             ),
         })
 
-        # Auto-start QR scan immediately — no extra button press needed.
         threading.Thread(
             target=self._scan_qr_background,
             args=(session, client_id),
@@ -294,10 +407,6 @@ class AdminOpsHandler:
     # ── STEP 2a — QR SCAN ────────────────────────────────────
 
     def handle_qr_scanned(self, data: dict):
-        """
-        Validation is synchronous; the blocking pyzbar scan runs in a
-        daemon thread to avoid stalling the SocketIO event loop.
-        """
         session = admin_ctx.get()
         if session is None:
             emit("admin_operation_error", {"message": "no_active_session"})
@@ -323,14 +432,6 @@ class AdminOpsHandler:
         ).start()
 
     def _scan_qr_background(self, session, client_id: str) -> None:
-        """
-        Runs in a daemon thread.  Uses self.socketio.emit (not Flask emit).
-        Scans until QR found or cancel_event set.  Does NOT time out by itself
-        — the frontend shows a 'No QR found' button after a delay instead.
-        After a successful QR scan, auto-starts PhoneTracker immediately.
-        """
-        # Build a cancel event the QR scan can react to
-        # (reuse session cancel or create a fresh one per scan)
         cancel_event = threading.Event()
         session._qr_scan_cancel = cancel_event
 
@@ -340,10 +441,11 @@ class AdminOpsHandler:
             cancel_event=cancel_event,
         )
 
-        # If scan was cancelled by admin pressing "No QR found"
-        if cancel_event.is_set() or (scan["status"] != "success" and
-                                      scan.get("message") == "cancelled"):
-            return   # handle_no_qr_found already taking over
+        if cancel_event.is_set() or (
+            scan["status"] != "success"
+            and scan.get("message") == "cancelled"
+        ):
+            return
 
         if scan["status"] != "success":
             self.socketio.emit(
@@ -357,7 +459,7 @@ class AdminOpsHandler:
         # ── Case: phone has no storage record ────────────────────────────
         if not SlotMonitorDB.is_phone_stored(pid):
             logger.warning(
-                f"[AdminSession] {session.session_id} — "
+                f"[AdminSession] {session.session_id} -- "
                 f"PID={pid} found in lid={from_lid} but has no storage record."
             )
             session.needs_deposit_pids.add(pid)
@@ -366,7 +468,6 @@ class AdminOpsHandler:
             session.in_transit_qr_confirmed  = False
             self._refresh_overlay(session)
 
-            # Emit IMMEDIATELY — baseline capture + clip save are in background.
             self.socketio.emit("admin_qr_result", {
                 "pid":           pid,
                 "needs_deposit": True,
@@ -377,7 +478,6 @@ class AdminOpsHandler:
                 ),
             }, to=client_id, namespace="/")
 
-            # Background: swap clips + baseline + resume + alarm.resolve
             threading.Thread(
                 target=self._needs_deposit_bg,
                 args=(pid, from_lid),
@@ -401,22 +501,22 @@ class AdminOpsHandler:
 
         if pid not in session.initial_mismatches:
             logger.warning(
-                f"[AdminSession] {session.session_id} — "
+                f"[AdminSession] {session.session_id} -- "
                 f"PID={pid} was NOT in the initial mismatch list."
             )
 
-        # Notify frontend of QR result — tracking starts automatically below
         self.socketio.emit("admin_qr_result", {
             "pid":           pid,
             "expected_lid":  expected_lid,
             "needs_deposit": False,
             "same_slot":     same_slot,
-            "auto_tracking": True,   # tells frontend: tracking is starting now
+            "auto_tracking": True,
             "message":       f"Phone {pid}: moving to slot {expected_lid + 1}.",
         }, to=client_id, namespace="/")
 
-        # ── Auto-start tracking immediately ──────────────────────────────
-        self._launch_tracker(session, pid, from_lid, expected_lid, same_slot, client_id)
+        self._launch_tracker(
+            session, pid, from_lid, expected_lid, same_slot, client_id
+        )
 
     # ── STEP 2b — NO QR FOUND ────────────────────────────
 
@@ -429,11 +529,6 @@ class AdminOpsHandler:
         same_slot: bool,
         client_id: str,
     ) -> None:
-        """
-        Start PhoneTracker immediately after QR is confirmed.
-        Passes staging ROIs so the tracker can auto-detect staging placement.
-        Called from _scan_qr_background (daemon thread).
-        """
         self._pause_slot(to_lid)
 
         cancel_event = threading.Event()
@@ -454,19 +549,20 @@ class AdminOpsHandler:
             "slot":    to_lid + 1,
             "message": (
                 f"Move phone {pid} to slot {to_lid + 1}. "
-                "Keep QR visible — or place in staging zone if slot is occupied."
+                "Keep QR visible -- or place in staging zone if slot is occupied."
             ),
         }, to=client_id, namespace="/")
 
         if slot_roi is None or bg_frame is None:
             logger.warning(
-                f"[AdminOps] No slot ROI or bg frame for lid={to_lid} — "
+                f"[AdminOps] No slot ROI or bg frame for lid={to_lid} -- "
                 "falling back to immediate confirmation."
             )
-            self._admin_finalize_placement(session, to_lid, pid, from_lid, same_slot, client_id)
+            self._admin_finalize_placement(
+                session, to_lid, pid, from_lid, same_slot, client_id
+            )
             return
 
-        # Build bottom-camera placement verifier
         verify_fn = None
         try:
             verify_fn = self.slot_ops.make_placement_verifier(to_lid)
@@ -482,7 +578,7 @@ class AdminOpsHandler:
             socketio         = self.socketio,
             client_id        = client_id,
             staging_rois     = staging_rois,
-            verify_fn        = verify_fn,  # added
+            verify_fn        = verify_fn,
         )
         tracker.start(
             on_success = lambda: self._admin_finalize_placement(
@@ -505,11 +601,6 @@ class AdminOpsHandler:
         zone_idx:  int,
         client_id: str,
     ) -> None:
-        """
-        Called by PhoneTracker when the phone is placed in a staging zone.
-        Records the staging, resumes the destination slot, emits event,
-        then auto-selects the blocking phone at dest_lid for resolution.
-        """
         top_camera.clear_context_overlay()
         session.placement_cancel_event = None
 
@@ -519,17 +610,15 @@ class AdminOpsHandler:
         session.in_transit_qr_confirmed  = False
 
         self._stop_clip(keep=False, reason="auto_staged")
-        # Resume destination — admin will clear it now
         self._resume_slot(dest_lid)
 
         remaining = sorted(session.pending_pids())
         logger.info(
-            f"[AdminSession] {session.session_id} — "
+            f"[AdminSession] {session.session_id} -- "
             f"PID={pid} auto-staged in zone {zone_idx}. "
             f"dest_lid={dest_lid} remaining={remaining}"
         )
 
-        # Determine what is currently physically in dest_lid
         blocking_pid = SlotMonitorDB.get_pid_for_lid(dest_lid)
 
         self.socketio.emit("admin_auto_staged", {
@@ -555,11 +644,10 @@ class AdminOpsHandler:
         if session.in_transit_qr_confirmed:
             emit("admin_operation_error", {
                 "message": "qr_already_confirmed",
-                "detail":  "QR confirmed — place the phone instead.",
+                "detail":  "QR confirmed -- place the phone instead.",
             })
             return
 
-        # Cancel any running QR scan
         cancel_ev = getattr(session, "_qr_scan_cancel", None)
         if cancel_ev is not None:
             cancel_ev.set()
@@ -567,7 +655,7 @@ class AdminOpsHandler:
         from_lid = session.in_transit_from_lid
 
         logger.warning(
-            f"[AdminSession] {session.session_id} — "
+            f"[AdminSession] {session.session_id} -- "
             f"Foreign object (no QR) removed from lid={from_lid}. Evidence KEPT."
         )
 
@@ -579,11 +667,8 @@ class AdminOpsHandler:
         session.in_transit_from_lid      = None
         session.in_transit_qr_confirmed  = False
 
-        # Reset overlay to staging only
         self._refresh_overlay(session)
 
-        # Emit result IMMEDIATELY — baseline capture and clip saving happen
-        # in the background so the admin can continue without waiting.
         emit("admin_no_qr_result", {
             "from_lid": from_lid,
             "message": (
@@ -592,8 +677,6 @@ class AdminOpsHandler:
             ),
         })
 
-        # Background: save evidence clip + capture baseline + resume slot.
-        # This must not block the socket handler.
         threading.Thread(
             target=self._no_qr_finalize_bg,
             args=(from_lid,),
@@ -626,12 +709,11 @@ class AdminOpsHandler:
         self._stop_clip(keep=False, reason="staged_awaiting_resolution")
 
         logger.info(
-            f"[AdminSession] {session.session_id} — "
+            f"[AdminSession] {session.session_id} -- "
             f"PID={pid} staged from_lid={from_lid} "
             f"staged_count={len(session.staged_phones)}"
         )
 
-        # Refresh overlay: staging zone now shows this PID; no source/dest
         self._refresh_overlay(session)
 
         emit("admin_stage_ok", {
@@ -674,7 +756,6 @@ class AdminOpsHandler:
         same_slot    = (expected_lid == from_lid) if expected_lid is not None else False
         client_id    = request.sid
 
-        # Overlay: staging zone now empty + source (from_lid) + dest (expected_lid)
         self._refresh_overlay(
             session,
             source_lid = from_lid,
@@ -687,7 +768,6 @@ class AdminOpsHandler:
             "message":  f"Phone {pid} retrieved from staging. Tracking started.",
         })
 
-        # Auto-start tracker — admin just carries phone to the destination slot
         if expected_lid is not None:
             threading.Thread(
                 target=self._launch_tracker,
@@ -696,15 +776,9 @@ class AdminOpsHandler:
                 name=f"AdminTrack-unstage-{pid[:8]}",
             ).start()
 
-    # ── STEP 3 — PLACE PHONE (with motion tracking) ────────────────
+    # ── STEP 3 — PLACE PHONE ─────────────────────────────
 
     def handle_place_phone(self, data: dict):
-        """
-        Admin taps “Start placement tracking”.
-        Captures a background frame, launches PhoneTracker, and emits
-        tracking_started.  The tracker callback (_admin_finalize_placement
-        or _admin_placement_failed) runs in the tracker daemon thread.
-        """
         session = admin_ctx.get()
         if session is None:
             emit("admin_operation_error", {"message": "no_active_session"})
@@ -729,18 +803,16 @@ class AdminOpsHandler:
         deviated = expected_lid is not None and to_lid != expected_lid
         if deviated:
             logger.warning(
-                f"[AdminSession] {session.session_id} — "
+                f"[AdminSession] {session.session_id} -- "
                 f"PID={pid} placed in lid={to_lid} but expected lid={expected_lid}. "
                 "DB updated to reflect actual placement."
             )
 
-        # Pause destination slot so the monitor does not fire during tracking.
         self._pause_slot(to_lid)
 
         cancel_event = threading.Event()
         session.placement_cancel_event = cancel_event
 
-        # Capture raw (pre-overlay) background frame NOW.
         top_camera.start()
         top_camera.wait_for_frame(timeout=0.5)
         raw_bg   = top_camera.get_raw_frame()
@@ -748,7 +820,6 @@ class AdminOpsHandler:
 
         client_id = request.sid
 
-        # Inform the client that tracking is starting.
         emit("tracking_started", {
             "pid":     pid,
             "lid":     to_lid,
@@ -774,7 +845,7 @@ class AdminOpsHandler:
                 session, to_lid, pid, from_lid, same_slot, client_id
             )
             return
-        # Build bottom-camera placement verifier
+
         verify_fn = None
         try:
             verify_fn = self.slot_ops.make_placement_verifier(to_lid)
@@ -790,7 +861,7 @@ class AdminOpsHandler:
             socketio         = self.socketio,
             client_id        = client_id,
             staging_rois     = staging_rois,
-            verify_fn        = verify_fn,  # ← ADD THIS
+            verify_fn        = verify_fn,
         )
         tracker.start(
             on_success = lambda: self._admin_finalize_placement(
@@ -813,26 +884,15 @@ class AdminOpsHandler:
         same_slot: bool,
         client_id: str,
     ) -> None:
-        """
-        Called by PhoneTracker on success (or immediately as fallback).
-        Runs in the tracker daemon thread — uses self.socketio.emit.
-
-        Critical ordering:
-          1. DB update + alarm resolves (fast, in-memory/sync-DB)
-          2. Emit success IMMEDIATELY so admin sees feedback at once
-          3. Baseline captures run in background (each has a sleep inside)
-        """
         top_camera.clear_context_overlay()
         session.placement_cancel_event = None
 
-        # ── 1. DB update ──────────────────────────────────────────────────
         if not same_slot and from_lid != to_lid:
             if not SlotMonitorDB.update_storage_lid(pid, to_lid):
                 logger.error(
-                    f"[AdminSession] {session.session_id} — "
+                    f"[AdminSession] {session.session_id} -- "
                     f"DB update failed for PID={pid} to lid={to_lid}"
                 )
-                # Error path: emit immediately, then background clip keep
                 self.socketio.emit(
                     "admin_operation_error",
                     {"message": "db_update_failed"},
@@ -846,7 +906,6 @@ class AdminOpsHandler:
                 ).start()
                 return
 
-        # ── 2. Fast in-memory state updates ──────────────────────────────
         if from_lid is not None:
             self.alarm.resolve(pid, from_lid)
         self.alarm.resolve(pid, to_lid)
@@ -861,12 +920,11 @@ class AdminOpsHandler:
 
         remaining = sorted(session.pending_pids())
         logger.info(
-            f"[AdminSession] {session.session_id} — "
+            f"[AdminSession] {session.session_id} -- "
             f"PID={pid} placed lid={to_lid}. remaining={remaining} "
             f"staged={list(session.staged_phones.keys())}"
         )
 
-        # ── 3. Emit SUCCESS immediately ───────────────────────────────────
         self.socketio.emit("admin_place_result", {
             "pid":       pid,
             "from_lid":  from_lid,
@@ -876,9 +934,6 @@ class AdminOpsHandler:
             "staged":    list(session.staged_phones.keys()),
         }, to=client_id, namespace="/")
 
-        # ── 4. Background: baseline captures + slot resumes ──────────────
-        # Each capture_and_save_baseline has a sleep(wait_for_stable) inside;
-        # running them in background keeps the UI response instantaneous.
         threading.Thread(
             target=self._finalize_placement_baselines_bg,
             args=(to_lid, from_lid, same_slot),
@@ -895,31 +950,22 @@ class AdminOpsHandler:
         reason:   str,
         client_id: str,
     ) -> None:
-        """
-        Called by PhoneTracker on failure.  Runs in tracker daemon thread.
-        Restores the destination slot and notifies the client IMMEDIATELY.
-        Evidence clip saving is deferred so it never delays the UI response.
-        """
         top_camera.clear_context_overlay()
         session.placement_cancel_event = None
         self._restore_slot(to_lid, is_occupied=False)
-        # Clear in-transit state — phone is no longer tracked.
         session.in_transit_pid           = None
         session.in_transit_from_lid      = None
         session.in_transit_qr_confirmed  = False
         self._refresh_overlay(session)
         logger.warning(
-            f"[AdminSession] {session.session_id} — "
+            f"[AdminSession] {session.session_id} -- "
             f"placement failed: PID={pid} lid={to_lid} reason={reason}"
         )
-        # Notify the client IMMEDIATELY — before any I/O.
         self.socketio.emit(
             "admin_operation_error",
             {"message": "placement_failed", "reason": reason},
             to=client_id, namespace="/",
         )
-        # Save evidence clip in a background thread so the face-cam
-        # encoding (~30 s) never delays the socket event above.
         threading.Thread(
             target=self._stop_clip,
             args=(True, f"placement_failed_{reason}"),
@@ -937,9 +983,7 @@ class AdminOpsHandler:
         if session.has_phone_in_hand():
             emit("admin_operation_error", {
                 "message": "phone_in_hand",
-                "detail": (
-                    "You have a phone in hand. Place it first."
-                ),
+                "detail": "You have a phone in hand. Place it first.",
             })
             return
 
@@ -955,7 +999,9 @@ class AdminOpsHandler:
             })
             return
         if pid in session.resolved_pids or pid in session.declared_missing_pids:
-            emit("admin_operation_error", {"message": "pid_already_resolved", "pid": pid})
+            emit("admin_operation_error", {
+                "message": "pid_already_resolved", "pid": pid,
+            })
             return
 
         other_pending = set(session.pending_pids()) - {pid}
@@ -969,28 +1015,22 @@ class AdminOpsHandler:
             return
 
         expected_lid = session.initial_mismatches[pid]
-
-        # ── Fast state updates ────────────────────────────────────────────
         session.declared_missing_pids.add(pid)
 
         logger.warning(
-            f"[AdminSession] {session.session_id} — "
+            f"[AdminSession] {session.session_id} -- "
             f"PHONE DECLARED MISSING: PID={pid} expected_lid={expected_lid}"
         )
 
-        # ── Emit result IMMEDIATELY ───────────────────────────────────────
         emit("admin_missing_result", {
             "pid":          pid,
             "expected_lid": expected_lid,
             "warning": (
-                "Phone declared missing — DB record withdrawn. "
+                "Phone declared missing -- DB record withdrawn. "
                 "Evidence permanently recorded."
             ),
         })
 
-        # ── Background: evidence clip + DB withdraw + baseline + resume ───
-        # These all block (clip encoding, sleep in baseline) and must not
-        # delay the socket response above.
         threading.Thread(
             target=self._declare_missing_bg,
             args=(pid, expected_lid),
@@ -1020,13 +1060,13 @@ class AdminOpsHandler:
                 f"(from_lid={session.in_transit_from_lid}, "
                 f"pid={session.in_transit_pid!r})"
             )
-            logger.warning(f"[AdminSession] {session.session_id} — {msg}")
+            logger.warning(f"[AdminSession] {session.session_id} -- {msg}")
             warnings.append(msg)
 
         remaining = sorted(session.pending_pids())
         if remaining:
             msg = f"Session closed with unresolved mismatches: {remaining}"
-            logger.warning(f"[AdminSession] {session.session_id} — {msg}")
+            logger.warning(f"[AdminSession] {session.session_id} -- {msg}")
             warnings.append(msg)
 
         if session.phone_count_at_open >= 0:
@@ -1038,9 +1078,12 @@ class AdminOpsHandler:
                 )
                 if current_count != expected:
                     msg = (
-                        f"Phone count mismatch: expected {expected}, actual={current_count}"
+                        f"Phone count mismatch: expected {expected}, "
+                        f"actual={current_count}"
                     )
-                    logger.warning(f"[AdminSession] {session.session_id} — {msg}")
+                    logger.warning(
+                        f"[AdminSession] {session.session_id} -- {msg}"
+                    )
                     warnings.append(msg)
 
         for lid in session.initial_mismatches.values():
@@ -1053,14 +1096,17 @@ class AdminOpsHandler:
             )
 
         if self._recorder:
-            outcome      = "clean" if not warnings and not self._recorder.is_flagged else "flagged"
+            outcome      = (
+                "clean"
+                if not warnings and not self._recorder.is_flagged
+                else "flagged"
+            )
             evidence_kept = self._recorder.is_flagged or bool(warnings)
             self._recorder.close(outcome=outcome, warnings=warnings)
             self._recorder = None
         else:
             evidence_kept = False
 
-        # Clear all overlays and stop rolling buffer
         top_camera.clear_context_overlay()
         try:
             from back_end.slot_monitor.camera.rolling_buffer import top_rolling_buffer
@@ -1069,9 +1115,6 @@ class AdminOpsHandler:
             pass
 
         summary = admin_ctx.close().summary()
-        # Restart alarm if mismatches still remain after the session ends.
-        # silence() stopped the sound; the mismatches are still in the alarm set.
-        # unsilence() will restart the sound so a subsequent admin is alerted.
         self.alarm.unsilence()
         emit("admin_session_closed", {
             "summary":       summary,
@@ -1082,15 +1125,6 @@ class AdminOpsHandler:
     # ── FORCE CLOSE SESSION ───────────────────────────────
 
     def handle_force_close_session(self, data: dict):
-        """
-        Force-close the session early.
-
-        safe=True  (default): requires no phone in hand and no staged phones.
-        safe=False (debug):   closes regardless of state.
-
-        Evidence is always saved under the name:
-            NotFullyResolved-{session_id}-{date}
-        """
         session = admin_ctx.get()
         if session is None:
             emit("admin_operation_error", {"message": "no_active_session"})
@@ -1110,19 +1144,19 @@ class AdminOpsHandler:
                 emit("admin_operation_error", {
                     "message": "force_close_blocked",
                     "reason":  "phones_staged",
-                    "detail":  f"Staged phones must be resolved first: {list(session.staged_phones.keys())}",
+                    "detail": (
+                        f"Staged phones must be resolved first: "
+                        f"{list(session.staged_phones.keys())}"
+                    ),
                 })
                 return
         else:
             logger.warning(
-                f"[AdminSession] {session.session_id} — UNSAFE force-close requested"
+                f"[AdminSession] {session.session_id} -- UNSAFE force-close requested"
             )
 
-        # Cancel any in-flight placement tracker
         if session.placement_cancel_event is not None:
             session.placement_cancel_event.set()
-
-        # Cancel any running QR scan
         cancel_ev = getattr(session, "_qr_scan_cancel", None)
         if cancel_ev is not None:
             cancel_ev.set()
@@ -1131,20 +1165,21 @@ class AdminOpsHandler:
         if session.has_phone_in_hand():
             warnings.append(
                 f"Force-closed with phone in hand "
-                f"(from_lid={session.in_transit_from_lid}, pid={session.in_transit_pid!r})"
+                f"(from_lid={session.in_transit_from_lid}, "
+                f"pid={session.in_transit_pid!r})"
             )
         remaining = sorted(session.pending_pids())
         if remaining:
             warnings.append(f"Unresolved mismatches at force-close: {remaining}")
         if session.staged_phones:
-            warnings.append(f"Staged phones at force-close: {list(session.staged_phones.keys())}")
+            warnings.append(
+                f"Staged phones at force-close: {list(session.staged_phones.keys())}"
+            )
 
-        # Restore all slots
         for lid in session.initial_mismatches.values():
             is_occ = SlotMonitorDB.is_slot_occupied(lid)
             self._restore_slot(lid, is_occupied=bool(is_occ))
 
-        # Save evidence under the NotFullyResolved name
         if self._recorder:
             self._recorder.stop_current_clip_if_active(
                 keep=True, reason="force_close"
@@ -1161,10 +1196,9 @@ class AdminOpsHandler:
 
         summary = admin_ctx.close().summary()
         logger.warning(
-            f"[AdminSession] {session.session_id} — FORCE CLOSED "
+            f"[AdminSession] {session.session_id} -- FORCE CLOSED "
             f"(safe={safe}, remaining={remaining})"
         )
-        # Restart alarm if mismatches remain
         self.alarm.unsilence()
         emit("admin_session_closed", {
             "summary":         summary,
@@ -1173,11 +1207,21 @@ class AdminOpsHandler:
             "force_closed":    True,
         })
 
+    # ── PRE-HIGHLIGHT SLOT ────────────────────────────────
+
+    def handle_pre_highlight_slot(self, data: dict):
+        session = admin_ctx.get()
+        if session is None:
+            return
+        lid = data.get("lid")
+        if lid is None:
+            return
+        lid = int(lid)
+        self._refresh_overlay(session, source_lid=lid, dest_lid=None)
+
+    # ── Background helpers ────────────────────────────────
+
     def _needs_deposit_bg(self, pid: str, from_lid: int) -> None:
-        """
-        Background work for the needs-deposit (no DB record) case.
-        Swaps the pending clip to the real PID, keeps it, then clears the slot.
-        """
         self._stop_clip(keep=False, reason="restarting_with_real_pid")
         self._start_clip(pid=pid, lid=from_lid)
         self._stop_clip(keep=True, reason="needs_deposit_no_storage_record")
@@ -1188,10 +1232,6 @@ class AdminOpsHandler:
         self.alarm.resolve(f"unknown-{from_lid}", from_lid)
 
     def _declare_missing_bg(self, pid: str, expected_lid: int) -> None:
-        """
-        Background work after a phone is declared missing:
-        evidence clip, DB withdrawal, baseline, slot resume, alarm resolve.
-        """
         self._start_clip(pid=pid, lid=expected_lid)
         self.slot_ops.capture_and_save_baseline(
             lid=expected_lid, is_occupied=False, wait_for_stable=1.5
@@ -1217,11 +1257,6 @@ class AdminOpsHandler:
         from_lid: Optional[int],
         same_slot: bool,
     ) -> None:
-        """
-        Background: capture baselines and resume slots after a successful placement.
-        Called after admin_place_result has already been emitted so the admin
-        sees instant feedback while the sleeps in capture_and_save_baseline run here.
-        """
         result = self.slot_ops.capture_and_save_baseline(
             lid=to_lid, is_occupied=True, wait_for_stable=1.5
         )
@@ -1243,10 +1278,6 @@ class AdminOpsHandler:
             self._resume_slot(from_lid)
 
     def _no_qr_finalize_bg(self, from_lid: int) -> None:
-        """
-        Background work after a foreign-object (no QR) removal.
-        Runs in a daemon thread so it never delays the socket response.
-        """
         self._stop_clip(keep=True, reason="no_qr_found_unidentified_object")
         self.slot_ops.capture_and_save_baseline(
             lid=from_lid, is_occupied=False, wait_for_stable=1.5
@@ -1254,25 +1285,7 @@ class AdminOpsHandler:
         self._resume_slot(from_lid)
         self.alarm.resolve(f"unknown-{from_lid}", from_lid)
 
-    # ── PRE-HIGHLIGHT SLOT ────────────────────────────────
-
-    def handle_pre_highlight_slot(self, data: dict):
-        """
-        Frontend calls this when the admin selects a phone/slot to handle
-        — before they press "I've picked it up".  We highlight the source
-        slot on the top-camera overlay immediately so the admin has a visual
-        guide before any button is pressed.
-        """
-        session = admin_ctx.get()
-        if session is None:
-            return
-        lid = data.get("lid")
-        if lid is None:
-            return
-        lid = int(lid)
-        self._refresh_overlay(session, source_lid=lid, dest_lid=None)
-
-    # ── Internal helpers ──────────────────────────────────
+    # ── Internal slot helpers ─────────────────────────────
 
     def _pause_slot(self, lid: int):
         m = self.slot_ops.monitor
@@ -1293,7 +1306,7 @@ class AdminOpsHandler:
     def _check_timeout(session) -> None:
         if session.is_expired():
             logger.warning(
-                f"[AdminSession] {session.session_id} — session exceeded timeout "
+                f"[AdminSession] {session.session_id} -- session exceeded timeout "
                 f"(elapsed={session.elapsed():.0f}s)"
             )
 

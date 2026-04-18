@@ -1,8 +1,28 @@
-# back_end/Database/API/phones.py
+# back_end/Database/phones.py
+from datetime import datetime, timezone as _tz
 from back_end.Database.db import get_conn, put_conn
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+# ── Datetime helper ───────────────────────────────────────────────────────────
+
+def _to_naive_utc(dt):
+    """
+    Strip timezone info from a datetime, converting to UTC first when needed.
+
+    PostgreSQL TIMESTAMPTZ columns return timezone-aware datetimes in psycopg2,
+    while input strings from Flutter (ISO 8601 without tz offset) parse as
+    naive.  Mixing the two in a comparison raises:
+        TypeError: can't compare offset-naive and offset-aware datetimes
+    This helper normalises everything to naive UTC before any comparison.
+    """
+    if dt is None:
+        return None
+    if hasattr(dt, 'tzinfo') and dt.tzinfo is not None:
+        return dt.astimezone(_tz.utc).replace(tzinfo=None)
+    return dt
 
 
 # ------------------ CRUD ------------------
@@ -65,7 +85,6 @@ def get_phones(sid):
             columns = [desc[0] for desc in cur.description]
             data = [dict(zip(columns, r)) for r in rows]
 
-            # Convert datetime to string
             for item in data:
                 if item.get('stored_at'):
                     item['stored_at'] = item['stored_at'].isoformat()
@@ -117,7 +136,7 @@ def list_phones():
 
 
 def update_phone(pid, data):
-    """Update phone details (NOT storage status - use deposit/withdraw for that)"""
+    """Update phone details (NOT storage status)"""
     conn = get_conn()
     try:
         with conn.cursor() as cur:
@@ -158,7 +177,6 @@ def delete_phone(pid):
     conn = get_conn()
     try:
         with conn.cursor() as cur:
-            # Check if phone is currently stored
             cur.execute("""
                         SELECT 1
                         FROM phone_storage
@@ -173,7 +191,6 @@ def delete_phone(pid):
                     "message": "Cannot delete phone while it's in storage. Please withdraw it first."
                 }, 400
 
-            # Get phone info before deletion
             cur.execute("SELECT imei FROM phones WHERE pid = %s", (pid,))
             result = cur.fetchone()
             if not result:
@@ -313,23 +330,27 @@ def reassign_phone(pid, new_sid):
     conn = get_conn()
     try:
         with conn.cursor() as cur:
-            # Get old sid for logging
             cur.execute("SELECT sid FROM phones WHERE pid = %s", (pid,))
             result = cur.fetchone()
             if not result:
                 return {"status": "error", "message": "Phone not found for the given pid"}, 404
             old_sid = result[0]
 
-            # Verify new student exists
             cur.execute("SELECT sid FROM students WHERE sid = %s", (new_sid,))
             if not cur.fetchone():
                 return {"status": "error", "message": "New student not found"}, 404
 
-            cur.execute("UPDATE phones SET sid = %s WHERE pid = %s RETURNING pid;", (new_sid, pid))
+            cur.execute(
+                "UPDATE phones SET sid = %s WHERE pid = %s RETURNING pid;",
+                (new_sid, pid),
+            )
             conn.commit()
 
             logger.info(f"Reassigned phone {pid} from {old_sid} to {new_sid}")
-            return {"status": "success", "data": {"pid": pid, "old_owner": old_sid, "new_owner": new_sid}}, 200
+            return {
+                "status": "success",
+                "data": {"pid": pid, "old_owner": old_sid, "new_owner": new_sid},
+            }, 200
     except Exception as e:
         conn.rollback()
         logger.error(f"Failed to reassign phone {pid}: {str(e)}")
@@ -360,6 +381,7 @@ def get_phone_storage_history(pid):
     finally:
         put_conn(conn)
 
+
 def get_phone_operation_history(pid, limit=50):
     """Get operation history for a phone from audit log"""
     conn = get_conn()
@@ -389,27 +411,31 @@ def get_phone_operation_history(pid, limit=50):
         put_conn(conn)
 
 
-from datetime import datetime
-
-
 def get_activity_report(from_dt_str: str, to_dt_str: str) -> tuple:
     """
-    Return a structured activity report for the given UTC interval.
+    Return a structured phone-movement report for the given interval.
 
     Three categories:
-      deposited_and_withdrawn  – stored_at AND retrieved_at both inside [from, to]
-      withdrawn_only           – retrieved_at inside interval, stored_at outside
-      deposited_only           – stored_at inside interval, retrieved_at outside or NULL
+      deposited_and_withdrawn  -- both stored_at and retrieved_at inside [from, to]
+      withdrawn_only           -- retrieved_at inside interval, stored_at outside
+      deposited_only           -- stored_at inside interval, retrieved_at outside or NULL
 
-    Each record contains:
-      pid, model, sid, first_name, last_name, stored_at, retrieved_at
+    Timezone handling
+    -----------------
+    PostgreSQL TIMESTAMPTZ columns return timezone-aware datetimes via psycopg2.
+    Input strings from Flutter are naive ISO 8601 (no offset).  Comparing the
+    two directly raises TypeError.  All values are normalised to naive UTC via
+    _to_naive_utc() before any comparison.
     """
     try:
-        # Accept ISO 8601 strings ("2024-03-01T08:00:00" or with tz offset)
         from_dt = datetime.fromisoformat(from_dt_str)
         to_dt   = datetime.fromisoformat(to_dt_str)
     except (ValueError, TypeError) as e:
         return {"status": "error", "message": f"Invalid datetime format: {e}"}, 400
+
+    # Normalise input to naive UTC
+    from_dt = _to_naive_utc(from_dt)
+    to_dt   = _to_naive_utc(to_dt)
 
     if from_dt >= to_dt:
         return {"status": "error", "message": "'from' must be before 'to'"}, 400
@@ -442,27 +468,26 @@ def get_activity_report(from_dt_str: str, to_dt_str: str) -> tuple:
             columns = [desc[0] for desc in cur.description]
             records = [dict(zip(columns, row)) for row in rows]
 
-        # ── Categorise ────────────────────────────────────────────────────────
         deposited_and_withdrawn = []
         withdrawn_only          = []
         deposited_only          = []
 
         for r in records:
-            sa = r["stored_at"]
-            ra = r["retrieved_at"]
+            # Normalise DB datetimes before comparison
+            sa = _to_naive_utc(r["stored_at"])
+            ra = _to_naive_utc(r["retrieved_at"])
 
             stored_in    = sa is not None and from_dt <= sa <= to_dt
             withdrawn_in = ra is not None and from_dt <= ra <= to_dt
 
-            # Serialise datetimes
             entry = {
-                "pid":        r["pid"],
-                "model":      r["model"] or "Unknown",
-                "sid":        r["sid"],
-                "first_name": r["first_name"] or "",
-                "last_name":  r["last_name"]  or "",
-                "stored_at":  sa.isoformat() if sa else None,
-                "retrieved_at": ra.isoformat() if ra else None,
+                "pid":          r["pid"],
+                "model":        r["model"] or "Unknown",
+                "sid":          r["sid"],
+                "first_name":   r["first_name"] or "",
+                "last_name":    r["last_name"]  or "",
+                "stored_at":    r["stored_at"].isoformat()    if r["stored_at"]    else None,
+                "retrieved_at": r["retrieved_at"].isoformat() if r["retrieved_at"] else None,
             }
 
             if stored_in and withdrawn_in:

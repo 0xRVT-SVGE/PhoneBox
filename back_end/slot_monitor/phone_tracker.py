@@ -66,10 +66,14 @@ DETECT_TIMEOUT           = 8.0
 PLACEMENT_TIMEOUT        = 35.0
 INSERTION_TIMEOUT        = 8.0
 STABILIZING_TIMEOUT      = 3.0
-TRACKER_SUCCESS_TIMEOUT = 1.0
+# Increased from 1.0 → 12.0 s: must be > QR_ABSENT_FAIL_S (3.0 s) so the
+# phone has time to go still inside the ROI before triggering stabilization_timeout.
+TRACKER_SUCCESS_TIMEOUT  = 12.0
 
 QR_CHECK_EVERY_N         = 3
-QR_ABSENT_FAIL_S         = 0.8
+# Increased from 0.8 → 3.0 s: the detector can miss several frames in a row
+# (motion blur, angle change) causing false qr_lost failures at 0.8 s.
+QR_ABSENT_FAIL_S         = 3.0
 
 ROI_APPROACH_MARGIN      = 0.15
 ROI_APPROACH_FRAMES      = 3
