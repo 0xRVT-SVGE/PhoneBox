@@ -13,9 +13,10 @@ enum _Step {
   trackingAdmin,
   autoStaged,
   unstageNext,
-  needsDeposit,   // phone found but no DB record — show deposit button
-  depositInProgress, // DVW deposit sheet is open
+  needsDeposit,
+  depositInProgress,
   declaringMissing,
+  noQrHandled,       // no-QR object removed, awaiting server confirmation
   sessionDone,
   error,
 }
@@ -875,6 +876,15 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
           color: Colors.grey,
           title: 'Waiting for confirmation...',
           subtitle: 'Confirm the declaration in the dialog above.',
+          loading: true,
+          actions: const [],
+        );
+      case _Step.declaringMissing:
+        return _stepContent(
+          icon: Icons.search_off,
+          color: Colors.redAccent,
+          title: 'Declaring phone as missing...',
+          subtitle: 'Updating the database and saving evidence. Please wait.',
           loading: true,
           actions: const [],
         );
