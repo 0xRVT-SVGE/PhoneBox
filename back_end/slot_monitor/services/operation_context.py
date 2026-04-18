@@ -3,17 +3,6 @@
 # ============================================================
 """
 Manages state for active Deposit/Withdraw/Verification operations.
-
-Changes from original:
-  - Operation.cancel_event   — threading.Event set by clear() to unblock
-                                any blocking scan or tracker thread
-  - Operation.background_frame — top-cam frame captured at op start,
-                                  used as background reference for tracking
-  - Operation.stage "tracking" — tracker running; excluded from auto-expiry
-                                  since the tracker owns its own timeout
-  - op_ctx.set_tracking()    — advances stage to "tracking"
-  - cancel_event is set in clear() AND _cleanup_expired() so the QR scan
-    loop and tracker both exit immediately on cancel or timeout
 """
 
 import logging
@@ -44,13 +33,7 @@ class Operation:
     lid_occupied_before:          bool = False
     original_lid_occupied_before: bool = True
 
-    # Set by clear() / _cleanup_expired() to unblock the QR scan loop
-    # and the phone tracker thread immediately.
     cancel_event: threading.Event = field(default_factory=threading.Event)
-
-    # Top-cam frame captured at operation start (before the phone arrives).
-    # Used as background reference for frame-diff phone detection.
-    # None if top_camera had no frame yet at start time.
     background_frame: Any = None   # Optional[np.ndarray]
 
     def is_expired(self, timeout: float) -> bool:
@@ -64,9 +47,8 @@ class OperationContext:
     One operation per client at a time.
     """
 
-    QR_SCAN_TIMEOUT  = 20.0   # seconds allowed to scan QR after initiating
-    ACTION_TIMEOUT   = 40.0   # seconds allowed to place after QR scan
-                               # (covers tracker detection + placement time)
+    QR_SCAN_TIMEOUT  = 20.0
+    ACTION_TIMEOUT   = 40.0
     CLEANUP_INTERVAL = 5.0
 
     def __init__(self):
@@ -76,13 +58,9 @@ class OperationContext:
         self._stop_cleanup     = Event()
         self._worker_pool      = None
 
-    # ── Worker pool injection ────────────────────────────
-
     def set_worker_pool(self, worker_pool):
         self._worker_pool = worker_pool
         logger.info("WorkerPool attached to OperationContext")
-
-    # ── Cleanup thread ───────────────────────────────────
 
     def start_cleanup_thread(self):
         if self._cleanup_thread is not None:
@@ -113,7 +91,6 @@ class OperationContext:
                     (op.stage == "waiting_qr"     and op.is_expired(self.QR_SCAN_TIMEOUT))
                     or
                     (op.stage == "waiting_action" and op.is_expired(self.ACTION_TIMEOUT))
-                    # "tracking" is intentionally excluded — PhoneTracker owns its timeout
                 )
             ]
 
@@ -126,14 +103,12 @@ class OperationContext:
                 f"Operation timed out: {op.op_type.upper()} "
                 f"client={client_id} PID={op.pid} stage={op.stage}"
             )
-            op.cancel_event.set()   # unblock any blocking scan/tracker
+            op.cancel_event.set()
             self._restore_slots(op)
-
-    # ── Slot restore ─────────────────────────────────────
 
     def _restore_slots(self, op: Operation):
         if self._worker_pool is None:
-            logger.warning("WorkerPool not injected — slots cannot be restored.")
+            logger.warning("WorkerPool not injected -- slots cannot be restored.")
             return
 
         if op.op_type in ("deposit", "withdraw"):
@@ -151,8 +126,6 @@ class OperationContext:
                 )
             if op.lid is not None:
                 self._worker_pool.restore_slot(op.lid, op.lid_occupied_before)
-
-    # ── Lifecycle ─────────────────────────────────────────
 
     def start(
         self,
@@ -199,15 +172,15 @@ class OperationContext:
 
     def set_tracking(self, client_id: str) -> bool:
         """
-        Advance stage to "tracking". The cleanup thread ignores this stage —
-        PhoneTracker manages its own timeout and calls clear() when done.
+        Advance stage to "tracking". The cleanup thread ignores this stage.
         """
         with self._lock:
             op = self._operations.get(client_id)
             if op is None:
                 return False
             op.stage = "tracking"
-        logger.info(f"Operation stage tracking: client={client_id}")
+        # NOTE: avoid Unicode arrows in log messages — breaks Windows cp1252 console
+        logger.info(f"Operation stage -> tracking: client={client_id}")
         return True
 
     def complete(self, client_id: str):
@@ -220,16 +193,11 @@ class OperationContext:
             )
 
     def clear(self, client_id: str):
-        """
-        Discard a failed/cancelled operation.
-        Sets cancel_event BEFORE restoring slots so any blocking scan
-        or tracker thread exits immediately.
-        """
         with self._lock:
             op = self._operations.pop(client_id, None)
         if op is None:
             return
-        op.cancel_event.set()   # unblock QR scan loop and tracker
+        op.cancel_event.set()
         logger.info(
             f"Operation failed/cancelled: {op.op_type} "
             f"client={client_id} PID={op.pid}"
@@ -245,8 +213,6 @@ class OperationContext:
             op.cancel_event.set()
         if count:
             logger.info(f"Cleared {count} active operations on shutdown")
-
-    # ── Queries ───────────────────────────────────────────
 
     def get(self, client_id: str) -> Optional[Operation]:
         with self._lock:

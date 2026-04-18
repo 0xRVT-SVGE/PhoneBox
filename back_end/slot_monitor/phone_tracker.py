@@ -3,66 +3,6 @@
 # ============================================================
 """
 Phone Tracker  —  4-layer tracking + rotation-aware state machine.
-
-Architecture overview
-─────────────────────
-Layer 1 — CSRT tracker (primary)
-    Best spatial accuracy. Re-initialised every CSRT_REINIT_INTERVAL frames
-    from the motion-contour bbox to prevent slow drift accumulation.
-
-Layer 2 — Motion-contour tracker (fallback A)
-    Frame-diff largest-contour.  Independent of appearance; survives 3D
-    rotation when the phone tips from face-up into the vertical slot.
-
-Layer 3 — Lucas-Kanade optical flow (fallback B)
-    Tracks sparse Shi-Tomasi corners inside the last good bbox.  Smooth
-    centroid/velocity estimates when contour detection is noisy.
-
-Layer 4 — ORB re-identification (recovery)
-    When all motion-based methods fail, tries to re-locate the phone by
-    matching ORB descriptors against the initial appearance.  Runs in the
-    same thread every RE_ID_EVERY_N frames — no extra threads.
-
-State machine  (core security improvement)
-───────────────────────────────────────────
-  DETECTING   →  (motion bbox found)                              → TRACKING
-  TRACKING    →  (centroid enters ROI approach zone N frames)     → ENTERING
-  TRACKING    →  (QR absent > threshold, centroid NOT in ROI)     → FAILED qr_lost
-  ENTERING    →  (centroid leaves ROI zone)                       → TRACKING
-  ENTERING    →  (ROTATION signal detected)                       → INSERTING
-  ENTERING    →  (FLAT signal: QR gone + still)                   → STABILIZING
-  INSERTING   →  (phone still for STILL_REQUIRED_FRAMES)          → STABILIZING
-  INSERTING   →  (insertion timeout)                              → FAILED insertion_timeout
-  STABILIZING →  (verify_fn() confirms bottom cam embedding)      → SUCCESS
-  STABILIZING →  (verify_fn() denies)                             → FAILED phone_not_in_slot
-  All layers lost while in ENTERING/INSERTING → verify_fn() then SUCCESS or FAILED
-
-Why this beats the old "QR gone in ROI = success"
-───────────────────────────────────────────────────
-Old design weakness: hide/flip the QR while holding the phone stationary
-over (but not in) the slot.
-
-New design requires ALL of the following before confirming success:
-  1. Top camera — geometry:   centroid physically inside the ROI zone.
-  2. Top camera — motion:     phone has stopped (velocity gate N frames).
-  3. Top camera — shape:      phone underwent visible shape change
-                               (area drops ≥ 48 % OR angle swings ≥ 28 °)
-                               OR took the flat-placement path where QR
-                               disappeared while the object was already still.
-  4. Bottom camera — embed:   slot visual signature changed by ≥ threshold
-                               compared to empty-slot baseline.
-
-Hiding the QR satisfies none of 1–3; covering the bottom camera is
-physically obvious and independent of the QR.
-
-Rotation detection — why area reduction is the primary signal
-──────────────────────────────────────────────────────────────
-When a phone tips from face-up (horizontal, QR visible) into a vertical
-charging slot, the top camera sees the phone "collapse" in one dimension:
-  • Visible bbox area drops to 20–60 % of the face-up value.
-  • minAreaRect angle swings ≥ 28 ° (rotated bounding rect tilts).
-Both signals are computed from the largest visible contour inside the bbox,
-independent of CSRT accuracy and lighting.
 """
 
 from __future__ import annotations
@@ -81,12 +21,42 @@ import cv2
 import numpy as np
 from pyzbar.pyzbar import decode
 
-logger = logging.getLogger(__name__)
-
 _UUID_RE_TRACKER = re.compile(
     r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
     re.IGNORECASE,
 )
+
+logger = logging.getLogger(__name__)
+
+
+# ── CSRT compatibility helper ────────────────────────────────────────────────
+def _make_csrt_tracker():
+    """
+    Create a CSRT tracker compatible with any OpenCV 4.x build.
+
+    OpenCV < 4.5  : cv2.TrackerCSRT_create()  (old top-level API)
+    OpenCV 4.5+   : cv2.TrackerCSRT.create()  (class-method API)
+    opencv-contrib: cv2.legacy.TrackerCSRT.create()
+    """
+    # Preferred: modern class-method API
+    tracker_cls = getattr(cv2, 'TrackerCSRT', None)
+    if tracker_cls is not None and hasattr(tracker_cls, 'create'):
+        return tracker_cls.create()
+    # Fallback: old factory function
+    factory = getattr(cv2, 'TrackerCSRT_create', None)
+    if factory is not None:
+        return factory()
+    # Last resort: contrib module
+    legacy = getattr(cv2, 'legacy', None)
+    if legacy is not None:
+        cls = getattr(legacy, 'TrackerCSRT', None)
+        if cls is not None:
+            return cls.create()
+    raise RuntimeError(
+        "cv2.TrackerCSRT not found. "
+        "Install opencv-contrib-python: pip install opencv-contrib-python"
+    )
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TUNEABLE CONSTANTS
@@ -101,14 +71,14 @@ TRACKER_SUCCESS_TIMEOUT = 1.0
 QR_CHECK_EVERY_N         = 3
 QR_ABSENT_FAIL_S         = 0.8
 
-ROI_APPROACH_MARGIN      = 0.15   # fraction of max(rw,rh) padding around ROI
-ROI_APPROACH_FRAMES      = 3      # consecutive frames before ENTERING
+ROI_APPROACH_MARGIN      = 0.15
+ROI_APPROACH_FRAMES      = 3
 
-AREA_REDUCTION_TRIGGER   = 0.52   # 48 % area loss → INSERTING
-ANGLE_SWING_TRIGGER      = 28     # degrees
+AREA_REDUCTION_TRIGGER   = 0.52
+ANGLE_SWING_TRIGGER      = 28
 MIN_TRACK_AREA_PX        = 800
 
-STILL_VEL_THRESHOLD      = 12     # px/frame
+STILL_VEL_THRESHOLD      = 12
 STILL_REQUIRED_FRAMES    = 8
 STILL_PENALTY_ON_MOVE    = 2
 
@@ -137,11 +107,11 @@ _COL_SOURCE        = (30, 130, 255)
 _COL_DEST_BASE     = (40, 220, 255)
 _COL_STAGING_EMPTY = [(200, 100, 30), (30, 100, 200)]
 _COL_STAGING_OCC   = [(255, 180, 80), (80, 180, 255)]
-_COL_TRACKING      = (20, 215,  20)   # green  — QR visible
-_COL_QR_WARN       = (20,  20, 215)   # red    — QR gone
-_COL_ENTERING      = (0,  200, 255)   # yellow — approaching ROI
-_COL_INSERTING     = (0,  140, 255)   # orange — insertion detected
-_COL_STABILIZING   = (255, 100,   0)  # cyan   — verifying
+_COL_TRACKING      = (20, 215,  20)
+_COL_QR_WARN       = (20,  20, 215)
+_COL_ENTERING      = (0,  200, 255)
+_COL_INSERTING     = (0,  140, 255)
+_COL_STABILIZING   = (255, 100,   0)
 _FONT              = cv2.FONT_HERSHEY_SIMPLEX
 
 
@@ -265,7 +235,7 @@ def make_dvw_context_overlay(all_rois, source_lid, dest_lid):
             _corner_brackets(frame,rx,ry,rw,rh,col,arm=min(20,rw//4,rh//4))
             cx,cy = rx+rw//2, ry+rh//2
             cv2.arrowedLine(frame,(cx,cy-16),(cx,cy+16),col,2,cv2.LINE_AA,tipLength=0.35)
-            _label(frame,f"\u25BC  SLOT {dest_lid+1}  \u2014  PLACE HERE",rx+4,ry+rh+17,col)
+            _label(frame,f"SLOT {dest_lid+1}  - PLACE HERE",rx+4,ry+rh+17,col)
     return draw
 
 
@@ -287,16 +257,16 @@ def make_admin_session_overlay(all_slot_rois, staging_rois, staged_pids,
                 _fill_alpha(frame,rx,ry,rw,rh,col,0.22)
                 cv2.rectangle(frame,(rx,ry),(rx+rw,ry+rh),col,3)
                 tail = pid[-8:] if pid and len(pid)>8 else (pid or "")
-                _label(frame,f"\u25CF {name}  [{tail}]",rx+4,ry+rh//2+7,col)
+                _label(frame,f"[*] {name}  [{tail}]",rx+4,ry+rh//2+7,col)
             else:
                 _draw_dashed_rect(frame,rx,ry,rw,rh,col,2,dash=14,gap=6)
-                _label(frame,f"\u25CB {name}  \u2014  empty",rx+4,ry+rh//2+7,col)
+                _label(frame,f"[ ] {name}  - empty",rx+4,ry+rh//2+7,col)
         if source_lid is not None and source_lid in all_slot_rois:
             rx,ry,rw,rh = all_slot_rois[source_lid]
             same = (source_lid==dest_lid)
             _fill_alpha(frame,rx,ry,rw,rh,_COL_SOURCE,0.11)
             _draw_dashed_rect(frame,rx,ry,rw,rh,_COL_SOURCE,2)
-            lbl = f"FROM  slot {source_lid+1}" + (" \u2194 RETURN HERE" if same else "")
+            lbl = f"FROM  slot {source_lid+1}" + (" <> RETURN HERE" if same else "")
             _label(frame,lbl,rx+4,ry+rh-6,_COL_SOURCE)
             if same: _corner_brackets(frame,rx,ry,rw,rh,_COL_SOURCE,arm=min(20,rw//4,rh//4))
         if dest_lid is not None and dest_lid in all_slot_rois and dest_lid!=source_lid:
@@ -307,7 +277,7 @@ def make_admin_session_overlay(all_slot_rois, staging_rois, staged_pids,
             _corner_brackets(frame,rx,ry,rw,rh,col,arm=min(20,rw//4,rh//4))
             cx,cy = rx+rw//2, ry+rh//2
             cv2.arrowedLine(frame,(cx,cy-16),(cx,cy+16),col,2,cv2.LINE_AA,tipLength=0.35)
-            _label(frame,f"\u25BC  SLOT {dest_lid+1}  \u2014  PLACE HERE",rx+4,ry+rh+17,col)
+            _label(frame,f"SLOT {dest_lid+1}  - PLACE HERE",rx+4,ry+rh+17,col)
     return draw
 
 
@@ -343,7 +313,6 @@ def _merge_bbox(csrt,motion,alpha=0.4):
 
 
 def _lk_init(gray, bbox):
-    """Extract Shi-Tomasi corners inside bbox for LK tracking."""
     x,y,w,h=(int(v) for v in bbox)
     if w<10 or h<10: return None
     roi=gray[y:y+h, x:x+w]
@@ -355,7 +324,6 @@ def _lk_init(gray, bbox):
 
 
 def _lk_update(prev_gray, curr_gray, prev_pts):
-    """One LK step. Returns (good_pts, bbox) or (None, None)."""
     if prev_pts is None or len(prev_pts)<LK_MIN_POINTS: return None,None
     nxt,st,_ = cv2.calcOpticalFlowPyrLK(prev_gray,curr_gray,prev_pts,None,
                                          winSize=LK_WIN_SIZE,maxLevel=LK_MAX_LEVEL,
@@ -404,19 +372,7 @@ def _orb_reidentify(gray, ref_descs, search_region=None):
     return (rx,ry,rw,rh)
 
 
-# ── Rotation / shape-change detector ──────────────────────────────────────────
-
 class _RotationSignal:
-    """
-    Tracks visible area and minAreaRect angle of the phone as it moves
-    toward and into the slot.
-
-    Returns (area_ratio, angle_delta):
-        area_ratio  = current_contour_area / initial_area
-                      (None until bootstrapped with MIN_TRACK_AREA_PX)
-        angle_delta = |current_minAreaRect_angle - initial_angle| in degrees
-                      (None if angle not computable)
-    """
     def __init__(self):
         self._init_area  = None
         self._init_angle = None
@@ -457,13 +413,6 @@ class _RotationSignal:
 class PhoneTracker:
     """
     4-layer tracking pipeline with rotation-aware state machine.
-
-    Parameters
-    ──────────
-    verify_fn : Optional[() -> bool]
-        Called once when the tracker reaches STABILIZING.  Queries the
-        BOTTOM camera embedding to confirm the phone is physically in the
-        slot.  If None, skipped (less secure but works without bottom cam).
     """
 
     def __init__(self, pid, lid, slot_roi, background_frame, cancel_event,
@@ -477,11 +426,9 @@ class PhoneTracker:
         self._client_id       = client_id
         self._staging_rois    = staging_rois or []
         self._verify_fn       = verify_fn
-        # Overlay-visible (written by tracking thread, read by OpenCV thread)
         self._bbox:       Optional[Tuple] = None
         self._state:      _TS             = _TS.DETECTING
         self._qr_visible: bool            = True
-        # Callbacks
         self._on_success  = None
         self._on_failure  = None
         self._on_staged   = None
@@ -499,8 +446,6 @@ class PhoneTracker:
     def _safe_frame(raw_fn, fb_fn):
         f=raw_fn(); return f if f is not None else fb_fn()
 
-    # ── Phase 0: detect phone entering view ───────────────────────────────────
-
     def _detect_phone(self, tc):
         _raw = tc.get_raw_frame()
         bg = _raw if _raw is not None else self._bg
@@ -517,8 +462,6 @@ class PhoneTracker:
             if b: return b
         return None
 
-    # ── Main entry ────────────────────────────────────────────────────────────
-
     def _run(self):
         from back_end.slot_monitor.camera.top_camera import top_camera as tc
         try:
@@ -530,7 +473,8 @@ class PhoneTracker:
                                   else "detect_timeout", tc)
             frame=self._safe_frame(tc.get_raw_frame,tc.get_frame)
             if frame is None: return self._fail("detect_timeout",tc)
-            csrt=cv2.TrackerCSRT_create(); csrt.init(frame,bbox)
+            # ── Use compat helper instead of cv2.TrackerCSRT_create() ──
+            csrt=_make_csrt_tracker(); csrt.init(frame,bbox)
             self._bbox=bbox; self._state=_TS.TRACKING
             tc.set_tracker_overlay(self._draw_overlay)
             logger.info(f"[Tracker] CSRT init bbox={bbox} TRACKING")
@@ -543,34 +487,24 @@ class PhoneTracker:
             except Exception: pass
             if self._on_failure: self._on_failure("error")
 
-    # ── Main tracking loop (state machine) ────────────────────────────────────
-
     def _track(self, csrt, tc):  # noqa: C901
         deadline        = time.time()+PLACEMENT_TIMEOUT
         last_emit       = 0.0
         frame_count     = 0
-        # QR
         last_qr_ts      = time.time()
         qr_confirmed    = False
         self._qr_visible= True
-        # CSRT
         csrt_ok         = True
         reinit_count    = 0
-        # LK
         lk_pts          = None
         prev_gray       = None
-        # ORB
         orb_ref_descs   = None
         last_bbox       = None
-        # Rotation
         rot_sig         = _RotationSignal()
-        # Velocity
         prev_cx=prev_cy = None
         still_count     = 0
-        # State counters
         roi_count       = 0
         state_ts        = time.time()
-        # Staging
         stg_idx=-1; stg_ts=None; stg_qr=False
 
         def centroid(bx,by,bw,bh): return bx+bw//2, by+bh//2
@@ -587,14 +521,12 @@ class PhoneTracker:
             curr_gray=cv2.cvtColor(frame,cv2.COLOR_BGR2GRAY)
             frame_count+=1
 
-            # ── QR ────────────────────────────────────────────────────────────
             if frame_count%QR_CHECK_EVERY_N==0:
                 if self._check_qr(frame):
                     last_qr_ts=time.time(); qr_confirmed=True
             qr_absent=time.time()-last_qr_ts
             self._qr_visible=(qr_absent<QR_ABSENT_FAIL_S)
 
-            # ── Layer 1: CSRT ─────────────────────────────────────────────────
             bx=by=bw=bh=0
             if csrt_ok:
                 ok,raw=csrt.update(frame)
@@ -604,7 +536,6 @@ class PhoneTracker:
                         csrt_ok=False
                     else:
                         reinit_count+=1
-                        # blend with motion
                         if prev_gray is not None:
                             pb=cv2.GaussianBlur(prev_gray,(MOTION_BLUR_K,)*2,0)
                             cb=cv2.GaussianBlur(curr_gray,(MOTION_BLUR_K,)*2,0)
@@ -612,12 +543,12 @@ class PhoneTracker:
                             if mo and _iou((bx,by,bw,bh),mo)>=MOTION_IOU_MERGE:
                                 bx,by,bw,bh=_merge_bbox((bx,by,bw,bh),mo)
                         if reinit_count>=CSRT_REINIT_INTERVAL:
-                            csrt=cv2.TrackerCSRT_create(); csrt.init(frame,(bx,by,bw,bh))
+                            # ── compat helper ──
+                            csrt=_make_csrt_tracker(); csrt.init(frame,(bx,by,bw,bh))
                             reinit_count=0
                 else:
                     csrt_ok=False
 
-            # ── Layer 2: motion contour ───────────────────────────────────────
             if not csrt_ok:
                 if prev_gray is not None:
                     pb=cv2.GaussianBlur(prev_gray,(MOTION_BLUR_K,)*2,0)
@@ -627,25 +558,24 @@ class PhoneTracker:
 
                 if mo:
                     bx,by,bw,bh=mo
-                    csrt=cv2.TrackerCSRT_create(); csrt.init(frame,mo)
+                    # ── compat helper ──
+                    csrt=_make_csrt_tracker(); csrt.init(frame,mo)
                     csrt_ok=True; reinit_count=0; lk_pts=None
 
-                # ── Layer 3: LK optical flow ──────────────────────────────────
                 elif lk_pts is not None and prev_gray is not None:
                     lk_pts,lk_bbox=_lk_update(prev_gray,curr_gray,lk_pts)
                     if lk_bbox: bx,by,bw,bh=lk_bbox
                     else: bx=by=bw=bh=0
 
-                # ── Layer 4: ORB re-identification ────────────────────────────
                 elif frame_count%RE_ID_EVERY_N==0 and orb_ref_descs is not None:
                     rec=_orb_reidentify(curr_gray,orb_ref_descs,last_bbox)
                     if rec:
                         bx,by,bw,bh=rec
-                        csrt=cv2.TrackerCSRT_create(); csrt.init(frame,rec)
+                        # ── compat helper ──
+                        csrt=_make_csrt_tracker(); csrt.init(frame,rec)
                         csrt_ok=True; reinit_count=0; lk_pts=None
                         logger.debug(f"[Tracker] PID={self._pid} ORB re-ID")
                     else:
-                        # All 4 layers failed
                         if self._state in (_TS.ENTERING,_TS.INSERTING):
                             placed=self._run_verify(tc)
                             if placed: return self._succeed(tc)
@@ -656,41 +586,31 @@ class PhoneTracker:
 
             if bw==0 or bh==0: prev_gray=curr_gray; continue
 
-            # Keep LK points fresh
             if csrt_ok and (lk_pts is None or frame_count%10==0):
                 new_lk=_lk_init(curr_gray,(bx,by,bw,bh))
                 if new_lk is not None: lk_pts=new_lk
 
-            # Bootstrap ORB reference
             if orb_ref_descs is None and self._state==_TS.TRACKING and qr_confirmed:
                 _,orb_ref_descs=_orb_descriptors(curr_gray,(bx,by,bw,bh))
 
             self._bbox=(bx,by,bw,bh); last_bbox=(bx,by,bw,bh)
             cx,cy=centroid(bx,by,bw,bh)
 
-            # ── Velocity ──────────────────────────────────────────────────────
             if prev_cx is not None:
                 vel=math.hypot(cx-prev_cx,cy-prev_cy)
                 if vel<STILL_VEL_THRESHOLD: still_count=min(still_count+1,STILL_REQUIRED_FRAMES+5)
                 else: still_count=max(0,still_count-STILL_PENALTY_ON_MOVE)
             prev_cx,prev_cy=cx,cy
 
-            # ── Rotation signal ───────────────────────────────────────────────
             area_ratio,angle_delta=rot_sig.update(curr_gray,(bx,by,bw,bh))
             rotation_detected=(
                 (area_ratio  is not None and area_ratio <AREA_REDUCTION_TRIGGER) or
                 (angle_delta is not None and angle_delta>ANGLE_SWING_TRIGGER)
             )
 
-            # ── Centroid-in-ROI (replaces old bbox-overlap %) ─────────────────
             in_roi=self._centroid_in_roi(cx,cy)
 
-            # ══════════════════════════════════════════════════════════════════
-            # STATE TRANSITIONS
-            # ══════════════════════════════════════════════════════════════════
-
             if self._state==_TS.TRACKING:
-                # Staging detection
                 if not in_roi:
                     si=self._in_which_staging(bx,by,bw,bh)
                     if si>=0:
@@ -703,11 +623,9 @@ class PhoneTracker:
                                 return
                     else: stg_idx=-1; stg_ts=None; stg_qr=False
 
-                # QR loss guard (only if not approaching ROI)
                 if qr_confirmed and qr_absent>QR_ABSENT_FAIL_S and not in_roi and stg_ts is None:
                     return self._fail("qr_lost",tc)
 
-                # Advance to ENTERING
                 if in_roi:
                     roi_count+=1
                     if roi_count>=ROI_APPROACH_FRAMES:
@@ -719,16 +637,13 @@ class PhoneTracker:
             elif self._state==_TS.ENTERING:
                 if not in_roi:
                     self._state=_TS.TRACKING; roi_count=0
-                    logger.debug(f"[Tracker] PID={self._pid} left ROI  TRACKING")
                     prev_gray=curr_gray; continue
 
-                # Rotation / insertion path
                 if rotation_detected:
                     self._state=_TS.INSERTING; state_ts=time.time(); still_count=0
                     logger.info(f"[Tracker] PID={self._pid}  INSERTING "
                                 f"area={area_ratio} angle={angle_delta}")
 
-                # Flat placement path: QR gone + still
                 elif qr_confirmed and qr_absent>QR_ABSENT_FAIL_S and still_count>=STILL_REQUIRED_FRAMES:
                     self._state=_TS.STABILIZING; state_ts=time.time()
                     logger.info(f"[Tracker] PID={self._pid}  STABILIZING (flat)")
@@ -748,7 +663,6 @@ class PhoneTracker:
                 if placed: return self._succeed(tc)
                 return self._fail("phone_not_in_slot",tc)
 
-            # ── Progress event ────────────────────────────────────────────────
             now=time.time()
             if now-last_emit>0.5:
                 self._emit_update(qr_absent,in_roi,area_ratio,angle_delta)
@@ -757,10 +671,7 @@ class PhoneTracker:
 
         self._fail("timeout",tc)
 
-    # ── Geometry helpers ──────────────────────────────────────────────────────
-
     def _centroid_in_roi(self,cx,cy):
-        """Centroid-based check — replaces old bbox overlap %."""
         rx,ry,rw,rh=self._slot_roi
         m=max(rw,rh)*ROI_APPROACH_MARGIN
         return rx-m<=cx<=rx+rw+m and ry-m<=cy<=ry+rh+m
@@ -775,8 +686,6 @@ class PhoneTracker:
             if bw*bh>0 and (ix2-ix1)*(iy2-iy1)/(bw*bh)>=0.30: return i
         return -1
 
-    # ── QR ────────────────────────────────────────────────────────────────────
-
     def _check_qr(self,frame):
         try:
             for obj in decode(frame):
@@ -787,23 +696,19 @@ class PhoneTracker:
         except Exception: pass
         return False
 
-    # ── Bottom-cam verify ─────────────────────────────────────────────────────
-
     def _run_verify(self,tc):
         if self._verify_fn is None:
-            logger.debug(f"[Tracker] PID={self._pid} no verify_fn — assuming placed")
+            logger.debug(f"[Tracker] PID={self._pid} no verify_fn -- assuming placed")
             return True
         try:
             ok=self._verify_fn()
             if not ok:
                 logger.warning(f"[Tracker] PID={self._pid} LID={self._lid} "
-                                "bottom-cam REJECTED — spoofing blocked")
+                                "bottom-cam REJECTED -- spoofing blocked")
             return ok
         except Exception as e:
-            logger.warning(f"[Tracker] verify_fn raised {e} — assuming placed")
+            logger.warning(f"[Tracker] verify_fn raised {e} -- assuming placed")
             return True
-
-    # ── Terminal helpers ──────────────────────────────────────────────────────
 
     def _succeed(self,tc):
         tc.clear_tracker_overlay()
@@ -817,8 +722,6 @@ class PhoneTracker:
         self._state=_TS.FAILED
         if self._on_failure: self._on_failure(reason)
 
-    # ── Emit ──────────────────────────────────────────────────────────────────
-
     def _emit_update(self,qr_absent,in_roi,area_ratio,angle_delta):
         try:
             self._socketio.emit("tracking_update",{
@@ -830,8 +733,6 @@ class PhoneTracker:
             },to=self._client_id,namespace="/")
         except Exception as e:
             logger.debug(f"[Tracker] emit_update: {e}")
-
-    # ── Overlay ────────────────────────────────────────────────────────────────
 
     def _draw_overlay(self,frame):
         if self._bbox is None: return
@@ -865,10 +766,7 @@ class PhoneTracker:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def create_tracker_for_operation(op, socketio, slot_ops=None):
-    """
-    Build a PhoneTracker for a DVW operation.
-    slot_ops provides the bottom-camera verify_fn for placement confirmation.
-    """
+    """Build a PhoneTracker for a DVW operation."""
     from back_end.slot_monitor.camera.top_camera import top_camera
     if op.background_frame is None:
         top_camera.wait_for_frame(timeout=0.3)
