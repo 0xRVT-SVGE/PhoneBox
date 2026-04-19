@@ -4,18 +4,11 @@
 """
 Async event-driven camera system for slot monitoring.
 
-Multi-subscriber bug fix
-─────────────────────────
-The original code used a single shared asyncio.Event for all workers.
-When 4 workers all await the same Event, the first one to resume calls
-.clear() — the other 3 see the event already cleared and go back to
-waiting, missing that frame entirely.  Under heavy load this means
-workers fall behind by one frame per update, effectively halving their
-throughput at 4-worker scale.
-
-Fix: per-subscriber Future broadcast.  _set_frame_event() resolves
-ALL pending futures simultaneously.  Each worker gets its own Future
-so no worker can starve another.
+Multi-subscriber broadcast
+──────────────────────────
+Per-subscriber Future broadcast: _set_frame_event() resolves ALL pending
+futures simultaneously so no worker starves another.  Subscriber identity
+is tracked in a set for O(1) membership checks.
 """
 
 import cv2
@@ -23,7 +16,7 @@ import asyncio
 import logging
 import threading
 import time
-from typing import List, Optional
+from typing import List, Optional, Set
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -35,41 +28,33 @@ class AsyncFrameBuffer:
     """
 
     def __init__(self, max_subscribers: int = 100):
-        self._frame_lock = threading.Lock()
+        self._frame_lock   = threading.Lock()
         self._latest_frame: Optional[np.ndarray] = None
-        self._frame_count = 0
+        self._frame_count  = 0
 
-        # Per-subscriber Future broadcast — replaces the shared asyncio.Event.
-        # _waiters holds one unresolved Future per currently-blocked worker.
-        # _set_frame_event() resolves ALL of them at once; no worker starves.
+        # Per-subscriber Future broadcast.
         self._waiters: List[asyncio.Future] = []
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._loop:    Optional[asyncio.AbstractEventLoop] = None
 
-        self._running = False
-        self._capture_thread = None
+        self._running         = False
+        self._capture_thread  = None
 
-        self._subscribers: List[str] = []
-        self._max_subscribers = max_subscribers
+        # Set for O(1) membership check (was List)
+        self._subscribers:     Set[str] = set()
+        self._max_subscribers  = max_subscribers
 
         self._notification_latency_ms = 0.0
 
     def set_event_loop(self, loop: asyncio.AbstractEventLoop):
-        """
-        Set the asyncio event loop for frame notifications.
-        MUST be called before start_capture() if using async workers.
-
-        Args:
-            loop: The asyncio event loop to use for notifications
-        """
         self._loop = loop
         logger.info("Event loop attached to AsyncFrameBuffer")
 
     def start_capture(
         self,
         camera_id: int = 0,
-        width: int = 1920,
+        width:  int = 1920,
         height: int = 1080,
-        fps: int = 30,
+        fps:    int = 30,
     ):
         if self._loop is None:
             raise RuntimeError(
@@ -84,7 +69,7 @@ class AsyncFrameBuffer:
             target=self._capture_loop,
             args=(camera_id, width, height, fps),
             daemon=True,
-            name="AsyncCameraCapture"
+            name="AsyncCameraCapture",
         )
         self._capture_thread.start()
 
@@ -100,25 +85,20 @@ class AsyncFrameBuffer:
         logger.info(f"Async camera {camera_id} started ({width}x{height} @ {fps}fps)")
 
     def _capture_loop(self, camera_id: int, width: int, height: int, fps: int):
-        """
-        Background camera capture thread.
-        Notifies async workers via event when new frame arrives.
-        """
         cap = cv2.VideoCapture(camera_id)
 
         if not cap.isOpened():
             logger.error(f"Failed to open camera {camera_id}")
             return
 
-        # Configure camera
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH,  width)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-        cap.set(cv2.CAP_PROP_FPS, fps)
-        cap.set(cv2.CAP_PROP_AUTOFOCUS, 1)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        cap.set(cv2.CAP_PROP_FPS,          fps)
+        cap.set(cv2.CAP_PROP_AUTOFOCUS,    1)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE,   1)
 
-        actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        actual_w   = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        actual_h   = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         actual_fps = int(cap.get(cv2.CAP_PROP_FPS))
         logger.info(f"Camera {camera_id} opened: {actual_w}x{actual_h} @ {actual_fps}fps")
 
@@ -132,23 +112,18 @@ class AsyncFrameBuffer:
             ret, frame = cap.read()
 
             if ret and frame is not None:
-                # Make frame read-only (enables zero-copy sharing)
                 frame.flags.writeable = False
 
-                # Update frame buffer
                 with self._frame_lock:
                     self._latest_frame = frame
                     self._frame_count += 1
 
-                # Notify async workers (thread-safe)
                 self._notify_frame_ready()
-
             else:
                 logger.warning("Failed to read frame from camera")
 
-            # Maintain target FPS
-            elapsed = time.time() - loop_start
-            sleep_time = max(0, frame_interval - elapsed)
+            elapsed    = time.time() - loop_start
+            sleep_time = max(0.0, frame_interval - elapsed)
             if sleep_time > 0:
                 time.sleep(sleep_time)
 
@@ -156,10 +131,6 @@ class AsyncFrameBuffer:
         logger.info("Async camera capture stopped")
 
     def _notify_frame_ready(self):
-        """
-        Notify async workers that a new frame is ready.
-        Thread-safe: called from camera thread, notifies async event loop.
-        """
         if self._loop is None:
             return
         t0 = time.time()
@@ -168,13 +139,8 @@ class AsyncFrameBuffer:
 
     def _set_frame_event(self):
         """
-        Called in the event loop thread.
-
-        Atomically swaps the waiters list and resolves every pending Future.
-        All workers wake up simultaneously — no worker starves another.
-        This replaces the old shared asyncio.Event whose single .clear()
-        call after the first worker resumed caused the remaining workers to
-        miss the frame.
+        Resolve every pending Future atomically.
+        All workers wake simultaneously — no worker starves another.
         """
         waiters, self._waiters = self._waiters, []
         for fut in waiters:
@@ -183,27 +149,13 @@ class AsyncFrameBuffer:
 
     async def wait_for_frame(self, subscriber_id: str = "unknown") -> np.ndarray:
         """
-        Wait for next frame (async, no polling).
+        Wait for the next frame (async, no polling).
 
-        This is the KEY method that eliminates polling:
-        - Blocks asynchronously until new frame arrives
-        - Zero CPU usage while waiting
-        - Immediate wake-up on new frame
-
-        Args:
-            subscriber_id: ID for tracking/debugging
-
-        Returns:
-            Latest frame (read-only, zero-copy)
-
-        Usage:
-            while True:
-                frame = await buffer.wait_for_frame("worker-1")
-                process(frame)  # Runs immediately on new frame
+        Zero CPU usage while waiting; immediate wake-up on new frame.
         """
         if subscriber_id not in self._subscribers:
             if len(self._subscribers) < self._max_subscribers:
-                self._subscribers.append(subscriber_id)
+                self._subscribers.add(subscriber_id)
             else:
                 logger.warning(
                     f"Max subscribers ({self._max_subscribers}) reached, "
@@ -221,33 +173,21 @@ class AsyncFrameBuffer:
             return self._latest_frame
 
     def get_frame_sync(self) -> Optional[np.ndarray]:
-        """
-        Get latest frame synchronously (for non-async code).
-
-        Returns:
-            Copy of latest frame, or None
-        """
+        """Get latest frame synchronously (for non-async code)."""
         with self._frame_lock:
             return self._latest_frame.copy() if self._latest_frame is not None else None
 
     def get_frame_count(self) -> int:
-        """Get total frames captured"""
         with self._frame_lock:
             return self._frame_count
 
     def get_metrics(self) -> dict:
-        """
-        Get performance metrics.
-
-        Returns:
-            Dict with performance stats
-        """
         with self._frame_lock:
             return {
-                "frame_count":              self._frame_count,
-                "active_subscribers":       len(self._subscribers),
-                "notification_latency_ms":  self._notification_latency_ms,
-                "running":                  self._running,
+                "frame_count":             self._frame_count,
+                "active_subscribers":      len(self._subscribers),
+                "notification_latency_ms": self._notification_latency_ms,
+                "running":                 self._running,
             }
 
     def is_running(self) -> bool:
@@ -269,7 +209,7 @@ class AsyncCameraCapture:
         self,
         frame_buffer: AsyncFrameBuffer,
         camera_id: int = 0,
-        width: int = 1920,
+        width:  int = 1920,
         height: int = 1080,
     ):
         self.frame_buffer = frame_buffer
@@ -283,34 +223,16 @@ class AsyncCameraCapture:
         logger.info(f"AsyncCameraCapture initialized (cam {camera_id}, {width}x{height})")
 
     async def read(self, subscriber_id: str = "unknown") -> np.ndarray:
-        """
-        Read next frame asynchronously (event-driven, no polling).
-
-        Args:
-            subscriber_id: ID for tracking
-
-        Returns:
-            Latest frame (read-only)
-        """
         return await self.frame_buffer.wait_for_frame(subscriber_id)
 
     def read_sync(self) -> Optional[np.ndarray]:
-        """
-        Read latest frame synchronously.
-
-        Returns:
-            Copy of latest frame
-        """
         return self.frame_buffer.get_frame_sync()
 
     def get_frame_count(self) -> int:
-        """Get total frames captured"""
         return self.frame_buffer.get_frame_count()
 
     def get_metrics(self) -> dict:
-        """Get performance metrics"""
         return self.frame_buffer.get_metrics()
 
-    def get_dimensions(self) -> tuple[int, int]:
-        """Get frame dimensions"""
+    def get_dimensions(self) -> tuple:
         return (self.width, self.height)

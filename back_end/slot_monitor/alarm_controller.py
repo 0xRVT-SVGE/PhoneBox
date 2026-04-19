@@ -20,29 +20,29 @@ class AlarmController:
         resolve()    → removes one mismatch; stops sound if set empties
         clear()      → admin override — clears all mismatches + stops sound
 
+    Note on false positives during DVW operations:
+        The worker layer (worker_async.py) suppresses trigger() calls while
+        any DVW or admin session is active, so this class never needs to
+        filter them itself.  AlarmController only sees legitimate triggers.
+
     Clip saving:
-        Rolling-buffer clips are saved in a background daemon thread so that
-        the async worker loop is NEVER blocked by disk I/O.  Before the fix,
-        save_alarm_clip() was called synchronously inside trigger(), stalling
-        the event loop for ~30 s per alarm and causing subsequent alarms to
-        fire one-by-one with 30 s gaps instead of simultaneously.
+        Rolling-buffer clips are submitted to BackgroundEncoder (non-blocking).
+        The call returns in microseconds — no stalling of the async worker loop.
     """
 
     def __init__(self):
-        self._lock = threading.Lock()
-        self.active = False
+        self._lock             = threading.Lock()
+        self.active            = False
         self.mismatches: set[tuple[str, int]] = set()
         self._alarm_start_time = None
-        self._silenced = False
-        self.socketio = None
+        self._silenced         = False
+        self.socketio          = None
 
     def set_socketio(self, socketio):
         with self._lock:
             self.socketio = socketio
 
-    # ──────────────────────────────────────────────────────
-    # SOUND CONTROL
-    # ──────────────────────────────────────────────────────
+    # ── Sound control ─────────────────────────────────────
 
     def silence(self):
         with self._lock:
@@ -58,51 +58,48 @@ class AlarmController:
                 self._start_alarm_sound()
                 logger.warning("Alarm unsilenced — admin quit resolution without finishing")
 
-    # ──────────────────────────────────────────────────────
-    # MISMATCH TRACKING
-    # ──────────────────────────────────────────────────────
+    # ── Mismatch tracking ─────────────────────────────────
 
     def trigger(self, pid: str, lid: int):
-        pid = str(pid)
+        """
+        Record a new mismatch and fire the alarm if not already active.
+        Callers (worker_async._process_slot) are responsible for suppressing
+        this call during DVW / admin operations.
+        """
+        pid      = str(pid)
         snapshot = None
+
         with self._lock:
             if not self.active:
-                self._silenced = False
-                self._start_alarm_sound()
-                self.active = True
+                self._silenced         = False
                 self._alarm_start_time = time.time()
+                self.active            = True
+                self._start_alarm_sound()
                 logger.warning("ALARM ACTIVATED")
                 if self.socketio:
                     self.socketio.emit("alarm_triggered", {
                         "mismatch_count": 1,
-                        "mismatches": [[pid, lid]],
+                        "mismatches":     [[pid, lid]],
                     })
 
             self.mismatches.add((pid, lid))
             logger.warning(f"Mismatch added: PID={pid}, LID={lid}")
-            # Take a snapshot while we hold the lock; build the list outside.
             if self.socketio:
                 snapshot = list(self.mismatches)
 
         if snapshot is not None:
             self.socketio.emit("alarm_updated", {
                 "mismatch_count": len(snapshot),
-                "mismatches": [[p, l] for p, l in snapshot],
+                "mismatches":     [[p, l] for p, l in snapshot],
             })
 
-        # save_alarm_clip() is now non-blocking (delegates to BackgroundEncoder),
-        # so we no longer need to spawn a separate thread for it.
-        # The call returns in microseconds.
+        # Non-blocking — delegates to BackgroundEncoder
         self._save_alarm_clips(pid, lid)
 
     def _save_alarm_clips(self, pid: str, lid: int):
-        """
-        Queue alarm clips for background encoding.
-        Both calls return immediately — actual encoding happens in BackgroundEncoder.
-        """
         try:
             from back_end.slot_monitor.camera.rolling_buffer import (
-                face_rolling_buffer, top_rolling_buffer
+                face_rolling_buffer, top_rolling_buffer,
             )
             face_rolling_buffer.save_alarm_clip(pid=pid, lid=lid)
             top_rolling_buffer.save_alarm_clip(pid=pid, lid=lid)
@@ -110,71 +107,63 @@ class AlarmController:
             logger.warning(f"[Alarm] Failed to queue alarm clips: {e}")
 
     def resolve(self, pid: str, lid: int):
+        """Remove one mismatch; clear the alarm if the set becomes empty."""
         with self._lock:
             self.mismatches.discard((pid, lid))
             logger.info(f"Mismatch resolved: PID={pid}, LID={lid}")
             if self.active and not self.mismatches:
-                if not self._silenced:
-                    self._stop_alarm_sound()
-                duration = time.time() - self._alarm_start_time if self._alarm_start_time else 0
-                self.active = False
-                self._silenced = False
-                self._alarm_start_time = None
-                logger.info(f"ALARM CLEARED after {duration:.1f}s")
-                if self.socketio:
-                    self.socketio.emit("alarm_cleared", {})
+                self._clear_active_alarm()
 
     def stop_if_clear(self):
+        """Clear alarm when all mismatches have been resolved externally."""
         with self._lock:
             if self.active and not self.mismatches:
-                if not self._silenced:
-                    self._stop_alarm_sound()
-                duration = time.time() - self._alarm_start_time if self._alarm_start_time else 0
-                self.active = False
-                self._silenced = False
-                self._alarm_start_time = None
-                logger.info(f"ALARM CLEARED after {duration:.1f}s")
-                if self.socketio:
-                    self.socketio.emit("alarm_cleared", {})
+                self._clear_active_alarm()
 
     def clear(self):
+        """Admin override — discard all mismatches and clear alarm."""
         with self._lock:
             count = len(self.mismatches)
             self.mismatches.clear()
             if self.active:
-                if not self._silenced:
-                    self._stop_alarm_sound()
-                self.active = False
-                self._silenced = False
-                self._alarm_start_time = None
+                self._clear_active_alarm()
             logger.info(f"Alarm force-cleared ({count} mismatches removed)")
-            if self.socketio:
-                self.socketio.emit("alarm_cleared", {})
+
+    def _clear_active_alarm(self):
+        """Must be called with self._lock held."""
+        if not self._silenced:
+            self._stop_alarm_sound()
+        duration               = time.time() - self._alarm_start_time if self._alarm_start_time else 0
+        self.active            = False
+        self._silenced         = False
+        self._alarm_start_time = None
+        logger.info(f"ALARM CLEARED after {duration:.1f}s")
+        if self.socketio:
+            self.socketio.emit("alarm_cleared", {})
+
+    # ── Admin auth ────────────────────────────────────────
 
     def authenticate_admin(self, password: str) -> dict:
         # TODO: Replace with proper authentication
         if password == "admin":
             with self._lock:
-                # Copy the set inside the lock; sort outside to minimise lock hold time.
                 snapshot = list(self.mismatches)
             return {
                 "authenticated": True,
-                "mismatches": sorted([(str(p), l) for p, l in snapshot]),
+                "mismatches":    sorted([(str(p), l) for p, l in snapshot]),
             }
         return {"authenticated": False, "mismatches": []}
 
     def get_status(self) -> dict:
         with self._lock:
             return {
-                "active": self.active,
-                "silenced": self._silenced,
+                "active":         self.active,
+                "silenced":       self._silenced,
                 "mismatch_count": len(self.mismatches),
-                "duration": time.time() - self._alarm_start_time if self._alarm_start_time else 0,
+                "duration":       time.time() - self._alarm_start_time if self._alarm_start_time else 0,
             }
 
-    # ──────────────────────────────────────────────────────
-    # HARDWARE INTERFACE
-    # ──────────────────────────────────────────────────────
+    # ── Hardware interface ────────────────────────────────
 
     def _start_alarm_sound(self):
         print("ALARM ON")

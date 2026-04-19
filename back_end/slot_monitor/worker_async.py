@@ -3,6 +3,19 @@
 # ============================================================
 """
 Async event-driven monitoring workers with DVW support.
+
+False-positive suppression
+──────────────────────────
+During any DVW (deposit/withdraw/verify) or admin resolution operation the
+operator's hand and phone move over the box, causing transient embedding
+changes on non-target slots.  Without suppression those slots fire alarms
+after their grace period (≤3 s) while the operator is still handling a
+legitimate action.
+
+Fix: _any_operation_active() checks op_ctx and admin_ctx before forwarding
+a trigger_alarm event to AlarmController.  Slot state (mismatch flag, grace
+timer, distances history) is untouched — a real concurrent theft will
+re-alarm naturally once the operation ends and restore_slot() resets state.
 """
 
 import asyncio
@@ -17,6 +30,31 @@ from back_end.slot_monitor.alarm_controller import AlarmController
 
 logger = logging.getLogger(__name__)
 
+# ── Lazy singletons for operation-active checks ──────────────────────────────
+# Imported once on first use to avoid circular-import issues at module load.
+_op_ctx    = None
+_admin_ctx = None
+
+def _get_op_ctx():
+    global _op_ctx
+    if _op_ctx is None:
+        try:
+            from back_end.slot_monitor.services.operation_context import op_ctx
+            _op_ctx = op_ctx
+        except Exception:
+            pass
+    return _op_ctx
+
+def _get_admin_ctx():
+    global _admin_ctx
+    if _admin_ctx is None:
+        try:
+            from back_end.slot_monitor.admin.resolution_session import admin_ctx
+            _admin_ctx = admin_ctx
+        except Exception:
+            pass
+    return _admin_ctx
+
 
 @dataclass
 class WorkerMetrics:
@@ -26,6 +64,7 @@ class WorkerMetrics:
     total_distance: float = 0.0
     total_processing_time: float = 0.0
     alarms_triggered: int = 0
+    alarms_suppressed: int = 0   # new: tracks false-positive suppression count
     baselines_adapted: int = 0
     errors: int = 0
 
@@ -73,14 +112,11 @@ class AsyncMonitorWorker:
         self.recalc_threshold = recalc_threshold
         self.grace_period = grace_period
 
-        # Runtime state
         self._running = False
         self._task: Optional[asyncio.Task] = None
 
-        # Metrics
         self.metrics = WorkerMetrics(worker_id=worker_id)
 
-        # Subscriber ID
         self._subscriber_id = f"worker-{worker_id}"
 
         # lid → True means monitoring is suspended for that slot
@@ -96,17 +132,11 @@ class AsyncMonitorWorker:
     # --------------------------------------------------------
 
     def pause_slot(self, lid: int):
-        """Suspend monitoring for a slot during a DVW operation."""
         self._paused_slots[lid] = True
         logger.info(f"Worker {self.worker_id}: slot {lid} paused")
 
     def resume_slot(self, lid: int):
-        """
-        Lift pause after a SUCCESSFUL operation.
-
-        The slot's is_occupied and baseline are already correct because
-        the operation updated them. Do not touch slot state here.
-        """
+        """Lift pause after a SUCCESSFUL operation."""
         self._paused_slots.pop(lid, None)
         logger.info(f"Worker {self.worker_id}: slot {lid} resumed")
 
@@ -114,19 +144,8 @@ class AsyncMonitorWorker:
         """
         Lift pause after a FAILED or TIMED-OUT operation.
 
-        Resets:
-            is_occupied      → recorded pre-operation value
-            mismatch         → False (cleared so alarm logic starts clean)
-            _grace_start_ts  → None  (stale timer would fire immediately)
-
-        Does NOT clear distances_history — history is preserved so the
-        monitoring loop can re-trigger an alarm naturally if the physical
-        state of the slot still warrants it (e.g. phone was taken during
-        a failed verify, slot really is empty, alarm should re-fire).
-
-        Args:
-            lid:         Location ID of the slot to restore.
-            is_occupied: The occupancy the slot had before the operation.
+        Resets is_occupied, mismatch, and grace timer.
+        Preserves distances_history so alarm can re-trigger naturally.
         """
         self._paused_slots.pop(lid, None)
 
@@ -140,21 +159,42 @@ class AsyncMonitorWorker:
         slot.is_occupied = is_occupied
         slot.mismatch = False
         slot._grace_start_ts = None
-        # distances_history intentionally NOT cleared — see docstring
         logger.info(
             f"Worker {self.worker_id}: slot {lid} restored (is_occupied={is_occupied})"
         )
 
     def is_slot_paused(self, lid: int) -> bool:
-        """Check if slot is paused"""
         return self._paused_slots.get(lid, False)
+
+    # --------------------------------------------------------
+    # OPERATION-ACTIVE CHECK  (false-positive suppression)
+    # --------------------------------------------------------
+
+    @staticmethod
+    def _any_operation_active() -> bool:
+        """
+        Return True if any DVW or admin-resolution operation is currently in
+        progress anywhere in the system.
+
+        Called only on the rare path where trigger_alarm=True (once per grace-
+        period expiry), so the lazy singleton lookup cost is negligible.
+        """
+        try:
+            ctx = _get_op_ctx()
+            if ctx is not None and ctx.get_all_operations():
+                return True
+            actx = _get_admin_ctx()
+            if actx is not None and actx.is_active():
+                return True
+        except Exception:
+            pass
+        return False
 
     # --------------------------------------------------------
     # LIFECYCLE
     # --------------------------------------------------------
 
     async def start(self):
-        """Start worker task"""
         if self._running:
             logger.warning(f"Worker {self.worker_id} already running")
             return
@@ -167,7 +207,6 @@ class AsyncMonitorWorker:
         logger.info(f"AsyncWorker {self.worker_id} started")
 
     async def stop(self):
-        """Stop worker task"""
         if not self._running:
             return
 
@@ -187,7 +226,6 @@ class AsyncMonitorWorker:
     # --------------------------------------------------------
 
     async def _monitor_loop(self):
-        """Main monitoring loop (event-driven)"""
         logger.info(f"Worker {self.worker_id} entering event-driven loop")
 
         try:
@@ -206,7 +244,6 @@ class AsyncMonitorWorker:
             self.metrics.errors += 1
 
     async def _process_frame(self, frame: np.ndarray):
-        """Process all assigned slots"""
         start_time = time.perf_counter()
 
         for slot in self.slots:
@@ -225,8 +262,12 @@ class AsyncMonitorWorker:
         Process a single slot.
 
         Skips processing if slot is paused (DVW operation in progress).
-        DB is only queried on the rare events (alarm trigger/clear/recalc),
-        not on every frame, eliminating the dominant hot-path overhead.
+
+        False-positive suppression: if a NEW alarm trigger would fire while
+        any DVW/admin operation is active elsewhere in the system, the trigger
+        is suppressed.  The slot's mismatch state is preserved — a real theft
+        concurrent with an operation re-alarms once the operation ends and
+        restore_slot() resets state.
         """
         if self.is_slot_paused(slot.lid):
             return
@@ -240,8 +281,21 @@ class AsyncMonitorWorker:
 
         self.metrics.total_distance += result["distance"]
 
-        # Fast path: most frames are normal — skip DB entirely.
+        # Fast path: most frames are normal — skip DB and op-check entirely.
         if not (result["trigger_alarm"] or result["stop_alarm"] or result["needs_recalc"]):
+            return
+
+        # ── False-positive suppression ────────────────────────────────────────
+        # A student's hand moving over the box causes transient embedding
+        # changes on non-target (especially empty) slots.  Suppress new alarm
+        # triggers while any operation is in flight.  stop_alarm and
+        # needs_recalc are intentionally NOT suppressed.
+        if result["trigger_alarm"] and self._any_operation_active():
+            self.metrics.alarms_suppressed += 1
+            logger.debug(
+                f"Worker {self.worker_id}: alarm suppressed (operation active) LID={slot.lid} "
+                f"dist={result['distance']:.4f}"
+            )
             return
 
         pid = await self.db.get_pid_for_lid(slot.lid) or f"unknown-{slot.lid}"
@@ -250,7 +304,8 @@ class AsyncMonitorWorker:
             self.alarm.trigger(pid, slot.lid)
             self.metrics.alarms_triggered += 1
             logger.critical(
-                f"Worker {self.worker_id}: ALARM! LID={slot.lid} PID={pid} dist={result['distance']:.4f}"
+                f"Worker {self.worker_id}: ALARM! LID={slot.lid} PID={pid} "
+                f"dist={result['distance']:.4f}"
             )
 
         if result["stop_alarm"]:
@@ -262,31 +317,32 @@ class AsyncMonitorWorker:
             await self.db.save_baseline(slot.lid, result["embedding"])
             self.metrics.baselines_adapted += 1
             logger.info(
-                f"Worker {self.worker_id}: baseline adapted LID={slot.lid} dist={result['distance']:.4f}"
+                f"Worker {self.worker_id}: baseline adapted LID={slot.lid} "
+                f"dist={result['distance']:.4f}"
             )
 
     def _log_metrics(self):
-        """Log performance metrics"""
         logger.info(
             f"Worker {self.worker_id}: frames={self.metrics.frames_processed} "
             f"avg_dist={self.metrics.avg_distance:.4f} "
             f"avg_time={self.metrics.avg_processing_ms:.2f}ms "
             f"alarms={self.metrics.alarms_triggered} "
+            f"suppressed={self.metrics.alarms_suppressed} "
             f"paused={len(self._paused_slots)} "
             f"errors={self.metrics.errors}"
         )
 
     def get_metrics(self) -> Dict:
-        """Get current metrics"""
         return {
-            "worker_id": self.metrics.worker_id,
-            "frames_processed": self.metrics.frames_processed,
-            "avg_distance": self.metrics.avg_distance,
-            "avg_processing_ms": self.metrics.avg_processing_ms,
-            "alarms_triggered": self.metrics.alarms_triggered,
-            "baselines_adapted": self.metrics.baselines_adapted,
-            "paused_slots": len(self._paused_slots),
-            "errors": self.metrics.errors,
+            "worker_id":          self.metrics.worker_id,
+            "frames_processed":   self.metrics.frames_processed,
+            "avg_distance":       self.metrics.avg_distance,
+            "avg_processing_ms":  self.metrics.avg_processing_ms,
+            "alarms_triggered":   self.metrics.alarms_triggered,
+            "alarms_suppressed":  self.metrics.alarms_suppressed,
+            "baselines_adapted":  self.metrics.baselines_adapted,
+            "paused_slots":       len(self._paused_slots),
+            "errors":             self.metrics.errors,
         }
 
 
@@ -357,17 +413,11 @@ class WorkerPool:
             w.pause_slot(lid)
 
     def resume_slot(self, lid: int):
-        """Lift pause after successful operation — slot state already correct."""
         w = self._get_worker(lid)
         if w:
             w.resume_slot(lid)
 
     def restore_slot(self, lid: int, is_occupied: bool):
-        """
-        Lift pause after failed/timed-out operation.
-        Resets is_occupied, mismatch, and grace timer.
-        Preserves distances_history so alarm can re-trigger naturally.
-        """
         w = self._get_worker(lid)
         if w:
             w.restore_slot(lid, is_occupied)
@@ -383,13 +433,14 @@ class WorkerPool:
         logger.info(f"{len(self.workers)} workers stopped")
 
     def get_metrics(self) -> Dict:
-        total_frames = sum(w.metrics.frames_processed for w in self.workers)
-        total_distance = sum(w.metrics.total_distance for w in self.workers)
+        total_frames   = sum(w.metrics.frames_processed  for w in self.workers)
+        total_distance = sum(w.metrics.total_distance    for w in self.workers)
         return {
-            "num_workers": len(self.workers),
+            "num_workers":            len(self.workers),
             "total_frames_processed": total_frames,
-            "avg_distance": total_distance / total_frames if total_frames else 0.0,
-            "total_alarms": sum(w.metrics.alarms_triggered for w in self.workers),
-            "total_errors": sum(w.metrics.errors for w in self.workers),
-            "workers": [w.get_metrics() for w in self.workers],
+            "avg_distance":           total_distance / total_frames if total_frames else 0.0,
+            "total_alarms":           sum(w.metrics.alarms_triggered  for w in self.workers),
+            "total_suppressed":       sum(w.metrics.alarms_suppressed for w in self.workers),
+            "total_errors":           sum(w.metrics.errors            for w in self.workers),
+            "workers":                [w.get_metrics() for w in self.workers],
         }

@@ -70,7 +70,7 @@ STABILIZING_TIMEOUT      = 3.0
 # phone has time to go still inside the ROI before triggering stabilization_timeout.
 TRACKER_SUCCESS_TIMEOUT  = 12.0
 
-QR_CHECK_EVERY_N         = 3
+QR_CHECK_EVERY_N         = 6
 # Increased from 0.8 → 3.0 s: the detector can miss several frames in a row
 # (motion blur, angle change) causing false qr_lost failures at 0.8 s.
 QR_ABSENT_FAIL_S         = 3.0
@@ -525,11 +525,16 @@ class PhoneTracker:
             curr_gray=cv2.cvtColor(frame,cv2.COLOR_BGR2GRAY)
             frame_count+=1
 
-            if frame_count%QR_CHECK_EVERY_N==0:
+            #Skip QR decode in states where QR is no longer needed.
+            # INSERTING/STABILIZING: phone is already in the slot area;
+            # QR loss at this point is expected and should not fail the operation.
+            _qr_check_needed = self._state in (_TS.DETECTING, _TS.TRACKING, _TS.ENTERING)
+            if _qr_check_needed and frame_count % QR_CHECK_EVERY_N == 0:
                 if self._check_qr(frame):
-                    last_qr_ts=time.time(); qr_confirmed=True
-            qr_absent=time.time()-last_qr_ts
-            self._qr_visible=(qr_absent<QR_ABSENT_FAIL_S)
+                    last_qr_ts = time.time()
+                    qr_confirmed = True
+            qr_absent = time.time() - last_qr_ts
+            self._qr_visible = (qr_absent < QR_ABSENT_FAIL_S)
 
             bx=by=bw=bh=0
             if csrt_ok:

@@ -424,11 +424,12 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
           // Drag handle
           Padding(
             padding: const EdgeInsets.only(top: 10, bottom: 4),
-            child: Container(
+            child: const SizedBox(
               width: 36, height: 4,
+              child: DecoratedBox(
               decoration: BoxDecoration(
                   color: Colors.white24,
-                  borderRadius: BorderRadius.circular(2)),
+                  borderRadius: BorderRadius.all(Radius.circular(2))),
             ),
           ),
 

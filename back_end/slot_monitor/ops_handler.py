@@ -78,14 +78,6 @@ class DVWSocketHandler:
             self._restore_slot(lid, is_occupied=False)
             return
 
-        # Capture background frame NOW — slot is empty, phone not yet present.
-        # top_camera.start() is called lazily in handle_qr_scanned but may already
-        # be running.  If the camera hasn't warmed up yet the frame will be None;
-        # create_tracker_for_operation handles that with a retry wait.
-        op = op_ctx.get(client_id)
-        if op is not None:
-            op.background_frame = top_camera.get_frame()
-
         # Start camera and capture background frame BEFORE the thread starts
         # so the QR scan has a warm camera and a valid empty-slot background.
         top_camera.start()
@@ -275,23 +267,24 @@ class DVWSocketHandler:
             top_rolling_buffer.set_active(True)
         except Exception:
             pass
-
-        scan_result = scan_and_validate_pid_from_buffer(
-            top_camera,
-            timeout_sec=QR_SCAN_TIMEOUT,
-            cancel_event=op.cancel_event,
-        )
-        self._top_buffer_idle()
-
-        if op.cancel_event.is_set():
-            return
-
-        if scan_result["status"] != "success":
-            self.socketio.emit(
-                "operation_error", scan_result, to=client_id, namespace="/"
+        try:
+            scan_result = scan_and_validate_pid_from_buffer(
+                top_camera,
+                timeout_sec=QR_SCAN_TIMEOUT,
+                cancel_event=op.cancel_event,
             )
-            op_ctx.clear(client_id)
-            return
+        finally:
+            self._top_buffer_idle()
+
+            if op.cancel_event.is_set():
+                return
+
+            if scan_result["status"] != "success":
+                self.socketio.emit(
+                    "operation_error", scan_result, to=client_id, namespace="/"
+                )
+                op_ctx.clear(client_id)
+                return
 
         scanned_pid = scan_result["pid"]
         if scanned_pid != op.pid:

@@ -9,13 +9,13 @@ class ApiService {
   // ====================== STUDENTS ======================
 
   static Future<List<dynamic>?> getStudents() async {
-    final res = await http.get(Uri.parse("$baseUrl/api/students"));
+    final res = await http.get(Uri.parse("$baseUrl/api/students")).timeout(const Duration(seconds: 8));
     if (res.statusCode == 200) return jsonDecode(res.body)["data"];
     return null;
   }
 
   static Future<Map<String, dynamic>?> getStudent(String sid) async {
-    final res = await http.get(Uri.parse("$baseUrl/api/students/$sid"));
+    final res = await http.get(Uri.parse("$baseUrl/api/students/$sid")).timeout(const Duration(seconds: 8));
     if (res.statusCode == 200) return jsonDecode(res.body)["data"];
     return null;
   }
@@ -26,7 +26,7 @@ class ApiService {
         Uri.parse("$baseUrl/api/students"),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode(data),
-      );
+      ).timeout(const Duration(seconds: 8));
       return res.statusCode == 200 || res.statusCode == 201;
     } catch (e) {
       print("createStudent error: $e");
@@ -40,12 +40,12 @@ class ApiService {
       Uri.parse("$baseUrl/api/students/$sid"),
       headers: {"Content-Type": "application/json"},
       body: jsonEncode(data),
-    );
+    ).timeout(const Duration(seconds: 8));
     return res.statusCode == 200;
   }
 
   static Future<bool> deleteStudent(String sid) async {
-    final res = await http.delete(Uri.parse("$baseUrl/api/students/$sid"));
+    final res = await http.delete(Uri.parse("$baseUrl/api/students/$sid")).timeout(const Duration(seconds: 8));
     return res.statusCode == 200;
   }
 
@@ -53,7 +53,7 @@ class ApiService {
       String query) async {
     try {
       final uri = Uri.parse("$baseUrl/api/students/search?q=$query");
-      final response = await http.get(uri);
+      final response = await http.get(uri).timeout(const Duration(seconds: 8));
       if (response.statusCode == 200) {
         final jsonData = jsonDecode(response.body);
         if (jsonData['status'] == 'success') {
@@ -71,7 +71,7 @@ class ApiService {
   // ====================== PHONES ======================
 
   static Future<List<dynamic>?> getPhones(String sid) async {
-    final res = await http.get(Uri.parse("$baseUrl/api/phones/$sid"));
+    final res = await http.get(Uri.parse("$baseUrl/api/phones/$sid")).timeout(const Duration(seconds: 8));
     if (res.statusCode == 200) return jsonDecode(res.body)["data"];
     return null;
   }
@@ -81,7 +81,7 @@ class ApiService {
       Uri.parse("$baseUrl/api/phones/"),
       headers: {"Content-Type": "application/json"},
       body: jsonEncode(data),
-    );
+    ).timeout(const Duration(seconds: 8));
     return res.statusCode == 200 || res.statusCode == 201;
   }
 
@@ -91,12 +91,12 @@ class ApiService {
       Uri.parse("$baseUrl/api/phones/$pid"),
       headers: {"Content-Type": "application/json"},
       body: jsonEncode(data),
-    );
+    ).timeout(const Duration(seconds: 8));
     return res.statusCode == 200;
   }
 
   static Future<bool> deletePhone(String pid) async {
-    final res = await http.delete(Uri.parse("$baseUrl/api/phones/$pid"));
+    final res = await http.delete(Uri.parse("$baseUrl/api/phones/$pid")).timeout(const Duration(seconds: 8));
     return res.statusCode == 200;
   }
 
@@ -105,7 +105,7 @@ class ApiService {
       Uri.parse("$baseUrl/api/phones/take"),
       headers: {"Content-Type": "application/json"},
       body: jsonEncode({"pid": pid}),
-    );
+    ).timeout(const Duration(seconds: 8));
     return res.statusCode == 200;
   }
 
@@ -114,26 +114,26 @@ class ApiService {
       Uri.parse("$baseUrl/api/phones/put"),
       headers: {"Content-Type": "application/json"},
       body: jsonEncode({"pid": pid}),
-    );
+    ).timeout(const Duration(seconds: 8));
     return res.statusCode == 200;
   }
 
   // ====================== ADMIN LISTING ======================
 
   static Future<List<dynamic>?> getAllPhones() async {
-    final res = await http.get(Uri.parse("$baseUrl/api/phones"));
+    final res = await http.get(Uri.parse("$baseUrl/api/phones")).timeout(const Duration(seconds: 8));
     if (res.statusCode == 200) return jsonDecode(res.body)["data"];
     return null;
   }
 
   static Future<List<dynamic>?> getStoredPhones() async {
-    final res = await http.get(Uri.parse("$baseUrl/api/phones/stored"));
+    final res = await http.get(Uri.parse("$baseUrl/api/phones/stored")).timeout(const Duration(seconds: 8));
     if (res.statusCode == 200) return jsonDecode(res.body)["data"];
     return null;
   }
 
   static Future<List<dynamic>?> getTakenPhones() async {
-    final res = await http.get(Uri.parse("$baseUrl/api/phones/taken"));
+    final res = await http.get(Uri.parse("$baseUrl/api/phones/taken")).timeout(const Duration(seconds: 8));
     if (res.statusCode == 200) return jsonDecode(res.body)["data"];
     return null;
   }
@@ -248,7 +248,7 @@ class ApiService {
   }
 
   static Future<Map<String, dynamic>?> takePhoto() async {
-    final res = await http.post(Uri.parse("$baseUrl/webrtc/take_photo"));
+    final res = await http.post(Uri.parse("$baseUrl/webrtc/take_photo")).timeout(const Duration(seconds: 8));
     if (res.statusCode != 200) return null;
     return jsonDecode(res.body);
   }
