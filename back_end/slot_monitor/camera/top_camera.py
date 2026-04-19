@@ -188,7 +188,7 @@ class TopCamera:
         while self._running:
             # Ensure camera is open
             if cap is None or not cap.isOpened():
-                cap = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_DSHOW) #addition
+                cap = cv2.VideoCapture(CAMERA_INDEX) #addition
                 if not cap.isOpened():
                     logger.warning(
                         f"[TopCamera] Cannot open camera {CAMERA_INDEX}, "
