@@ -422,16 +422,18 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
         mainAxisSize: MainAxisSize.min,
         children: [
           // Drag handle
-          Padding(
-            padding: const EdgeInsets.only(top: 10, bottom: 4),
-            child: const SizedBox(
-              width: 36, height: 4,
-              child: DecoratedBox(
+          // CORRECT — three levels, three closing lines
+        Padding(
+          padding: const EdgeInsets.only(top: 10, bottom: 4),
+          child: const SizedBox(
+            width: 36, height: 4,
+            child: DecoratedBox(
               decoration: BoxDecoration(
                   color: Colors.white24,
                   borderRadius: BorderRadius.all(Radius.circular(2))),
-            ),
-          ),
+            ),        // ← closes DecoratedBox
+          ),          // ← closes SizedBox
+        ),            // ← closes Padding
 
           // ── Top-down camera (during autoScanning + tracking) ────
           if (showCamera)

@@ -19,12 +19,12 @@ import re
 
 import cv2
 import numpy as np
-from pyzbar.pyzbar import decode
 
 _UUID_RE_TRACKER = re.compile(
     r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
     re.IGNORECASE,
 )
+_qr_detector_tracker = cv2.QRCodeDetector()
 
 logger = logging.getLogger(__name__)
 
@@ -530,6 +530,7 @@ class PhoneTracker:
             # QR loss at this point is expected and should not fail the operation.
             _qr_check_needed = self._state in (_TS.DETECTING, _TS.TRACKING, _TS.ENTERING)
             if _qr_check_needed and frame_count % QR_CHECK_EVERY_N == 0:
+            #remove this to disable deposit failure when entering slot _qr_check_needed
                 if self._check_qr(frame):
                     last_qr_ts = time.time()
                     qr_confirmed = True
@@ -695,15 +696,20 @@ class PhoneTracker:
             if bw*bh>0 and (ix2-ix1)*(iy2-iy1)/(bw*bh)>=0.30: return i
         return -1
 
-    def _check_qr(self,frame):
-        try:
-            for obj in decode(frame):
-                raw=obj.data.decode("utf-8",errors="ignore").strip()
-                if raw.upper().startswith("PID:"): raw=raw[4:].strip()
-                if _UUID_RE_TRACKER.match(raw) and raw.lower()==self._pid.lower():
-                    return True
-        except Exception: pass
-        return False
+    def _check_qr(self, frame: np.ndarray) -> bool:
+
+     try:
+           # Convert to gray once — cv2.QRCodeDetector works faster on grayscale
+           gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+           data, _, _ = _qr_detector_tracker.detectAndDecode(gray)
+           if not data:
+               return False
+           raw = data.strip()
+           if raw.upper().startswith("PID:"):
+               raw = raw[4:].strip()
+           return bool(_UUID_RE_TRACKER.match(raw) and raw.lower() == self._pid.lower())
+     except Exception:
+           return False
 
     def _run_verify(self,tc):
         if self._verify_fn is None:
