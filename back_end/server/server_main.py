@@ -27,7 +27,7 @@ import threading
 import logging
 import signal
 import os
-from back_end.camera_manager import cam_mgr
+#from back_end.camera_manager import cam_mgr
 from back_end.slot_monitor.admin.admin_ops_handler import register_admin_handlers
 from back_end.server.app import (
     create_app, get_slot_monitor, get_slot_operations, set_monitor_components
@@ -52,17 +52,17 @@ _stop_event = threading.Event()
 
 # Runs interactive UI once if camera_config.json is missing,
 # then resolves all roles to current indices.
-cam_mgr._dev_mode = DEV_MODE
-cam_mgr._roles = cam_mgr._roles  # unchanged
-cam_mgr.setup_if_needed()
+#cam_mgr._dev_mode = DEV_MODE
+#cam_mgr._roles = cam_mgr._roles  # unchanged
+#cam_mgr.setup_if_needed()
 
 app, socketio = create_app(stop_event=_stop_event)
 app.register_blueprint(webrtc_bp, url_prefix="/webrtc")
 scanner_state.set_socketio(socketio)
 
-logger.info(f"Camera indices: {cam_mgr.all_indices()}")
-if DEV_MODE:
-    logger.warning("DEV MODE active — same camera may serve multiple roles")
+#logger.info(f"Camera indices: {cam_mgr.all_indices()}")
+#if DEV_MODE:
+#    logger.warning("DEV MODE active — same camera may serve multiple roles")
 
 
 # ============================================================
@@ -121,7 +121,7 @@ def handle_get_status(_):
     scanner_state.emit_to_requester()
 
 from flask import request
-
+"""
 @socketio.on("list_cameras")
 def on_list_cameras(_):
     client_id = request.sid
@@ -172,7 +172,7 @@ def on_set_camera(data):
             namespace="/"
         )
 
-
+"""
 # ============================================================
 # MAIN
 # ============================================================

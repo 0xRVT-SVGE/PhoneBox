@@ -51,7 +51,7 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-CAMERA_INDEX     = cam_mgr.index("top_cam")
+CAMERA_INDEX     = 2 #cam_mgr.index("top_cam")
 _RECONNECT_DELAY = 1.0
 
 

@@ -4,7 +4,7 @@ import cv2
 import argparse
 
 
-def visualize_camera_grid(cam_index=1, rows=3, cols=4, spacing=10):
+def visualize_camera_grid(cam_index=2, rows=3, cols=4, spacing=10):
     """
     Interactive tool to visualize slot grid overlay on camera feed.
 
@@ -115,7 +115,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--camera",
         type=int,
-        default=0,
+        default=2,
         help="Camera device index (default: 1)"
     )
     parser.add_argument(

@@ -381,7 +381,7 @@ class _ROIEditor:
 # ══════════════════════════════════════════════════════════
 # Public API
 # ══════════════════════════════════════════════════════════
-from back_end.camera_manager import cam_mgr
+#from back_end.camera_manager import cam_mgr
 
 def run_calibration(num_lids: int) -> None:
     """
@@ -395,8 +395,8 @@ def run_calibration(num_lids: int) -> None:
         return
 
     cameras = [
-        {"index": cam_mgr.index("bottom_cam"), "name": "BOTTOM CAMERA Slot monitoring (cam 1)", "file": ROI_FILE_BOTTOM},
-        {"index": cam_mgr.index("top_cam"), "name": "TOP-DOWN CAMERA Admin / evidence (cam 2)", "file": ROI_FILE_TOP},
+        {"index": 1, "name": "BOTTOM CAMERA Slot monitoring (cam 1)", "file": ROI_FILE_BOTTOM},
+        {"index": 2, "name": "TOP-DOWN CAMERA Admin / evidence (cam 2)", "file": ROI_FILE_TOP},
     ]
 
     for cam in cameras:

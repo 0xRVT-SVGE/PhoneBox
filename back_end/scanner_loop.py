@@ -128,7 +128,7 @@ def scanner_loop(stop_event: threading.Event, debugwindow=True, debugroi=True):
     Owns scan_worker shutdown: when the loop exits for any reason
     (stop_event set or 'q' pressed) it stops the scan worker before returning.
     """
-    cap = cv2.VideoCapture(cam_mgr.index("front_cam"))
+    cap = cv2.VideoCapture(0) #cam_mgr.index("front_cam")
     cap.set(cv2.CAP_PROP_FRAME_WIDTH,  1920)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
 
