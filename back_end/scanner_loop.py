@@ -7,6 +7,7 @@ import cv2
 from back_end.scanner_state import scanner_state
 from back_end.scanner_worker import stop_scan
 from back_end.camera_manager import cam_mgr
+from back_end.config import CameraConfig as _CC, ScannerConfig as _SC
 
 try:
     from back_end.slot_monitor.camera.rolling_buffer import face_rolling_buffer as _face_buf
@@ -38,11 +39,8 @@ _cached_roi:         tuple = ()
 _cached_debug_text:  str   = ""
 _cached_debug_color: tuple = (0, 0, 255)
 
-# Face rolling-buffer throttle.
-# The scanner runs at ~30 fps; JPEG-encoding every frame wastes CPU.
-# We record every other frame → ~15 fps for rolling evidence buffer.
-# Quality of 15-fps evidence video is still excellent.
-_FACE_BUF_EVERY_N = 2
+# Face rolling-buffer throttle  (edit via config.ScannerConfig.FACE_BUF_EVERY_N)
+_FACE_BUF_EVERY_N = _SC.FACE_BUF_EVERY_N
 _face_buf_counter  = 0
 
 
@@ -128,9 +126,9 @@ def scanner_loop(stop_event: threading.Event, debugwindow=True, debugroi=True):
     Owns scan_worker shutdown: when the loop exits for any reason
     (stop_event set or 'q' pressed) it stops the scan worker before returning.
     """
-    cap = cv2.VideoCapture(0) #cam_mgr.index("front_cam")
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH,  1920)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+    cap = cv2.VideoCapture(_CC.FRONT_CAM_INDEX)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH,  _CC.FRONT_CAM_WIDTH)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, _CC.FRONT_CAM_HEIGHT)
 
     if not cap.isOpened():
         print("[-] Cannot open camera.")

@@ -46,13 +46,15 @@ import threading
 import time
 from typing import Callable, Optional
 from back_end.camera_manager import cam_mgr
+from back_end.config import CameraConfig
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
-CAMERA_INDEX     = 2 #cam_mgr.index("top_cam")
-_RECONNECT_DELAY = 1.0
+# Edit back_end/config.py → CameraConfig to change these.
+CAMERA_INDEX     = CameraConfig.TOP_CAM_INDEX          # default: 2
+_RECONNECT_DELAY = CameraConfig.TOP_CAM_RECONNECT_DELAY  # default: 1.0 s
 
 
 class TopCamera:

@@ -19,13 +19,15 @@ from deepface import DeepFace
 from pyzbar.pyzbar import decode, ZBarSymbol
 import requests
 from back_end.scanner_state import scanner_state
+from back_end.config import ScannerConfig as _SC, ServerConfig as _SVC
 
-API_BASE = "http://127.0.0.1:5000/api/students"
-SIMILARITY_THRESHOLD = 0.5
-VALID_TIME = 7
-SCALED_WIDTH = 720
-FACE_INTERVAL = 0.5
-BARCODE_INTERVAL = 0.5
+# Edit back_end/config.py → ScannerConfig / ServerConfig to change these.
+API_BASE             = _SVC.STUDENT_API_BASE
+SIMILARITY_THRESHOLD = _SC.SIMILARITY_THRESHOLD
+VALID_TIME           = _SC.BADGE_VALID_TIME
+SCALED_WIDTH         = _SC.SCALED_WIDTH
+FACE_INTERVAL        = _SC.FACE_INTERVAL
+BARCODE_INTERVAL     = _SC.BARCODE_INTERVAL
 
 _client_id = None
 _executor = ThreadPoolExecutor(max_workers=1)

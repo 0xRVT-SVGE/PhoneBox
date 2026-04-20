@@ -44,9 +44,11 @@ from flask import request
 
 logger = logging.getLogger(__name__)
 
-DEBUG_ROI    = True
-DEBUG_WINDOW = False
-DEV_MODE = os.getenv("PHONEBOX_DEV", "0") == "1"
+from back_end.config import ServerConfig as _SVC
+
+DEBUG_ROI    = _SVC.DEBUG_ROI
+DEBUG_WINDOW = _SVC.DEBUG_WINDOW
+DEV_MODE = os.getenv(_SVC.DEV_MODE_ENV_VAR, "0") == "1"
 
 _stop_event = threading.Event()
 
@@ -270,4 +272,4 @@ if __name__ == "__main__":
     logger.info("Ready — press Ctrl+C to stop")
 
     # 10. Run Flask-SocketIO (blocking)
-    socketio.run(app, host="0.0.0.0", port=5000, allow_unsafe_werkzeug=True)
+    socketio.run(app, host=_SVC.HOST, port=_SVC.PORT, allow_unsafe_werkzeug=True)

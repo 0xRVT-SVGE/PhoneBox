@@ -26,6 +26,11 @@ from back_end.slot_monitor.worker_async import WorkerPool
 from back_end.slot_monitor.slots import Slot, generate_grid_rois
 from back_end.slot_monitor.alarm_controller import AlarmController
 from back_end.slot_monitor.db_interface import AsyncSlotMonitorDB
+from back_end.config import (
+    CameraConfig       as _CC,
+    DatabaseConfig     as _DC,
+    SlotMonitorConfig  as _SMC,
+)
 
 
 class HeadlessSlotMonitor:
@@ -48,29 +53,29 @@ class HeadlessSlotMonitor:
     def __init__(
             self,
             stop_event: threading.Event,
-            camera_id: int = 1,  # Bottom camera (slot monitoring)
-            camera_width: int = 1280,
-            camera_height: int = 720,
-            camera_fps: int = 30,
+            camera_id: int = _CC.BOTTOM_CAM_INDEX,
+            camera_width: int = _CC.BOTTOM_CAM_WIDTH,
+            camera_height: int = _CC.BOTTOM_CAM_HEIGHT,
+            camera_fps: int = _CC.BOTTOM_CAM_FPS,
 
             # Grid config (loaded from DB)
             grid_rows: int = None,
             grid_cols: int = None,
 
             # Worker config
-            num_workers: int = 4,
+            num_workers: int = _SMC.NUM_WORKERS,
 
             # Monitoring config
-            mismatch_threshold: float = 0.15,
-            recalc_threshold: float = 0.05,
-            grace_period: float = 3.0,
+            mismatch_threshold: float = _SMC.MISMATCH_THRESHOLD,
+            recalc_threshold: float = _SMC.RECALC_THRESHOLD,
+            grace_period: float = _SMC.GRACE_PERIOD,
 
             # DB config
-            db_host: str = "localhost",
-            db_port: int = 5432,
-            db_name: str = "PhoneBoxDB",
-            db_user: str = "admin",
-            db_password: str = "admin",
+            db_host: str = _DC.ASYNC_HOST,
+            db_port: int = _DC.ASYNC_PORT,
+            db_name: str = _DC.ASYNC_DATABASE,
+            db_user: str = _DC.ASYNC_USER,
+            db_password: str = _DC.ASYNC_PASSWORD,
 
             # SocketIO (optional - for remote monitoring)
             socketio=None,
@@ -308,7 +313,7 @@ class HeadlessSlotMonitor:
     async def _status_reporter(self):
         try:
             while True:
-                await asyncio.sleep(30)
+                await asyncio.sleep(_SMC.STATUS_REPORT_INTERVAL)
                 await self._log_status()
         except asyncio.CancelledError:
             pass
@@ -403,10 +408,7 @@ async def main():
 
     monitor = HeadlessSlotMonitor(
         stop_event=stop_event,
-        camera_id=1, camera_width=1280, camera_height=720, camera_fps=30,
-        num_workers=4, mismatch_threshold=0.15, recalc_threshold=0.05,
-        grace_period=5.0, db_host="localhost", db_port=5432,
-        db_name="PhoneBoxDB", db_user="admin", db_password="admin",
+        # All defaults now come from back_end/config.py
     )
 
     try:

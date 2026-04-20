@@ -26,13 +26,13 @@ import time
 from typing import Callable, Dict, Optional
 import numpy as np
 from back_end.Database.db import get_conn, put_conn
+from back_end.config import AlarmConfig as _AC
 
 logger = logging.getLogger(__name__)
 
-# Minimum bottom-cam embedding distance from empty-slot baseline that
-# indicates a phone is physically present. Calibrate for your sensor.
-# Typical values: empty=0.01-0.04, phone=0.12-0.25, hand=0.06-0.15.
-PLACEMENT_DETECTION_THRESHOLD = 0.10
+# Edit back_end/config.py → AlarmConfig.PLACEMENT_DETECTION_THRESHOLD.
+# Typical: empty=0.01-0.04, phone=0.12-0.25, hand=0.06-0.15.
+PLACEMENT_DETECTION_THRESHOLD = _AC.PLACEMENT_DETECTION_THRESHOLD
 
 
 class SlotOperations:

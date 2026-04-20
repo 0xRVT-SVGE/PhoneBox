@@ -17,10 +17,12 @@ from back_end.slot_monitor.phone_tracker import (
     make_dvw_context_overlay,
     load_all_top_rois,
 )
+from back_end.config import QRConfig as _QRC
 
 logger = logging.getLogger(__name__)
 
-QR_SCAN_TIMEOUT = 15.0
+# Edit back_end/config.py → QRConfig.DVW_SCAN_TIMEOUT to change this.
+QR_SCAN_TIMEOUT = _QRC.DVW_SCAN_TIMEOUT
 
 
 class DVWSocketHandler:

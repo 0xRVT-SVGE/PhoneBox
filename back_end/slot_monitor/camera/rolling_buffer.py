@@ -35,14 +35,16 @@ from pathlib import Path
 from typing import Optional, List, Tuple
 
 import numpy as np
+from back_end.config import RollingBufferConfig as _RBC, EvidenceConfig as _EC
 
 logger = logging.getLogger(__name__)
 
-BUFFER_DURATION_S = 30.0
-JPEG_QUALITY      = 70
-TOP_FPS           = 20    # fps during active DVW / admin operations
-TOP_FPS_IDLE      = 5     # fps when no operation is in progress
-EVIDENCE_BASE_DIR = Path("evidence")
+# Edit back_end/config.py → RollingBufferConfig / EvidenceConfig to change these.
+BUFFER_DURATION_S = _RBC.BUFFER_DURATION_S
+JPEG_QUALITY      = _RBC.JPEG_QUALITY
+TOP_FPS           = _RBC.TOP_FPS_ACTIVE
+TOP_FPS_IDLE      = _RBC.TOP_FPS_IDLE
+EVIDENCE_BASE_DIR = Path(_EC.BASE_DIR)
 
 _Frame = Tuple[float, bytes]
 

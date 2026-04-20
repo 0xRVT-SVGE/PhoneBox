@@ -1,12 +1,14 @@
 from psycopg2 import pool
+from back_end.config import DatabaseConfig as _DC
 
+# Edit back_end/config.py → DatabaseConfig to change the connection settings.
 db_pool = pool.SimpleConnectionPool(
-    1, 10,
-    host="localhost",
-    port=5432,
-    database="PhoneBoxDB",
-    user="admin",
-    password="admin"
+    _DC.SYNC_POOL_MIN, _DC.SYNC_POOL_MAX,
+    host=_DC.SYNC_HOST,
+    port=_DC.SYNC_PORT,
+    database=_DC.SYNC_DATABASE,
+    user=_DC.SYNC_USER,
+    password=_DC.SYNC_PASSWORD,
 )
 
 def get_conn():

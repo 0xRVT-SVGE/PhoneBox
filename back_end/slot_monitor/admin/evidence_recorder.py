@@ -52,12 +52,13 @@ import numpy as np
 
 from back_end.Database.db import get_conn, put_conn
 from back_end.slot_monitor.camera.top_camera import top_camera
+from back_end.config import EvidenceConfig as _EC
 
 logger = logging.getLogger(__name__)
 
-EVIDENCE_BASE_DIR = Path("evidence")
-# Target recording FPS — camera may deliver fewer; we record what we get
-RECORD_FPS = 20.0
+# Edit back_end/config.py → EvidenceConfig to change these.
+EVIDENCE_BASE_DIR = Path(_EC.BASE_DIR)
+RECORD_FPS        = _EC.RECORD_FPS
 
 
 # ── DB helpers ────────────────────────────────────────────────────────────────

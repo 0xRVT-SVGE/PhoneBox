@@ -38,25 +38,18 @@ from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
 import numpy as np
+from back_end.config import BgEncoderConfig as _BEC
 
 logger = logging.getLogger(__name__)
 
-# ── Tuning constants ──────────────────────────────────────────────────────────
+# Edit back_end/config.py → BgEncoderConfig to change these.
+_YIELD_EVERY = _BEC.YIELD_EVERY
+_YIELD_SLEEP = _BEC.YIELD_SLEEP
 
-# Yield CPU to real-time threads every N frames.
-# At 20 fps this yields ~2 ms every 0.75 s (≈ 0.3 % overhead on caller).
-_YIELD_EVERY = 10
-_YIELD_SLEEP = 0.002   # seconds
+_MAX_QUEUE = _BEC.MAX_QUEUE
 
-# Drop oldest job if queue exceeds this size (burst protection).
-_MAX_QUEUE   = 8
-
-# Codec preference list — tried in order, first one that opens wins.
-# XVID gives the best decode-speed-to-file-size tradeoff for evidence clips
-# on most Linux/Windows OpenCV builds.
 _FOURCC_ORDER = [
-    cv2.VideoWriter_fourcc(*"XVID"),
-    cv2.VideoWriter_fourcc(*"mp4v"),
+    cv2.VideoWriter_fourcc(*name) for name in _BEC.FOURCC_ORDER
 ]
 
 _EncodeJob = Tuple[

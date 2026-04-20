@@ -17,6 +17,14 @@ from enum import Enum, auto
 from typing import Callable, Dict, List, Optional, Tuple
 import re
 
+from back_end.config import (
+    TrackerConfig   as _TC,
+    MotionConfig    as _MC,
+    LKConfig        as _LK,
+    OrbConfig       as _OC,
+    OverlayConfig   as _OV,
+)
+
 import cv2
 import numpy as np
 
@@ -59,63 +67,59 @@ def _make_csrt_tracker():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TUNEABLE CONSTANTS
+# CONSTANTS  (sourced from back_end/config.py — edit there, not here)
 # ══════════════════════════════════════════════════════════════════════════════
 
-DETECT_TIMEOUT           = 8.0
-PLACEMENT_TIMEOUT        = 35.0
-INSERTION_TIMEOUT        = 8.0
-STABILIZING_TIMEOUT      = 3.0
-# Increased from 1.0 → 12.0 s: must be > QR_ABSENT_FAIL_S (3.0 s) so the
-# phone has time to go still inside the ROI before triggering stabilization_timeout.
-TRACKER_SUCCESS_TIMEOUT  = 12.0
+DETECT_TIMEOUT          = _TC.DETECT_TIMEOUT
+PLACEMENT_TIMEOUT       = _TC.PLACEMENT_TIMEOUT
+INSERTION_TIMEOUT       = _TC.INSERTION_TIMEOUT
+STABILIZING_TIMEOUT     = _TC.STABILIZING_TIMEOUT
+TRACKER_SUCCESS_TIMEOUT = _TC.TRACKER_SUCCESS_TIMEOUT
 
-QR_CHECK_EVERY_N         = 6
-# Increased from 0.8 → 3.0 s: the detector can miss several frames in a row
-# (motion blur, angle change) causing false qr_lost failures at 0.8 s.
-QR_ABSENT_FAIL_S         = 3.0
+QR_CHECK_EVERY_N  = _TC.QR_CHECK_EVERY_N
+QR_ABSENT_FAIL_S  = _TC.QR_ABSENT_FAIL_S
 
-ROI_APPROACH_MARGIN      = 0.15
-ROI_APPROACH_FRAMES      = 3
+ROI_APPROACH_MARGIN = _TC.ROI_APPROACH_MARGIN
+ROI_APPROACH_FRAMES = _TC.ROI_APPROACH_FRAMES
 
-AREA_REDUCTION_TRIGGER   = 0.52
-ANGLE_SWING_TRIGGER      = 28
-MIN_TRACK_AREA_PX        = 800
+AREA_REDUCTION_TRIGGER = _TC.AREA_REDUCTION_TRIGGER
+ANGLE_SWING_TRIGGER    = _TC.ANGLE_SWING_TRIGGER
+MIN_TRACK_AREA_PX      = _TC.MIN_TRACK_AREA_PX
 
-STILL_VEL_THRESHOLD      = 12
-STILL_REQUIRED_FRAMES    = 8
-STILL_PENALTY_ON_MOVE    = 2
+STILL_VEL_THRESHOLD   = _TC.STILL_VEL_THRESHOLD
+STILL_REQUIRED_FRAMES = _TC.STILL_REQUIRED_FRAMES
+STILL_PENALTY_ON_MOVE = _TC.STILL_PENALTY_ON_MOVE
 
-MOTION_BLUR_K            = 15
-MOTION_THRESH            = 20
-MOTION_DILATE            = 3
-MOTION_MIN_AREA          = 1500
-MOTION_IOU_MERGE         = 0.20
-CSRT_REINIT_INTERVAL     = 12
+MOTION_BLUR_K        = _MC.BLUR_K
+MOTION_THRESH        = _MC.THRESH
+MOTION_DILATE        = _MC.DILATE
+MOTION_MIN_AREA      = _MC.MIN_AREA
+MOTION_IOU_MERGE     = _MC.IOU_MERGE
+CSRT_REINIT_INTERVAL = _MC.CSRT_REINIT_INTERVAL
 
-LK_MAX_POINTS            = 20
-LK_MIN_POINTS            = 5
-LK_GOOD_QUALITY          = 0.25
-LK_WIN_SIZE              = (17, 17)
-LK_MAX_LEVEL             = 2
-LK_CRITERIA              = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 20, 0.03)
+LK_MAX_POINTS   = _LK.MAX_POINTS
+LK_MIN_POINTS   = _LK.MIN_POINTS
+LK_GOOD_QUALITY = _LK.GOOD_QUALITY
+LK_WIN_SIZE     = _LK.WIN_SIZE
+LK_MAX_LEVEL    = _LK.MAX_LEVEL
+LK_CRITERIA     = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 20, 0.03)
 
-RE_ID_EVERY_N            = 15
-ORB_MATCH_THRESHOLD      = 0.75
-ORB_MIN_MATCHES          = 10
+RE_ID_EVERY_N       = _OC.RE_ID_EVERY_N
+ORB_MATCH_THRESHOLD = _OC.MATCH_THRESHOLD
+ORB_MIN_MATCHES     = _OC.MIN_MATCHES
 
-STAGING_HOLD_TIME        = 1.5
+STAGING_HOLD_TIME = _TC.STAGING_HOLD_TIME
 
-# BGR colour palette
-_COL_SOURCE        = (30, 130, 255)
-_COL_DEST_BASE     = (40, 220, 255)
-_COL_STAGING_EMPTY = [(200, 100, 30), (30, 100, 200)]
-_COL_STAGING_OCC   = [(255, 180, 80), (80, 180, 255)]
-_COL_TRACKING      = (20, 215,  20)
-_COL_QR_WARN       = (20,  20, 215)
-_COL_ENTERING      = (0,  200, 255)
-_COL_INSERTING     = (0,  140, 255)
-_COL_STABILIZING   = (255, 100,   0)
+# BGR colour palette (from config.OverlayConfig)
+_COL_SOURCE        = _OV.COL_SOURCE
+_COL_DEST_BASE     = _OV.COL_DEST_BASE
+_COL_STAGING_EMPTY = _OV.COL_STAGING_EMPTY
+_COL_STAGING_OCC   = _OV.COL_STAGING_OCC
+_COL_TRACKING      = _OV.COL_TRACKING
+_COL_QR_WARN       = _OV.COL_QR_WARN
+_COL_ENTERING      = _OV.COL_ENTERING
+_COL_INSERTING     = _OV.COL_INSERTING
+_COL_STABILIZING   = _OV.COL_STABILIZING
 _FONT              = cv2.FONT_HERSHEY_SIMPLEX
 
 
