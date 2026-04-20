@@ -29,12 +29,11 @@ Usage
 
 import json
 import logging
-import os
-import time
 import threading
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-
+from back_end.config import CameraConfig as _CC, CalibrationConfig as _CAL
 import cv2
 import numpy as np
 
@@ -51,9 +50,9 @@ _TOOLS_DIR      = Path(__file__).parent
 ROI_FILE_BOTTOM = _TOOLS_DIR / "rois_bottom.json"
 
 # ── Camera ─────────────────────────────────────────────────
-CAMERA_ID    = 1
-CAMERA_WIDTH = 1280
-CAMERA_HEIGHT = 720
+CAMERA_ID     = _CC.BOTTOM_CAM_INDEX
+CAMERA_WIDTH  = _CAL.EMBED_CAM_WIDTH
+CAMERA_HEIGHT = _CAL.EMBED_CAM_HEIGHT
 
 
 # ══════════════════════════════════════════════════════════

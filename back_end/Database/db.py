@@ -1,4 +1,5 @@
 from psycopg2 import pool
+from back_end.secrets import Secrets
 from back_end.config import DatabaseConfig as _DC
 
 # Edit back_end/config.py → DatabaseConfig to change the connection settings.
@@ -7,8 +8,8 @@ db_pool = pool.SimpleConnectionPool(
     host=_DC.SYNC_HOST,
     port=_DC.SYNC_PORT,
     database=_DC.SYNC_DATABASE,
-    user=_DC.SYNC_USER,
-    password=_DC.SYNC_PASSWORD,
+    user=Secrets.DB_USER,
+    password=Secrets.DB_PASSWORD,
 )
 
 def get_conn():

@@ -20,6 +20,7 @@ import secrets
 import threading
 import time
 from typing import Dict, Optional, Set
+from back_end.config import AdminConfig as _ADM
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ logger = logging.getLogger(__name__)
 # considered expired.  _check_timeout in admin_ops_handler logs a
 # warning when this is exceeded but does NOT forcibly close the session —
 # the admin must close it explicitly.
-SESSION_TIMEOUT = 120   # 2 minutes
+SESSION_TIMEOUT = _ADM.SESSION_TIMEOUT   # replaces the literal 120
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -135,7 +136,7 @@ class ResolutionSession:
         for every phone that has been resolved or declared missing
         (per Timeout System spec: +30 s per resolved mismatch).
         """
-        allowed = SESSION_TIMEOUT + self.resolve_count * 30.0
+        allowed = SESSION_TIMEOUT + self.resolve_count * float(_ADM.SESSION_EXTEND_PER_RESOLVE)
         return (time.time() - self._opened_at) > allowed
 
     def elapsed(self) -> float:

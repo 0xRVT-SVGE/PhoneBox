@@ -16,6 +16,8 @@ import numpy as np
 from typing import Dict, List, Tuple, Optional
 import asyncpg
 from back_end.Database.db import get_conn, put_conn
+from back_end.secrets import Secrets
+from back_end.config import DatabaseConfig as _DC
 
 logger = logging.getLogger(__name__)
 
@@ -394,13 +396,13 @@ class AsyncSlotMonitorDB:
 
     def __init__(
             self,
-            host: str = "localhost",
-            port: int = 5432,
-            database: str = "phone_monitor",
-            user: str = "postgres",
-            password: str = "postgres",
-            min_pool_size: int = 5,
-            max_pool_size: int = 20,
+            host=_DC.SYNC_HOST,
+            port=_DC.SYNC_PORT,
+            database=_DC.SYNC_DATABASE,
+            user=Secrets.DB_USER,
+            password=Secrets.DB_PASSWORD,
+            min_pool_size: int = _DC.SYNC_POOL_MIN,
+            max_pool_size: int = _DC.SYNC_POOL_MAX,
     ):
         self.host = host
         self.port = port

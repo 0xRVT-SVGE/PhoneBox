@@ -28,6 +28,7 @@ import av
 from back_end.scanner_state import scanner_state
 from back_end.embedding_gen import generate_embedding
 from back_end.slot_monitor.camera.top_camera import top_camera
+from back_end.config import WebRTCConfig as _WRC
 
 logger = logging.getLogger(__name__)
 
@@ -215,7 +216,7 @@ async def _handle_offer(offer_sdp, offer_type, mode):
 
     await pc.setRemoteDescription(RTCSessionDescription(sdp=offer_sdp, type=offer_type))
     answer = await pc.createAnswer()
-    modified_sdp = modify_sdp_bitrate(answer.sdp, max_bitrate_kbps=100)
+    modified_sdp = modify_sdp_bitrate(answer.sdp, max_bitrate_kbps=_WRC.MAX_BITRATE_KBPS)
     answer_with_bitrate = RTCSessionDescription(sdp=modified_sdp, type=answer.type)
     await pc.setLocalDescription(answer_with_bitrate)
 
@@ -295,7 +296,7 @@ def offer(mode):
             _handle_offer(data["sdp"], data["type"], mode),
             async_loop,
         )
-        return jsonify(future.result(timeout=10))
+        return jsonify(future.result(timeout=_WRC.OFFER_TIMEOUT))
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 

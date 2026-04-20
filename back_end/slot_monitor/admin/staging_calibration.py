@@ -50,6 +50,7 @@ import logging
 import os
 import sys
 from typing import List, Optional, Tuple
+from back_end.config import CameraConfig as _CC, CalibrationConfig as _CAL
 
 import numpy as np
 
@@ -66,8 +67,8 @@ STAGING_ROI_FILE = os.path.join(_ADMIN_DIR, "staging_rois.json")
 SLOT_ROI_FILE    = os.path.join(_TOOLS_DIR, "rois_top.json")
 
 # ── Camera ────────────────────────────────────────────────
-TOP_CAMERA_INDEX = 2
-WARMUP_FRAMES    = 25   # discard auto-exposure warmup
+TOP_CAMERA_INDEX = _CC.TOP_CAM_INDEX
+WARMUP_FRAMES    = _CAL.TOP_CAM_WARMUP   # discard auto-exposure warmup
 
 # ── Visual constants ──────────────────────────────────────
 _RESIZE_MARGIN = 12    # px — corner grab zone

@@ -1,9 +1,11 @@
 # ============================================================
 # FILE: back_end/slot_monitor/alarm_controller.py
 # ============================================================
+import logging
 import threading
 import time
-import logging
+
+from back_end.secrets import Secrets
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +147,7 @@ class AlarmController:
 
     def authenticate_admin(self, password: str) -> dict:
         # TODO: Replace with proper authentication
-        if password == "admin":
+        if password == Secrets.ADMIN_PASSWORD:
             with self._lock:
                 snapshot = list(self.mismatches)
             return {

@@ -23,24 +23,24 @@ Shutdown model:
     → op_ctx cleanup → slot_monitor.join() → os._exit(0)
 """
 
-import threading
 import logging
-import signal
 import os
-#from back_end.camera_manager import cam_mgr
-from back_end.slot_monitor.admin.admin_ops_handler import register_admin_handlers
-from back_end.server.app import (
-    create_app, get_slot_monitor, get_slot_operations, set_monitor_components
-)
-from back_end.server import webrtc_handler
-from back_end.server.webrtc_handler import webrtc_bp
+import signal
+import threading
+
 from back_end.scanner_loop import scanner_loop
 from back_end.scanner_state import scanner_state
 from back_end.scanner_worker import scan_worker
+from back_end.server import webrtc_handler
+from back_end.server.app import (
+    create_app, get_slot_monitor, get_slot_operations, set_monitor_components
+)
+from back_end.server.webrtc_handler import webrtc_bp
+# from back_end.camera_manager import cam_mgr
+from back_end.slot_monitor.admin.admin_ops_handler import register_admin_handlers
+from back_end.slot_monitor.camera.top_camera import top_camera
 from back_end.slot_monitor.ops_handler import register_dvw_handlers
 from back_end.slot_monitor.services.operation_context import op_ctx
-from back_end.slot_monitor.camera.top_camera import top_camera
-from flask import request
 
 logger = logging.getLogger(__name__)
 
@@ -221,7 +221,7 @@ if __name__ == "__main__":
     #    Fetch num_lids synchronously using a one-shot DB connection so we
     #    don't depend on the async slot monitor being up yet.
     #    Falls back to 4 if the DB is unreachable (calibration still runs).
-    num_lids = 4
+    num_lids = _SVC.FALLBACK_NUM_LIDS
     try:
         from back_end.Database.db import get_conn, put_conn
         conn = get_conn()
@@ -252,7 +252,7 @@ if __name__ == "__main__":
         set_monitor_components(slot_monitor)
 
         logger.info("Waiting for slot monitor setup to complete...")
-        if not slot_monitor._setup_complete.wait(timeout=20.0):
+        if not slot_monitor._setup_complete.wait(timeout=_SVC.MONITOR_SETUP_TIMEOUT):
             logger.error(
                 "Slot monitor setup timed out after 20s — "
                 "admin resolution system will not be available"

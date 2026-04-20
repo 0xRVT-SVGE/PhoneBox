@@ -14,6 +14,12 @@ from flask_socketio import SocketIO
 from back_end.Database.API.students_API import students_bp
 from back_end.Database.API.phones_API import phones_bp
 from back_end.Database.logging_config import setup_logging
+from back_end.config import (
+    CameraConfig      as _CC,
+    DatabaseConfig    as _DC,
+    SlotMonitorConfig as _SMC,
+)
+from back_end.secrets import Secrets
 #from back_end.camera_manager import cam_mgr
 
 # Setup logging first
@@ -84,34 +90,34 @@ def _initialize_monitoring(socketio, stop_event: threading.Event):
         from back_end.slot_monitor.slot_operations import SlotOperations
 
         CONFIG = {
-            "stop_event": stop_event,
+        "stop_event": stop_event,
 
-            # Camera
-            "camera_id": 1,   # cam_mgr.index("bottom_cam") slot monitor
-            "camera_width": 1280,
-            "camera_height": 720,
-            "camera_fps": 30,
+        # Camera
+        "camera_id": _CC.BOTTOM_CAM_INDEX, # cam_mgr.index("bottom_cam") slot monitor
+        "camera_width": _CC.BOTTOM_CAM_WIDTH,
+        "camera_height": _CC.BOTTOM_CAM_HEIGHT,
+        "camera_fps": _CC.BOTTOM_CAM_FPS,
 
-            # Grid
-            "grid_rows": None,
-            "grid_cols": None,
+        # Grid (auto-detected from DB)
+        "grid_rows": None,
+        "grid_cols": None,
 
-            # Workers
-            "num_workers": 4,
+        # Workers
+        "num_workers": _SMC.NUM_WORKERS,
 
-            # Thresholds
-            "mismatch_threshold": 0.15,
-            "recalc_threshold": 0.05,
-            "grace_period": 3.0,
+        # Thresholds
+        "mismatch_threshold": _SMC.MISMATCH_THRESHOLD,
+        "recalc_threshold": _SMC.RECALC_THRESHOLD,
+        "grace_period": _SMC.GRACE_PERIOD,
 
-            # Database
-            "db_host": "localhost",
-            "db_port": 5432,
-            "db_name": "PhoneBoxDB",
-            "db_user": "admin",
-            "db_password": "admin",
+        # Database
+        "db_host": _DC.ASYNC_HOST,
+        "db_port": _DC.ASYNC_PORT,
+        "db_name": _DC.ASYNC_DATABASE,
+        "db_user": Secrets.DB_USER,
+        "db_password": Secrets.DB_PASSWORD,
 
-            "socketio": socketio,
+        "socketio": socketio,
         }
 
         _slot_monitor = HeadlessSlotMonitor(**CONFIG)

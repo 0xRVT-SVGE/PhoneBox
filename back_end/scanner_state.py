@@ -2,6 +2,7 @@ import threading
 from queue import Queue
 import time
 from flask_socketio import emit as _emit
+from back_end.config import ScannerStateConfig as _SSC
 
 class ScannerState:
     def __init__(self):
@@ -34,7 +35,7 @@ class ScannerState:
         self.face_lock_until = 0
         self.barcode_lock_until = 0
 
-        self.no_badge_timeout = 10  # seconds
+        self.no_badge_timeout = _SSC.NO_BADGE_TIMEOUT  # seconds
         self._last_barcode_time = time.time()
 
         self._scan_callbacks = []

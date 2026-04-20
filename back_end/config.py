@@ -7,6 +7,9 @@ PhoneBox — Central Configuration
 All tuneable constants in one place.  Import from here instead of
 defining magic numbers inline across modules.
 
+Credentials (DB passwords, admin password) live in back_end/secrets.py
+and support environment-variable overrides — do not add them here.
+
 Usage:
     from back_end.config import CameraConfig, TrackerConfig, ...
 
@@ -16,16 +19,21 @@ Sections
   DatabaseConfig        DB connection parameters and pool sizes
   ServerConfig          Flask / SocketIO host+port, debug flags
   ScannerConfig         Front-camera face+barcode scan worker
+  ScannerStateConfig    Badge / auth timeout for the scanner state machine
   TrackerConfig         PhoneTracker state-machine timeouts and knobs
   MotionConfig          Motion-detection and CSRT tracker parameters
   LKConfig              Lucas-Kanade optical-flow parameters
   OrbConfig             ORB feature-matching parameters
   SlotMonitorConfig     Bottom-camera slot monitoring workers
   AlarmConfig           Mismatch / grace-period thresholds
+  AdminConfig           Admin resolution session timeouts and limits
+  QRConfig              QR scan timeouts
+  EmbeddingConfig       Face-embedding worker pool size
+  WebRTCConfig          WebRTC bitrate cap and offer timeout
+  CalibrationConfig     Camera warm-up frames used by calibration tools
   RollingBufferConfig   Rolling evidence buffer sizes and fps
   EvidenceConfig        Evidence recording fps, codec, paths
   BgEncoderConfig       Background video encoder queue settings
-  QRConfig              QR scan timeouts
   OverlayConfig         On-screen draw colours (BGR tuples)
 """
 
@@ -64,21 +72,19 @@ class DatabaseConfig:
     SYNC_HOST     = "localhost"
     SYNC_PORT     = 5432
     SYNC_DATABASE = "PhoneBoxDB"
-    SYNC_USER     = "admin"
-    SYNC_PASSWORD = "admin"
     SYNC_POOL_MIN = 1
     SYNC_POOL_MAX = 10
+    # Credentials: imported from back_end.secrets.Secrets.DB_USER / DB_PASSWORD
 
     # ── Async connection pool (asyncpg) ───────────────────
     # Used by: AsyncSlotMonitorDB / HeadlessSlotMonitor
     ASYNC_HOST      = "localhost"
     ASYNC_PORT      = 5432
     ASYNC_DATABASE  = "PhoneBoxDB"
-    ASYNC_USER      = "admin"
-    ASYNC_PASSWORD  = "admin"
     ASYNC_POOL_MIN  = 5
     ASYNC_POOL_MAX  = 20
     ASYNC_CMD_TIMEOUT = 10.0   # seconds per command
+    # Credentials: imported from back_end.secrets.Secrets.DB_USER / DB_PASSWORD
 
 
 # ============================================================
@@ -102,6 +108,9 @@ class ServerConfig:
     # monitor's async setup to finish before starting admin handlers.
     MONITOR_SETUP_TIMEOUT = 20.0   # seconds
 
+    # Fallback num_lids used for ROI calibration when DB is unreachable.
+    FALLBACK_NUM_LIDS = 4
+
     # API base URL for the student lookup endpoint (scanner_worker)
     STUDENT_API_BASE = "http://127.0.0.1:5000/api/students"
     STUDENT_API_TIMEOUT = 3   # seconds per request
@@ -113,7 +122,7 @@ class ServerConfig:
 
 class ScannerConfig:
     # Face recognition model / backend
-    FACE_MODEL           = "SFace"
+    FACE_MODEL            = "SFace"
     FACE_DETECTOR_BACKEND = "opencv"
 
     # Minimum cosine similarity [0–1] to accept a face match
@@ -132,6 +141,16 @@ class ScannerConfig:
     # Rolling evidence buffer — push every Nth front-camera frame
     # (30 fps camera → N=2 → ~15 fps recorded, halves JPEG-encode load)
     FACE_BUF_EVERY_N = 2
+
+
+# ============================================================
+# SCANNER STATE  (badge / auth timeout)
+# ============================================================
+
+class ScannerStateConfig:
+    # Seconds without a barcode scan before the badge is considered absent.
+    # Triggers badge_timeout_exceeded() → scan failure path.
+    NO_BADGE_TIMEOUT = 10   # seconds
 
 
 # ============================================================
@@ -274,17 +293,81 @@ class SlotMonitorConfig:
 # ============================================================
 
 class AlarmConfig:
-    # Hardcoded admin password for alarm acknowledgement
-    # TODO: replace with a proper authentication mechanism
-    ADMIN_PASSWORD = "admin"
+    # Admin password is in back_end.secrets.Secrets.ADMIN_PASSWORD
 
     # Minimum embedding distance change seen by the BOTTOM camera that
     # indicates a phone is physically present in a slot.
-    # Typical ranges:
-    #   empty slot : 0.01 – 0.04
-    #   phone      : 0.12 – 0.25
-    #   hand held  : 0.06 – 0.15
     PLACEMENT_DETECTION_THRESHOLD = 0.10
+
+
+# ============================================================
+# ADMIN RESOLUTION SESSION
+# ============================================================
+
+class AdminConfig:
+    # Base session lifetime before expiry (seconds).
+    # Extended dynamically by SESSION_EXTEND_PER_RESOLVE for each resolved phone.
+    SESSION_TIMEOUT = 120   # 2 minutes
+
+    # Extra seconds added to the session timeout per resolved mismatch.
+    SESSION_EXTEND_PER_RESOLVE = 30
+
+    # Watchdog poll interval — how often the expiry thread checks is_expired() (s)
+    WATCHDOG_POLL_INTERVAL = 5.0
+
+    # Maximum seconds to wait for a QR code during an admin resolution scan.
+    # Intentionally much longer than DVW (admin operations are manual and slow).
+    ADMIN_QR_SCAN_TIMEOUT = 90.0
+
+
+# ============================================================
+# QR SCANNING
+# ============================================================
+
+class QRConfig:
+    # Maximum seconds to wait for a valid QR scan during DVW operations
+    DVW_SCAN_TIMEOUT = 15.0   # seconds (ops_handler.py QR_SCAN_TIMEOUT)
+
+    # QR frame-buffer poll timeout (seconds per iteration)
+    BUFFER_POLL_TIMEOUT = 0.05   # seconds
+
+
+# ============================================================
+# FACE EMBEDDING WORKER
+# ============================================================
+
+class EmbeddingConfig:
+    # Thread-pool size for DeepFace embedding computation in embedding_gen.py.
+    # Kept at 2: one active + one warm so latency is low without thrashing.
+    MAX_WORKERS = 2
+
+
+# ============================================================
+# WEBRTC
+# ============================================================
+
+class WebRTCConfig:
+    # Maximum video bitrate cap injected into the SDP answer (kbps).
+    MAX_BITRATE_KBPS = 100
+
+    # Timeout for asyncio future.result() when waiting for the offer handler (s).
+    OFFER_TIMEOUT = 10
+
+
+# ============================================================
+# CALIBRATION TOOLS
+# ============================================================
+
+class CalibrationConfig:
+    # Warm-up frames discarded before capturing the calibration snapshot.
+    BOTTOM_CAM_WARMUP = 20   # roi_calibration.py + embed_calibration.py
+    TOP_CAM_WARMUP    = 25   # staging_calibration.py
+
+    # Resolution used by embed_calibration.py for the bottom camera.
+    # Should match CameraConfig.BOTTOM_CAM_* unless the tool needs a
+    # different resolution during calibration.
+    EMBED_CAM_WIDTH  = 1280
+    EMBED_CAM_HEIGHT = 720
 
 
 # ============================================================
@@ -340,28 +423,16 @@ class BgEncoderConfig:
 
 
 # ============================================================
-# QR SCANNING
-# ============================================================
-
-class QRConfig:
-    # Maximum seconds to wait for a valid QR scan during DVW operations
-    DVW_SCAN_TIMEOUT = 15.0   # seconds (ops_handler.py QR_SCAN_TIMEOUT)
-
-    # QR frame-buffer poll timeout (seconds per iteration)
-    BUFFER_POLL_TIMEOUT = 0.05   # seconds
-
-
-# ============================================================
 # ON-SCREEN OVERLAY COLOURS  (BGR format for OpenCV)
 # ============================================================
 
 class OverlayConfig:
     # Phone-tracker bounding box
-    COL_TRACKING   = (20, 215, 20)    # green  — QR visible, tracking OK
-    COL_QR_WARN    = (20, 20, 215)    # red    — QR not visible
-    COL_ENTERING   = (0, 200, 255)    # yellow — approaching slot
-    COL_INSERTING  = (0, 140, 255)    # orange — mid-insertion
-    COL_STABILIZING = (255, 100, 0)   # blue   — verifying
+    COL_TRACKING    = (20, 215, 20)    # green  — QR visible, tracking OK
+    COL_QR_WARN     = (20, 20, 215)    # red    — QR not visible
+    COL_ENTERING    = (0, 200, 255)    # yellow — approaching slot
+    COL_INSERTING   = (0, 140, 255)    # orange — mid-insertion
+    COL_STABILIZING = (255, 100, 0)    # blue   — verifying
 
     # Context overlay
     COL_SOURCE       = (30, 130, 255)   # source slot (orange-ish)

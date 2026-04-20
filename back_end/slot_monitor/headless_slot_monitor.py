@@ -31,7 +31,7 @@ from back_end.config import (
     DatabaseConfig     as _DC,
     SlotMonitorConfig  as _SMC,
 )
-
+from back_end.secrets import Secrets
 
 class HeadlessSlotMonitor:
     """
@@ -71,11 +71,11 @@ class HeadlessSlotMonitor:
             grace_period: float = _SMC.GRACE_PERIOD,
 
             # DB config
-            db_host: str = _DC.ASYNC_HOST,
-            db_port: int = _DC.ASYNC_PORT,
-            db_name: str = _DC.ASYNC_DATABASE,
-            db_user: str = _DC.ASYNC_USER,
-            db_password: str = _DC.ASYNC_PASSWORD,
+            db_host: str     = _DC.ASYNC_HOST,
+            db_port: int     = _DC.ASYNC_PORT,
+            db_name: str     = _DC.ASYNC_DATABASE,
+            db_user: str     = Secrets.DB_USER,
+            db_password: str = Secrets.DB_PASSWORD,
 
             # SocketIO (optional - for remote monitoring)
             socketio=None,

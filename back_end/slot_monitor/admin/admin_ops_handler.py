@@ -37,11 +37,12 @@ from back_end.slot_monitor.camera.top_camera import top_camera
 from back_end.slot_monitor.slot_operations import SlotOperations
 from back_end.slot_monitor.db_interface import SlotMonitorDB
 from back_end.slot_monitor.alarm_controller import AlarmController
+from back_end.config import AdminConfig as _ADM
 
 logger = logging.getLogger(__name__)
 
 TOP_CAMERA_INDEX = 2
-QR_SCAN_TIMEOUT  = 90.0   # long scan — frontend shows "No QR" button after a delay
+QR_SCAN_TIMEOUT = _ADM.ADMIN_QR_SCAN_TIMEOUT   # long scan — frontend shows "No QR" button after a delay
 
 # ── StagingConfig ─────────────────────────────────────────
 
@@ -155,7 +156,7 @@ class AdminOpsHandler:
 
         def _watch():
             while True:
-                time.sleep(5.0)
+                time.sleep(_ADM.WATCHDOG_POLL_INTERVAL)
                 current = admin_ctx.get()
                 if current is None or current.session_id != session_id:
                     return  # closed normally

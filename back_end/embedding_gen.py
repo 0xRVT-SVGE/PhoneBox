@@ -5,18 +5,19 @@ import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 from back_end.scanner_state import scanner_state
 from back_end.scanner_worker import _deepface_represent, l2_normalize
+from back_end.config import ScannerConfig as _SC, EmbeddingConfig as _EC
 
-# Create a dedicated thread pool for embeddings
-_embedding_executor = ThreadPoolExecutor(max_workers=2)
+_embedding_executor = ThreadPoolExecutor(max_workers=_EC.MAX_WORKERS)
+
+# Cached scale factor — same pattern as scanner_worker._resize_scale.
+# Computed once on first call; camera resolution is fixed for process lifetime.
+_embed_resize_scale: float | None = None
+
 
 async def generate_embedding():
-    """
-    Waits for photo_taken_event to be set,
-    then reads latest_rframe, computes face embedding, and returns it.
-    """
-    # Wait until a photo is taken
+    global _embed_resize_scale
+
     loop = asyncio.get_running_loop()
-    # Wait for the threading.Event to be set without blocking the event loop
     await loop.run_in_executor(None, scanner_state.photo_taken_event.wait)
 
     frame = scanner_state.get_rframe()
@@ -24,23 +25,22 @@ async def generate_embedding():
         return None
 
     try:
-        # Resize for DeepFace consistency (reuse your scanner_worker logic)
-        height, width = frame.shape[:2]
-        scale = 720 / width
-        resized = cv2.resize(frame, (720, int(height * scale)))
+        if _embed_resize_scale is None:
+            _embed_resize_scale = _SC.SCALED_WIDTH / frame.shape[1]
 
-        # Compute embedding in thread pool (non-blocking for asyncio)
-        loop = asyncio.get_running_loop()
-        results = await loop.run_in_executor(_embedding_executor, _deepface_represent, resized)
+        resized = cv2.resize(
+            frame,
+            (_SC.SCALED_WIDTH, int(frame.shape[0] * _embed_resize_scale)),
+        )
 
+        results = await loop.run_in_executor(
+            _embedding_executor, _deepface_represent, resized
+        )
         if not results:
             return None
 
-        # Pick the largest detected face
         largest = max(results, key=lambda f: f["facial_area"]["w"] * f["facial_area"]["h"])
-        embed = l2_normalize(np.array(largest["embedding"], dtype=np.float32))
-        return embed
+        return l2_normalize(np.array(largest["embedding"], dtype=np.float32))
 
     finally:
-        # Reset the event so it can be reused
         scanner_state.photo_taken_event.clear()

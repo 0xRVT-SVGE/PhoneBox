@@ -382,6 +382,7 @@ class _ROIEditor:
 # Public API
 # ══════════════════════════════════════════════════════════
 #from back_end.camera_manager import cam_mgr
+from back_end.config import CameraConfig as _CC
 
 def run_calibration(num_lids: int) -> None:
     """
@@ -395,8 +396,8 @@ def run_calibration(num_lids: int) -> None:
         return
 
     cameras = [
-        {"index": 1, "name": "BOTTOM CAMERA Slot monitoring (cam 1)", "file": ROI_FILE_BOTTOM},
-        {"index": 2, "name": "TOP-DOWN CAMERA Admin / evidence (cam 2)", "file": ROI_FILE_TOP},
+        {"index": _CC.BOTTOM_CAM_INDEX, "name": "BOTTOM CAMERA Slot monitoring", "file": ROI_FILE_BOTTOM},
+        {"index": _CC.TOP_CAM_INDEX, "name": "TOP-DOWN CAMERA Admin / evidence", "file": ROI_FILE_TOP},
     ]
 
     for cam in cameras:
