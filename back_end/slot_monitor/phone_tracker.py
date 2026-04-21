@@ -423,6 +423,11 @@ class PhoneTracker:
     4-layer tracking pipeline with rotation-aware state machine.
     """
 
+    # ── Debug toggle ─────────────────────────────────────────────────────────
+    # Set False to hide the phone bounding-box overlay on the top-camera feed.
+    # Can also be toggled at runtime: PhoneTracker.DRAW_TRACKING_BOX = False
+    DRAW_TRACKING_BOX: bool = True
+
     def __init__(self, pid, lid, slot_roi, background_frame, cancel_event,
                  socketio, client_id, staging_rois=None, verify_fn=None):
         self._pid             = pid
@@ -754,6 +759,8 @@ class PhoneTracker:
             logger.debug(f"[Tracker] emit_update: {e}")
 
     def _draw_overlay(self,frame):
+        if not PhoneTracker.DRAW_TRACKING_BOX:
+            return
         if self._bbox is None: return
         bx,by,bw,bh=self._bbox
         col={

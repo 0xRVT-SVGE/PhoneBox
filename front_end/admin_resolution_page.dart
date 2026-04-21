@@ -1,16 +1,4 @@
 // admin_resolution_page.dart
-//
-// Key additions:
-//   • _cameraIdleTimer  — fires after _kCameraIdleTimeout (60 s) of no phone
-//     being actively handled. On expiry the top-cam connection is closed to
-//     free server resources if the admin is AFK between phones.
-//   • _cancelCameraIdle() / _scheduleCameraIdle() — helpers called at the
-//     right moments (phone selected → cancel; phone placed/failed → schedule).
-//   • _ensureCameraConnected() — reconnects immediately when a phone is
-//     selected after an idle disconnect so the feed is ready before the
-//     "pick it up" step even starts.
-//
-// All other logic is unchanged.
 
 import 'dart:async';
 import 'package:flutter/material.dart';
@@ -90,9 +78,6 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
   int _noQrButtonDelayS = 25;
 
   // ── Idle camera timer ─────────────────────────────────
-  // When no phone is being actively handled for this long, the top-camera
-  // WebRTC session is closed to free server resources. It reconnects
-  // immediately when the admin selects the next phone.
   static const Duration _kCameraIdleTimeout = Duration(seconds: 60);
   Timer? _cameraIdleTimer;
 
@@ -107,16 +92,11 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
 
   // ── Idle timer helpers ────────────────────────────────
 
-  /// Start (or restart) the idle countdown. Called after a phone is
-  /// resolved, placed, failed, or staged — whenever the admin's hands
-  /// are empty and no active operation is running.
   void _scheduleCameraIdle() {
     _cameraIdleTimer?.cancel();
     _cameraIdleTimer = Timer(_kCameraIdleTimeout, _onCameraIdleTimeout);
   }
 
-  /// Cancel the idle countdown. Called whenever the admin selects a phone
-  /// or any operation that requires the camera becomes active.
   void _cancelCameraIdle() {
     _cameraIdleTimer?.cancel();
     _cameraIdleTimer = null;
@@ -124,8 +104,6 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
 
   void _onCameraIdleTimeout() {
     if (_disposed || !mounted) return;
-    // Only disconnect if we're in a genuinely idle state — no phone in hand,
-    // not scanning, not tracking.
     if (_step == _Step.selectingPhone || _step == _Step.pickingUp) {
       _pc?.onTrack = null;
       _pc?.onConnectionState = null;
@@ -135,8 +113,6 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
     }
   }
 
-  /// Reconnect if the camera was dropped during an idle period.
-  /// Safe to call multiple times — exits immediately if already connected.
   void _ensureCameraConnected() {
     if (!_videoConnected && !_isReconnecting && !_disposed && _pc == null) {
       _startVideo();
@@ -418,11 +394,11 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
         _staged     = List<String>.from(data['staged']    ?? []);
         if (_staged.isNotEmpty) {
           setState(() => _step = _Step.unstageNext);
-          _scheduleCameraIdle(); // phone placed, hands empty → start idle timer
+          _scheduleCameraIdle();
         } else if (_remaining.isEmpty) {
           _socket.adminSessionClose();
         } else {
-          _scheduleCameraIdle(); // will be cancelled when next phone is selected
+          _scheduleCameraIdle();
           _autoSelect();
         }
       },
@@ -470,9 +446,23 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
         }
         setState(() => _scanError = _friendlyError(msg));
       },
+      // ── admin_cancel_step response ───────────────────
+      onAdminStepCancelled: (_) {
+        if (!mounted) return;
+        _serverResponded();
+        setState(() {
+          _currentPid  = null;
+          _currentLid  = null;
+          _sameSlot    = false;
+          _scanError   = null;
+          _step        = _Step.selectingPhone;
+        });
+        _scheduleCameraIdle();
+        _cardAnim.forward(from: 0);
+      },
       onTrackingStarted: (_) {
         if (!mounted) return;
-        _cancelCameraIdle(); // active tracking — keep camera alive
+        _cancelCameraIdle();
         setState(() { _step = _Step.trackingAdmin; _qrVisible = true; _scanError = null; });
       },
       onTrackingUpdate: (data) {
@@ -570,11 +560,7 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
   }
 
   void _selectPhone(String pid) {
-    // Cancel any pending idle disconnect — we're actively working again.
     _cancelCameraIdle();
-
-    // If camera was disconnected during an idle period, reconnect now so the
-    // feed is ready before the admin even picks up the phone.
     _ensureCameraConnected();
 
     final lid = _mismatchMap[pid] ?? 0;
@@ -592,7 +578,7 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
 
   void _onPickedUp() {
     if (_currentLid == null) return;
-    _cancelCameraIdle(); // phone in hand — keep camera alive
+    _cancelCameraIdle();
     _waitForServer();
     _socket.adminRemovePhone(_currentLid!);
   }
@@ -650,6 +636,34 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
         _autoSelect();
       }
     });
+  }
+
+  /// Cancel the current step (QR scan or placement tracker) when the admin
+  /// wants to handle a different phone.
+  ///
+  /// • In _Step.scanning  → server has an active QR scan → send adminCancelStep
+  ///   and wait for the `admin_step_cancelled` response before switching UI.
+  /// • In _Step.pickingUp (no active server operation) → switch locally.
+  void _onChangePhone() {
+    _noQrButtonTimer?.cancel();
+    if (_step == _Step.scanning) {
+      // Server has an active QR scan running — cancel it.
+      _waitForServer();
+      _socket.adminCancelStep();
+      // UI will switch once onAdminStepCancelled fires.
+    } else {
+      // No active server operation (pickingUp state before the admin pressed
+      // "I've picked it up") — switch locally without a round-trip.
+      setState(() {
+        _currentPid  = null;
+        _currentLid  = null;
+        _sameSlot    = false;
+        _scanError   = null;
+        _step        = _Step.selectingPhone;
+      });
+      _scheduleCameraIdle();
+      _cardAnim.forward(from: 0);
+    }
   }
 
   // ── Lifecycle ─────────────────────────────────────────
@@ -733,6 +747,11 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
   }
 
   Widget _buildCard() {
+    final showEndBtn = _step != _Step.opening &&
+        _step != _Step.sessionDone &&
+        _step != _Step.error &&
+        _step != _Step.depositInProgress;
+
     return Container(
       decoration: BoxDecoration(
         color: const Color(0xFF1C1C1E),
@@ -743,22 +762,32 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
       ),
       child: Column(mainAxisSize: MainAxisSize.min, children: [
         const SizedBox(height: 10),
+
+        // ── Header row: drag handle always centred, end-session btn right ──
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Row(children: [
-            const Spacer(),
-            Container(width: 36, height: 4,
-                decoration: BoxDecoration(
-                    color: Colors.white24,
-                    borderRadius: BorderRadius.circular(2))),
-            const Spacer(),
-            if (_step != _Step.opening &&
-                _step != _Step.sessionDone &&
-                _step != _Step.error &&
-                _step != _Step.depositInProgress)
-              _forceCloseButton(),
-          ]),
+          child: SizedBox(
+            height: 28,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                // Drag handle — always perfectly centred
+                Center(
+                  child: Container(
+                    width: 36, height: 4,
+                    decoration: BoxDecoration(
+                        color: Colors.white24,
+                        borderRadius: BorderRadius.circular(2)),
+                  ),
+                ),
+                // End-session button — pinned to the right
+                if (showEndBtn)
+                  Positioned(right: 0, child: _forceCloseButton()),
+              ],
+            ),
+          ),
         ),
+
         const SizedBox(height: 4),
         SingleChildScrollView(
           padding: EdgeInsets.fromLTRB(
@@ -826,8 +855,8 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
                     side: const BorderSide(color: Colors.white30)),
                 onPressed: _pendingServer ? null : _onNoQrCode,
               ),
-              _changePhoneBtn(),
             ],
+            _changePhoneBtn(),
           ],
         );
       case _Step.trackingAdmin:
@@ -1200,20 +1229,15 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
             : Text(label),
       );
 
+  /// "Handle a different phone first" button.
+  /// Cancels any active server-side step before switching to phone selection.
   Widget _changePhoneBtn() => Padding(
     padding: const EdgeInsets.only(top: 4),
     child: TextButton.icon(
       icon:  const Icon(Icons.swap_horiz, size: 16, color: Colors.white38),
       label: const Text('Handle a different phone first',
           style: TextStyle(color: Colors.white38, fontSize: 13)),
-      onPressed: _pendingServer ? null : () => setState(() {
-        _currentPid  = null; _currentLid = null;
-        _sameSlot    = false; _scanError  = null;
-        _step        = _Step.selectingPhone;
-        // The admin is browsing phones — start idle timer in case they
-        // walk away without selecting one.
-        _scheduleCameraIdle();
-      }),
+      onPressed: _pendingServer ? null : _onChangePhone,
     ),
   );
 

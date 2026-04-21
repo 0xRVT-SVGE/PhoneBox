@@ -31,6 +31,26 @@ class DVWSocketHandler:
         self.socketio = socketio
 
     # ══════════════════════════════════════════════════════
+    # OVERLAY HELPERS
+    # ══════════════════════════════════════════════════════
+
+    @staticmethod
+    def _set_dvw_overlay(source_lid=None, dest_lid=None):
+        """Set context overlay on top_camera for a DVW operation."""
+        try:
+            all_rois = load_all_top_rois()
+            if all_rois:
+                top_camera.set_context_overlay(
+                    make_dvw_context_overlay(
+                        all_rois   = all_rois,
+                        source_lid = source_lid,
+                        dest_lid   = dest_lid,
+                    )
+                )
+        except Exception as e:
+            logger.warning(f"[DVW] Failed to set context overlay: {e}")
+
+    # ══════════════════════════════════════════════════════
     # CANCEL
     # ══════════════════════════════════════════════════════
 
@@ -100,9 +120,11 @@ class DVWSocketHandler:
             top_camera.wait_for_frame(timeout=0.3)
             raw = top_camera.get_raw_frame()
             op.background_frame = raw if raw is not None else top_camera.get_frame()
-            # NOTE: deposit verifier is created later inside
-            # create_tracker_for_operation(), after QR confirms the phone
-            # is in the student's hand (slot is definitely empty at that point).
+
+        # ── Show destination ROI on the top-camera feed immediately ──────────
+        # This allows the DVWBottomSheet (admin video mode) to display the
+        # slot guide from the very first frame, not just after tracking starts.
+        self._set_dvw_overlay(source_lid=None, dest_lid=lid)
 
         self.socketio.emit(
             "deposit_waiting_for_qr",
@@ -165,8 +187,6 @@ class DVWSocketHandler:
 
         # Create withdrawal verifier NOW — phone is still in the slot, so
         # the before-snapshot correctly captures the "occupied" state.
-        # After the QR scan confirms the phone is in the student's hand,
-        # _complete_withdraw() calls verify_fn() to confirm the slot emptied.
         op = op_ctx.get(client_id)
         if op is not None:
             try:
@@ -175,6 +195,9 @@ class DVWSocketHandler:
                 logger.warning(
                     f"[DVW] Withdraw verifier creation failed LID={lid}: {exc}"
                 )
+
+        # ── Show source ROI on the top-camera feed immediately ───────────────
+        self._set_dvw_overlay(source_lid=lid, dest_lid=None)
 
         self.socketio.emit(
             "withdraw_waiting_for_action",
@@ -269,6 +292,10 @@ class DVWSocketHandler:
             return
 
         same_slot = (target_lid == original_lid)
+
+        # ── Show source + destination ROIs immediately ───────────────────────
+        self._set_dvw_overlay(source_lid=original_lid, dest_lid=target_lid)
+
         self.socketio.emit(
             "verify_waiting_for_action",
             {
@@ -341,6 +368,7 @@ class DVWSocketHandler:
                 return
 
             if scan_result["status"] != "success":
+                top_camera.clear_context_overlay()
                 self.socketio.emit(
                     "operation_error", scan_result,
                     to=client_id, namespace="/",
@@ -350,6 +378,7 @@ class DVWSocketHandler:
 
         scanned_pid = scan_result["pid"]
         if scanned_pid != op.pid:
+            top_camera.clear_context_overlay()
             self.socketio.emit(
                 "operation_error",
                 {
@@ -381,15 +410,9 @@ class DVWSocketHandler:
         pid       = op.pid
         lid       = op.lid
 
-        all_rois = load_all_top_rois()
-        if all_rois:
-            top_camera.set_context_overlay(
-                make_dvw_context_overlay(
-                    all_rois   = all_rois,
-                    source_lid = None,
-                    dest_lid   = lid,
-                )
-            )
+        # Refresh overlay now that QR is confirmed — keeps same dest lid
+        # but re-applies with up-to-date state.
+        self._set_dvw_overlay(source_lid=None, dest_lid=lid)
 
         # Verifier is created inside create_tracker_for_operation():
         # at that point QR is confirmed, phone is in student's hand, slot is empty.
@@ -502,14 +525,13 @@ class DVWSocketHandler:
         pid, lid, client_id = op.pid, op.lid, op.client_id
 
         # Verify the slot physically changed (phone was actually removed).
-        # verify_fn was created in handle_withdraw() while the phone was still
-        # in the slot, so it has an "occupied" before-snapshot.
         if op.verify_fn is not None:
             if not op.verify_fn():
                 logger.warning(
                     f"[DVW] Withdraw slot-change check FAILED: "
                     f"PID={pid} LID={lid} — slot did not change"
                 )
+                top_camera.clear_context_overlay()
                 self.socketio.emit(
                     "operation_error",
                     {
@@ -529,6 +551,7 @@ class DVWSocketHandler:
 
         db_result = self.slot_ops.withdraw_phone_db(pid)
         if db_result["status"] != "success":
+            top_camera.clear_context_overlay()
             self.socketio.emit(
                 "withdraw_result", db_result,
                 to=client_id, namespace="/",
@@ -539,6 +562,7 @@ class DVWSocketHandler:
         self.slot_ops.capture_and_save_baseline(
             lid=lid, is_occupied=False, wait_for_stable=2.0
         )
+        top_camera.clear_context_overlay()
         self._resume_slot(lid)
         op_ctx.complete(client_id)
         self.socketio.emit(
@@ -563,15 +587,8 @@ class DVWSocketHandler:
         op.background_frame = top_camera.get_frame()
         top_camera.clear_frame_event()
 
-        all_rois = load_all_top_rois()
-        if all_rois:
-            top_camera.set_context_overlay(
-                make_dvw_context_overlay(
-                    all_rois   = all_rois,
-                    source_lid = original_lid,
-                    dest_lid   = target_lid,
-                )
-            )
+        # Refresh with confirmed lids
+        self._set_dvw_overlay(source_lid=original_lid, dest_lid=target_lid)
 
         tracker = create_tracker_for_operation(op, self.socketio, self.slot_ops)
 

@@ -41,7 +41,6 @@ class _ScanSuccessPageState extends State<ScanSuccessPage> {
   List<dynamic> _phones = [];
 
   // ── Top-camera pre-connection ─────────────────────────
-  // Initialised eagerly so DVWBottomSheet can use the warm connection.
   final _topRenderer    = RTCVideoRenderer();
   RTCPeerConnection?    _topPc;
   final _topConnected   = ValueNotifier<bool>(false);
@@ -71,8 +70,6 @@ class _ScanSuccessPageState extends State<ScanSuccessPage> {
     super.dispose();
   }
 
-  // Pre-connect the top (admin) camera in the background as soon as the
-  // page loads, so there is no visible lag when the user opens DVWBottomSheet.
   Future<void> _preconnectTopCamera() async {
     if (_topConnecting || _topConnected.value || _topPageDisposed) return;
     _topConnecting = true;
@@ -115,8 +112,7 @@ class _ScanSuccessPageState extends State<ScanSuccessPage> {
         await _topPc!.setRemoteDescription(RTCSessionDescription(sdp, 'answer'));
       }
     } catch (_) {
-      // Connection attempt failed silently; DVWBottomSheet will fall back to
-      // its own connection path if _topConnected.value remains false.
+      // Silently ignore; DVWBottomSheet falls back to its own connection.
     } finally {
       _topConnecting = false;
     }
@@ -151,8 +147,6 @@ class _ScanSuccessPageState extends State<ScanSuccessPage> {
         isDeposit: isDeposit,
         socketService: _socketService,
         onComplete: _loadPhones,
-        // Pass the pre-connected renderer so the sheet shows the camera
-        // feed immediately without an extra WebRTC handshake.
         sharedTopRenderer: _topRenderer,
         topConnectedNotifier: _topConnected,
       ),
@@ -265,14 +259,7 @@ class DVWBottomSheet extends StatefulWidget {
   final SocketService socketService;
   final VoidCallback onComplete;
 
-  /// Optional pre-connected renderer from a parent page (e.g. ScanSuccessPage,
-  /// StudentPhonesPage). When provided the sheet skips its own WebRTC
-  /// handshake and immediately displays the already-live stream.
   final RTCVideoRenderer? sharedTopRenderer;
-
-  /// Notifier owned by the parent that tracks whether [sharedTopRenderer]
-  /// is currently receiving video. The sheet subscribes to this so it can
-  /// hide the "Connecting…" spinner as soon as the parent's stream is live.
   final ValueNotifier<bool>? topConnectedNotifier;
 
   const DVWBottomSheet({
@@ -299,13 +286,13 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
   Timer? _successTimer;
   int    _successCountdown = 2;
 
+  // ── Cancel guard ──────────────────────────────────────
+  // True once the user presses Cancel so the operation_cancelled
+  // socket event does not try to pop the (already-dismissed) sheet
+  // and accidentally pop the parent page instead.
+  bool _selfCancelled = false;
+
   // ── Top-down camera ───────────────────────────────────
-  // When a sharedTopRenderer is provided, this sheet is a "guest":
-  //   - it reads the renderer but never disposes it
-  //   - it does not create its own PC
-  //   - it does not call ApiService.cancelAdmin() on dispose
-  // When no shared renderer is provided this sheet owns its own renderer
-  // and PC (original behaviour).
   late final RTCVideoRenderer _topRenderer;
   bool _ownsTopRenderer = false;
 
@@ -320,15 +307,12 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
     super.initState();
 
     if (widget.sharedTopRenderer != null) {
-      // Guest mode: use the parent's renderer without initialising it again.
       _topRenderer = widget.sharedTopRenderer!;
       _ownsTopRenderer = false;
-      // Seed the connected flag from the notifier or the renderer's srcObject.
       _topConnected = widget.topConnectedNotifier?.value
           ?? (_topRenderer.srcObject != null);
       widget.topConnectedNotifier?.addListener(_onParentConnectionChanged);
     } else {
-      // Owner mode: create and initialise our own renderer.
       _topRenderer = RTCVideoRenderer();
       _ownsTopRenderer = true;
       _topRenderer.initialize();
@@ -358,7 +342,6 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
   // ── Top camera connection ─────────────────────────────
 
   Future<void> _connectTopCamera() async {
-    // Guest mode: the parent already manages the connection; nothing to do.
     if (!_ownsTopRenderer) return;
 
     if (_topConnecting || _topConnected || _disposed) return;
@@ -400,15 +383,12 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
   }
 
   void _disconnectTopCamera() {
-    // Always clean up any PC this sheet created.
     _topPc?.onTrack = null;
     _topPc?.onConnectionState = null;
     _topPc?.close();
     _topPc = null;
 
     if (_ownsTopRenderer) {
-      // Only touch the renderer and cancel the server connection when we
-      // own the renderer. In guest mode the parent is still using them.
       _topRenderer.srcObject = null;
       _topConnected  = false;
       _topConnecting = false;
@@ -441,7 +421,6 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
           _slot = data['slot'] as int? ?? ((data['lid'] as int? ?? 0) + 1);
           _step = DvwStep.autoScanning;
         });
-        // In guest mode the camera is already warm; in owner mode start it now.
         _connectTopCamera();
       },
       onWithdrawWaiting: (data) {
@@ -456,6 +435,8 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
       onWithdrawResult: (data) => _handleResult(data as Map),
       onOperationError: (data) {
         if (!mounted) return;
+        // If we already self-cancelled, ignore follow-up errors
+        if (_selfCancelled) return;
         setState(() {
           _step      = DvwStep.error;
           _errorText = (data as Map)['message'] as String? ?? 'Unknown error';
@@ -463,6 +444,10 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
         _disconnectTopCamera();
       },
       onOperationCancelled: (_) {
+        // Only pop if the USER didn't initiate the cancel themselves — if
+        // they did (_selfCancelled=true) we already popped the sheet in
+        // _onCancel() and a second pop would remove the parent page.
+        if (_selfCancelled) return;
         if (mounted) Navigator.of(context).pop();
       },
       onTrackingStarted: (_) {
@@ -480,6 +465,7 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
       },
       onTrackingFailed: (data) {
         if (!mounted) return;
+        if (_selfCancelled) return;
         setState(() {
           _step      = DvwStep.error;
           _errorText = _trackingMsg((data as Map)['reason'] as String? ?? '');
@@ -500,6 +486,7 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
       });
       _startSuccessTimer();
     } else {
+      if (_selfCancelled) return;
       setState(() {
         _step      = DvwStep.error;
         _errorText = data['message'] as String? ?? 'Operation failed';
@@ -508,6 +495,7 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
   }
 
   void _onCancel() {
+    _selfCancelled = true;
     widget.socketService.cancelOperation();
     _disconnectTopCamera();
     Navigator.of(context).pop();
@@ -541,7 +529,6 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Drag handle
           Padding(
             padding: const EdgeInsets.only(top: 10, bottom: 4),
             child: const SizedBox(
@@ -554,7 +541,7 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
             ),
           ),
 
-          // ── Top-down camera (during autoScanning + tracking) ────
+          // ── Top-down camera ────────────────────────────
           if (showCamera)
             Expanded(
               child: Stack(
@@ -589,13 +576,11 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
                             ),
                           ),
                   ),
-                  // Camera badge
                   const Positioned(
                     bottom: 10, left: 12,
                     child: _CamBadge(
                         label: 'TOP CAM', icon: Icons.videocam_outlined),
                   ),
-                  // QR status badge — only during tracking
                   if (_step == DvwStep.tracking)
                     Positioned(
                       bottom: 10, right: 12,

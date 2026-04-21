@@ -47,6 +47,7 @@ class SocketService {
   Function(dynamic)? _onAdminMissingResult;
   Function(dynamic)? _onAdminSessionClosed;
   Function(dynamic)? _onAdminOperationError;
+  Function(dynamic)? _onAdminStepCancelled;   // ← new
 
   // ── Connect / callback registration ───────────────────
 
@@ -80,6 +81,7 @@ class SocketService {
     Function(dynamic)? onAdminMissingResult,
     Function(dynamic)? onAdminSessionClosed,
     Function(dynamic)? onAdminOperationError,
+    Function(dynamic)? onAdminStepCancelled,   // ← new
   }) {
     _updateCallbacks(
       onScanStatus:             onScanStatus,
@@ -111,6 +113,7 @@ class SocketService {
       onAdminMissingResult:     onAdminMissingResult,
       onAdminSessionClosed:     onAdminSessionClosed,
       onAdminOperationError:    onAdminOperationError,
+      onAdminStepCancelled:     onAdminStepCancelled,
     );
 
     if (isConnected || _isConnecting) return;
@@ -169,8 +172,8 @@ class SocketService {
     Function(dynamic)? onAdminMissingResult,
     Function(dynamic)? onAdminSessionClosed,
     Function(dynamic)? onAdminOperationError,
+    Function(dynamic)? onAdminStepCancelled,
   }) {
-    // Only overwrite a stored callback when the caller supplies a non-null value.
     if (onScanStatus             != null) _onScanStatus             = onScanStatus;
     if (onDepositWaiting         != null) _onDepositWaiting         = onDepositWaiting;
     if (onDepositResult          != null) _onDepositResult          = onDepositResult;
@@ -200,6 +203,7 @@ class SocketService {
     if (onAdminMissingResult     != null) _onAdminMissingResult     = onAdminMissingResult;
     if (onAdminSessionClosed     != null) _onAdminSessionClosed     = onAdminSessionClosed;
     if (onAdminOperationError    != null) _onAdminOperationError    = onAdminOperationError;
+    if (onAdminStepCancelled     != null) _onAdminStepCancelled     = onAdminStepCancelled;
   }
 
   void _registerListeners() {
@@ -237,6 +241,7 @@ class SocketService {
     socket!.on("admin_missing_result",     (d) => _onAdminMissingResult?.call(d));
     socket!.on("admin_session_closed",     (d) => _onAdminSessionClosed?.call(d));
     socket!.on("admin_operation_error",    (d) => _onAdminOperationError?.call(d));
+    socket!.on("admin_step_cancelled",     (d) => _onAdminStepCancelled?.call(d));   // ← new
   }
 
   // ── Scan ──────────────────────────────────────────────
@@ -250,8 +255,6 @@ class SocketService {
   void withdraw(String pid) => _emit("withdraw",  {"pid": pid});
   void qrScanned()          => _emit("qr_scanned", {});
 
-  /// Cancel any active DVW operation for this client.
-  /// Works in all stages: waiting, scanning, tracking.
   void cancelOperation() => _emit("cancel_operation", {});
 
   void verify({
@@ -293,6 +296,10 @@ class SocketService {
   void adminForceClose({bool safe = true}) =>
       _emit("admin_force_close_session", {"safe": safe});
 
+  /// Cancel the current admin step (QR scan or placement tracker) without
+  /// closing the session.  Called when "Handle a different phone first" is pressed.
+  void adminCancelStep() => _emit("admin_cancel_step", {});
+
   // ── Cleanup ───────────────────────────────────────────
 
   void clearDvwCallbacks() {
@@ -322,6 +329,7 @@ class SocketService {
     _onAdminMissingResult  = null;
     _onAdminSessionClosed  = null;
     _onAdminOperationError = null;
+    _onAdminStepCancelled  = null;
   }
 
   void disconnect() {

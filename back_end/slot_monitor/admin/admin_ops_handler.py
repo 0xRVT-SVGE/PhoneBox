@@ -9,18 +9,29 @@ Session watchdog
 _start_session_watchdog() launches a daemon thread that checks
 session.is_expired() every WATCHDOG_POLL_INTERVAL seconds.
 
-  • If expired AND no phone in hand → auto force-close the session.
+  • If expired AND no phone in hand → run embedding auto-resolve check,
+    then force-close the session.
   • If expired AND phone in hand   → emit a warning to the frontend and
-    defer the close by one poll interval, repeating until the admin
-    places/stages the phone.  This avoids interrupting an active
-    placement while still enforcing the time limit.
+    defer the close by one poll interval.
 
 No-QR button delay
 ──────────────────
-When admin_remove_ok is emitted, it now includes `no_qr_button_delay_s`
-(from AdminConfig.NO_QR_BUTTON_DELAY_S).  The Flutter client uses this
-value for its timer instead of a hardcoded 8-second constant, so the
-"No QR on this object" button only appears after a meaningful wait.
+When admin_remove_ok is emitted, it now includes `no_qr_button_delay_s`.
+
+admin_cancel_step
+─────────────────
+New event emitted by the frontend when the admin presses
+"Handle a different phone first".  Cancels any running QR scan or
+placement tracker, resets in-transit state, and stops the current
+evidence clip — without closing the session.
+
+Session expiry embedding check
+──────────────────────────────
+When the session auto-closes on timeout, unresolved slots whose current
+embedding is CLOSE to their stored baseline are auto-resolved before
+closing (the phone is effectively back in its correct state).  Slots
+whose embedding is still diverged remain unresolved and will re-alarm
+naturally once the session closes and slot monitoring resumes.
 """
 
 import json
@@ -44,7 +55,7 @@ from back_end.slot_monitor.camera.top_camera import top_camera
 from back_end.slot_monitor.slot_operations import SlotOperations
 from back_end.slot_monitor.db_interface import SlotMonitorDB
 from back_end.slot_monitor.alarm_controller import AlarmController
-from back_end.config import AdminConfig as _ADM
+from back_end.config import AdminConfig as _ADM, SlotMonitorConfig as _SMC
 
 logger = logging.getLogger(__name__)
 
@@ -143,16 +154,35 @@ class AdminOpsHandler:
         if self._recorder:
             self._recorder.stop_clip(keep=keep, reason=reason)
 
+    # ── Embedding check helper ────────────────────────────
+
+    def _slot_matches_baseline(self, lid: int) -> bool:
+        """
+        Return True if the current embedding of slot *lid* is within
+        MISMATCH_THRESHOLD of its stored baseline — i.e. the slot looks
+        normal and does not need further attention.
+        """
+        try:
+            from back_end.slot_monitor.slot_embed import embedding_distance
+            slot, fb = self.slot_ops._get_slot(lid)
+            if slot is None or fb is None:
+                return False
+            emb = self.slot_ops._current_embedding(slot, fb)
+            if emb is None:
+                return False
+            dist = embedding_distance(emb, slot.baseline)
+            logger.debug(
+                f"[AdminOps] Slot-baseline distance LID={lid}: {dist:.4f} "
+                f"(threshold={_SMC.MISMATCH_THRESHOLD})"
+            )
+            return dist < _SMC.MISMATCH_THRESHOLD
+        except Exception as e:
+            logger.warning(f"[AdminOps] _slot_matches_baseline LID={lid}: {e}")
+            return False
+
     # ── Session watchdog ──────────────────────────────────
 
     def _start_session_watchdog(self, session, client_id: str) -> None:
-        """
-        Daemon thread that enforces the session timeout.
-
-        If expired AND no phone in hand → force-close immediately.
-        If expired AND phone in hand   → emit a warning, defer by one poll
-          interval, repeat until the admin places the phone.
-        """
         session_id = session.session_id
 
         def _watch():
@@ -161,13 +191,12 @@ class AdminOpsHandler:
 
                 current = admin_ctx.get()
                 if current is None or current.session_id != session_id:
-                    return  # session closed normally
+                    return
 
                 if not current.is_expired():
                     continue
 
                 if current.has_phone_in_hand():
-                    # Admin is mid-operation — warn but don't interrupt.
                     logger.warning(
                         f"[AdminSession] {session_id} expired but phone in hand "
                         f"(lid={current.in_transit_from_lid}) — deferring close"
@@ -184,10 +213,8 @@ class AdminOpsHandler:
                         to=client_id,
                         namespace="/",
                     )
-                    # Loop again; _auto_force_close fires on next poll if idle.
                     continue
 
-                # No phone in hand and session expired → close now.
                 logger.warning(
                     f"[AdminSession] {session_id} expired with no active "
                     "operation — auto force-closing"
@@ -212,11 +239,36 @@ class AdminOpsHandler:
         if cancel_ev:
             cancel_ev.set()
 
+        # ── Embedding auto-resolve ────────────────────────────────────────────
+        # Before declaring slots as unresolved, check whether the current
+        # embedding of each unresolved slot matches its baseline.  If it does,
+        # the slot has returned to a normal state on its own — resolve it so we
+        # don't emit a spurious alarm after the session closes.
+        auto_resolved_pids = []
+        for pid in list(session.pending_pids()):
+            lid = session.initial_mismatches.get(pid)
+            if lid is None:
+                continue
+            if self._slot_matches_baseline(lid):
+                logger.info(
+                    f"[AdminSession] {session.session_id} timeout: "
+                    f"PID={pid} LID={lid} embedding matches baseline — auto-resolved."
+                )
+                session.resolved_pids.add(pid)
+                self.alarm.resolve(pid, lid)
+                auto_resolved_pids.append(pid)
+
         allowed_s = SESSION_TIMEOUT + session.resolve_count * float(
             _ADM.SESSION_EXTEND_PER_RESOLVE
         )
         warnings  = [f"Session auto-closed: {allowed_s:.0f}s timeout exceeded"]
         remaining = sorted(session.pending_pids())
+
+        if auto_resolved_pids:
+            warnings.append(
+                f"Auto-resolved on timeout (embeddings matched baseline): "
+                f"{auto_resolved_pids}"
+            )
         if remaining:
             warnings.append(f"Unresolved mismatches at timeout: {remaining}")
         if session.staged_phones:
@@ -359,10 +411,61 @@ class AdminOpsHandler:
             ],
             "phone_count":        phone_count,
             "staging_rois":       StagingConfig.get_rois(),
-            # Sent so the client uses the server-side value instead of a
-            # hardcoded constant.
             "no_qr_button_delay_s": NO_QR_BUTTON_DELAY_S,
         })
+
+    # ── CANCEL CURRENT STEP ───────────────────────────────
+
+    def handle_cancel_step(self, data: dict):
+        """
+        Cancel any in-progress QR scan or placement tracker for the current
+        step, reset in-transit state, and return to phone-selection mode.
+
+        Called when the admin presses "Handle a different phone first".
+        Does NOT close the session.
+        """
+        client_id = request.sid
+        session = admin_ctx.get()
+        if session is None:
+            emit("admin_operation_error", {"message": "no_active_session"})
+            return
+
+        # Cancel ongoing QR scan
+        cancel_ev = getattr(session, "_qr_scan_cancel", None)
+        if cancel_ev is not None:
+            cancel_ev.set()
+            logger.info(
+                f"[AdminSession] {session.session_id} — QR scan cancelled "
+                f"(admin switched phones)"
+            )
+
+        # Cancel ongoing placement tracker
+        if session.placement_cancel_event is not None:
+            session.placement_cancel_event.set()
+            session.placement_cancel_event = None
+
+        top_camera.clear_tracker_overlay()
+
+        # Reset in-transit state — the phone is being put back or we're
+        # abandoning this step.  No DB changes have been made yet so no
+        # rollback needed.
+        had_phone = session.has_phone_in_hand()
+        session.in_transit_pid           = None
+        session.in_transit_from_lid      = None
+        session.in_transit_qr_confirmed  = False
+
+        if had_phone:
+            self._stop_clip(keep=False, reason="admin_switched_phone")
+
+        self._refresh_overlay(session)
+
+        self.socketio.emit("admin_step_cancelled", {
+            "status": "success",
+        }, to=client_id, namespace="/")
+        logger.info(
+            f"[AdminSession] {session.session_id} — step cancelled, "
+            f"returning to phone selection."
+        )
 
     # ── STEP 1 — REMOVE PHONE FROM SLOT ──────────────────
 
@@ -407,7 +510,6 @@ class AdminOpsHandler:
         )
         emit("admin_remove_ok", {
             "from_lid":             from_lid,
-            # Client uses this instead of a hardcoded timer constant.
             "no_qr_button_delay_s": NO_QR_BUTTON_DELAY_S,
             "message": (
                 f"Slot {from_lid} selected. "
@@ -1320,5 +1422,9 @@ def register_admin_handlers(
     @socketio.on("admin_pre_highlight_slot")
     def on_pre_highlight_slot(data):
         handler.handle_pre_highlight_slot(data)
+
+    @socketio.on("admin_cancel_step")
+    def on_cancel_step(data):
+        handler.handle_cancel_step(data)
 
     logger.info("Admin resolution WebSocket handlers registered")

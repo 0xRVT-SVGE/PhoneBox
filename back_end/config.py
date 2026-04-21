@@ -198,6 +198,11 @@ class TrackerConfig:
     STAGING_HOLD_TIME = 1.5   # seconds
     EMIT_INTERVAL     = 0.5   # seconds between tracking_update events
 
+    # ── Debug / display ───────────────────────────────────
+    # Set True to draw the phone bounding box on the top-camera feed.
+    # Useful during development; can be disabled in production.
+    DRAW_TRACKING_BOX = True
+
 
 # ============================================================
 # MOTION DETECTION  (frame-diff used inside PhoneTracker)
@@ -297,6 +302,11 @@ class AlarmConfig:
     #
     # Set conservatively above noise but below the smallest real change.
     SLOT_CHANGE_THRESHOLD = 0.07
+
+    # Minimum seconds between saving alarm clips for the same (pid, lid).
+    # Prevents the background encoder from being flooded when multiple
+    # alarm triggers fire in rapid succession for the same slot.
+    CLIP_DEBOUNCE_S = 30.0
 
 
 # ============================================================
