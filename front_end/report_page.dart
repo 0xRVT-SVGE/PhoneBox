@@ -38,9 +38,9 @@ class _ReportPageState extends State<ReportPage> {
   TimeOfDay _fromTime = const TimeOfDay(hour: 0, minute: 0);
   TimeOfDay _toTime   = const TimeOfDay(hour: 23, minute: 59);
 
-  bool       _stressEnabled = false;
-  TimeOfDay  _stressStart   = const TimeOfDay(hour: 8,  minute: 0);
-  TimeOfDay  _stressEnd     = const TimeOfDay(hour: 18, minute: 0);
+  bool _stressEnabled = false;
+  TimeOfDay _stressStart = const TimeOfDay(hour: 8,  minute: 0);
+  TimeOfDay _stressEnd   = const TimeOfDay(hour: 18, minute: 0);
 
   bool    _loading  = false;
   String? _errorMsg;
@@ -123,279 +123,274 @@ class _ReportPageState extends State<ReportPage> {
     final doc   = pw.Document();
     final font  = await PdfGoogleFonts.notoSansRegular();
     final fontB = await PdfGoogleFonts.notoSansBold();
-    // Monospace font for PIDs so UUID columns align cleanly.
     final fontM = await PdfGoogleFonts.notoSansRegular();
 
     final sec1 = (data['deposited_and_withdrawn'] as List).cast<Map<String, dynamic>>();
     final sec2 = (data['withdrawn_only']          as List).cast<Map<String, dynamic>>();
     final sec3 = (data['deposited_only']          as List).cast<Map<String, dynamic>>();
 
-    final style      = pw.TextStyle(font: font,  fontSize: 8);
-    final styleMono  = pw.TextStyle(font: fontM, fontSize: 7.5);
-    final styleBold  = pw.TextStyle(font: fontB, fontSize: 8);
-    final styleMonoB = pw.TextStyle(font: fontM, fontSize: 7.5,
-        fontWeight: pw.FontWeight.bold);
+    final style     = pw.TextStyle(font: font,  fontSize: 8);
+    final styleMono = pw.TextStyle(font: fontM, fontSize: 7.5);
+    final styleBold = pw.TextStyle(font: fontB, fontSize: 8);
 
-    // ── Stress check helper ───────────────────────────
+    const cp = pw.EdgeInsets.symmetric(horizontal: 4, vertical: 3);
+
+    // ── Stress helpers ────────────────────────────────
     bool isStressed(String? isoTs) {
       if (!_stressEnabled || isoTs == null) return false;
       final dt = DateTime.tryParse(isoTs)?.toLocal();
       if (dt == null) return false;
-      final minuteOfDay = dt.hour * 60 + dt.minute;
-      final startMin    = _stressStart.hour * 60 + _stressStart.minute;
-      final endMin      = _stressEnd.hour   * 60 + _stressEnd.minute;
-      return minuteOfDay < startMin || minuteOfDay > endMin;
+      final m = dt.hour * 60 + dt.minute;
+      final s = _stressStart.hour * 60 + _stressStart.minute;
+      final e = _stressEnd.hour   * 60 + _stressEnd.minute;
+      return m < s || m > e;
     }
 
     bool rowStressed1(Map r) =>
         isStressed(r['stored_at'] as String?) ||
         isStressed(r['retrieved_at'] as String?);
 
-    PdfColor rowBg(bool stressed) =>
-        stressed ? PdfColor.fromHex('#FFF3CD') : PdfColors.white;
+    // ── Row background: stressed overrides; otherwise alternate per student ──
+    PdfColor rowBg(bool stressed, int group) {
+      if (stressed) return PdfColor.fromHex('#FFF3CD');
+      return group.isOdd ? PdfColors.white : PdfColor.fromInt(0xFFF5F5F5);
+    }
 
-    Map<String, List<Map<String, dynamic>>> byStudent(
-        List<Map<String, dynamic>> records) {
-      final map = <String, List<Map<String, dynamic>>>{};
-      for (final r in records) {
-        map.putIfAbsent(r['sid'] as String, () => []).add(r);
+    // ── Sort records by SID so same-student rows are contiguous ──────────────
+    List<Map<String, dynamic>> sortedBySid(List<Map<String, dynamic>> src) {
+      final s = List<Map<String, dynamic>>.from(src);
+      s.sort((a, b) => (a['sid'] as String).compareTo(b['sid'] as String));
+      return s;
+    }
+
+    // ── Common header row builder ─────────────────────────────────────────────
+    pw.TableRow headerRow(List<String> cols) => pw.TableRow(
+      decoration: const pw.BoxDecoration(color: PdfColor.fromInt(0xFF2C2C2E)),
+      children: cols.map((c) => pw.Padding(
+        padding: cp,
+        child: pw.Text(c,
+            style: pw.TextStyle(font: fontB, fontSize: 8, color: PdfColors.white)),
+      )).toList(),
+    );
+
+    // ── Student cell text (only on first row per student) ─────────────────────
+    String studentCell(Map r, bool isFirst) {
+      if (!isFirst) return '';
+      final last  = (r['last_name']  as String? ?? '').toUpperCase();
+      final first =  r['first_name'] as String? ?? '';
+      return '${r['sid']}  $last $first'.trimRight();
+    }
+
+    // ── Timestamp cell ────────────────────────────────────────────────────────
+    pw.Widget tsCell(String? iso) {
+      final stressed = isStressed(iso);
+      return pw.Padding(
+        padding: cp,
+        child: pw.Text(_fmt(iso),
+            style: stressed
+                ? pw.TextStyle(font: fontB, fontSize: 8,
+                    color: PdfColor.fromHex('#E65100'))
+                : style),
+      );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // TABLE 1 — Deposited AND Withdrawn
+    // Columns: Student | PID | Model | Deposited | Withdrawn
+    // ─────────────────────────────────────────────────────────────────────────
+    pw.Widget table1(List<Map<String, dynamic>> records) {
+      final sorted = sortedBySid(records);
+      final rows   = <pw.TableRow>[
+        headerRow(['Student', 'PID', 'Model', 'Deposited', 'Withdrawn']),
+      ];
+
+      String? prevSid;
+      int grp = 0;
+      for (int i = 0; i < sorted.length; i++) {
+        final r   = sorted[i];
+        final sid = r['sid'] as String;
+        if (sid != prevSid) { grp++; prevSid = sid; }
+
+        final isFirst = i == 0 || sorted[i - 1]['sid'] != sid;
+        final bg      = rowBg(rowStressed1(r), grp);
+        final pid     = r['pid'] as String;
+
+        rows.add(pw.TableRow(
+          decoration: pw.BoxDecoration(color: bg),
+          children: [
+            pw.Padding(padding: cp,
+                child: pw.Text(studentCell(r, isFirst), style: style)),
+            pw.Padding(padding: cp,
+                child: pw.Text(pid, style: styleMono)),
+            pw.Padding(padding: cp,
+                child: pw.Text(r['model'] as String? ?? '?', style: style)),
+            tsCell(r['stored_at']    as String?),
+            tsCell(r['retrieved_at'] as String?),
+          ],
+        ));
       }
-      return Map.fromEntries(
-          map.entries.toList()..sort((a, b) => a.key.compareTo(b.key)));
-    }
 
-    String studentLabel(List<Map<String, dynamic>> rows) {
-      final r     = rows.first;
-      final last  = (r['last_name']  as String).toUpperCase();
-      final first =  r['first_name'] as String;
-      return '${r['sid']} — $last $first';
-    }
-
-    const cp = pw.EdgeInsets.symmetric(horizontal: 4, vertical: 3);
-
-    // ── Table builders ────────────────────────────────
-    // PID column is wider to fit the full 36-char UUID.
-
-    pw.Widget table1(List<Map<String, dynamic>> rows) {
       return pw.Table(
         border: pw.TableBorder.all(color: PdfColors.grey400, width: 0.5),
         columnWidths: const {
-          0: pw.FlexColumnWidth(3.8),   // PID (full UUID)
-          1: pw.FlexColumnWidth(2.0),   // Model
-          2: pw.FlexColumnWidth(2.2),   // Deposited
-          3: pw.FlexColumnWidth(2.2),   // Withdrawn
+          0: pw.FlexColumnWidth(2.1),   // Student
+          1: pw.FlexColumnWidth(3.6),   // PID (UUID)
+          2: pw.FlexColumnWidth(1.9),   // Model
+          3: pw.FlexColumnWidth(2.0),   // Deposited
+          4: pw.FlexColumnWidth(2.0),   // Withdrawn
         },
-        children: [
-          pw.TableRow(
-            decoration: const pw.BoxDecoration(
-                color: PdfColor.fromInt(0xFF2C2C2E)),
-            children: [
-              pw.Padding(padding: cp, child: pw.Text('PID',
-                  style: pw.TextStyle(font: fontB, fontSize: 8,
-                      color: PdfColors.white))),
-              pw.Padding(padding: cp, child: pw.Text('Model',
-                  style: pw.TextStyle(font: fontB, fontSize: 8,
-                      color: PdfColors.white))),
-              pw.Padding(padding: cp, child: pw.Text('Deposited',
-                  style: pw.TextStyle(font: fontB, fontSize: 8,
-                      color: PdfColors.white))),
-              pw.Padding(padding: cp, child: pw.Text('Withdrawn',
-                  style: pw.TextStyle(font: fontB, fontSize: 8,
-                      color: PdfColors.white))),
-            ],
-          ),
-          ...rows.map((r) {
-            final pid          = r['pid'] as String;
-            final bg           = rowBg(rowStressed1(r));
-            final stressedDep  = isStressed(r['stored_at']    as String?);
-            final stressedWdw  = isStressed(r['retrieved_at'] as String?);
-            return pw.TableRow(
-              decoration: pw.BoxDecoration(color: bg),
-              children: [
-                pw.Padding(padding: cp,
-                    child: pw.Text(pid, style: styleMono)),
-                pw.Padding(padding: cp,
-                    child: pw.Text(r['model'] as String? ?? '?',
-                        style: style)),
-                pw.Padding(padding: cp,
-                    child: pw.Text(_fmt(r['stored_at'] as String?),
-                        style: stressedDep
-                            ? pw.TextStyle(font: fontB, fontSize: 8,
-                                color: PdfColor.fromHex('#E65100'))
-                            : style)),
-                pw.Padding(padding: cp,
-                    child: pw.Text(_fmt(r['retrieved_at'] as String?),
-                        style: stressedWdw
-                            ? pw.TextStyle(font: fontB, fontSize: 8,
-                                color: PdfColor.fromHex('#E65100'))
-                            : style)),
-              ],
-            );
-          }),
-        ],
+        children: rows,
       );
     }
 
-    pw.Widget table2(List<Map<String, dynamic>> rows) {
+    // ─────────────────────────────────────────────────────────────────────────
+    // TABLE 2 — Withdrawn only
+    // Columns: Student | PID | Model | Withdrawn
+    // ─────────────────────────────────────────────────────────────────────────
+    pw.Widget table2(List<Map<String, dynamic>> records) {
+      final sorted = sortedBySid(records);
+      final rows   = <pw.TableRow>[
+        headerRow(['Student', 'PID', 'Model', 'Withdrawn']),
+      ];
+
+      String? prevSid;
+      int grp = 0;
+      for (int i = 0; i < sorted.length; i++) {
+        final r   = sorted[i];
+        final sid = r['sid'] as String;
+        if (sid != prevSid) { grp++; prevSid = sid; }
+
+        final isFirst = i == 0 || sorted[i - 1]['sid'] != sid;
+        final bg      = rowBg(isStressed(r['retrieved_at'] as String?), grp);
+        final pid     = r['pid'] as String;
+
+        rows.add(pw.TableRow(
+          decoration: pw.BoxDecoration(color: bg),
+          children: [
+            pw.Padding(padding: cp,
+                child: pw.Text(studentCell(r, isFirst), style: style)),
+            pw.Padding(padding: cp,
+                child: pw.Text(pid, style: styleMono)),
+            pw.Padding(padding: cp,
+                child: pw.Text(r['model'] as String? ?? '?', style: style)),
+            tsCell(r['retrieved_at'] as String?),
+          ],
+        ));
+      }
+
       return pw.Table(
         border: pw.TableBorder.all(color: PdfColors.grey400, width: 0.5),
         columnWidths: const {
-          0: pw.FlexColumnWidth(2.62),
-          1: pw.FlexColumnWidth(2.2),
-          2: pw.FlexColumnWidth(2.2),
+          0: pw.FlexColumnWidth(2.2),   // Student
+          1: pw.FlexColumnWidth(3.6),   // PID
+          2: pw.FlexColumnWidth(2.2),   // Model
+          3: pw.FlexColumnWidth(2.5),   // Withdrawn
         },
-        children: [
-          pw.TableRow(
-            decoration: const pw.BoxDecoration(
-                color: PdfColor.fromInt(0xFF2C2C2E)),
-            children: [
-              pw.Padding(padding: cp, child: pw.Text('PID',
-                  style: pw.TextStyle(font: fontB, fontSize: 8,
-                      color: PdfColors.white))),
-              pw.Padding(padding: cp, child: pw.Text('Model',
-                  style: pw.TextStyle(font: fontB, fontSize: 8,
-                      color: PdfColors.white))),
-              pw.Padding(padding: cp, child: pw.Text('Withdrawn',
-                  style: pw.TextStyle(font: fontB, fontSize: 8,
-                      color: PdfColors.white))),
-            ],
-          ),
-          ...rows.map((r) {
-            final pid = r['pid'] as String;
-            final bg  = rowBg(isStressed(r['retrieved_at'] as String?));
-            return pw.TableRow(
-              decoration: pw.BoxDecoration(color: bg),
-              children: [
-                pw.Padding(padding: cp, child: pw.Text(pid, style: styleMono)),
-                pw.Padding(padding: cp, child: pw.Text(
-                    r['model'] as String? ?? '?', style: style)),
-                pw.Padding(padding: cp, child: pw.Text(
-                    _fmt(r['retrieved_at'] as String?),
-                    style: isStressed(r['retrieved_at'] as String?)
-                        ? pw.TextStyle(font: fontB, fontSize: 8,
-                            color: PdfColor.fromHex('#E65100'))
-                        : style)),
-              ],
-            );
-          }),
-        ],
+        children: rows,
       );
     }
 
-    pw.Widget table3(List<Map<String, dynamic>> rows) {
+    // ─────────────────────────────────────────────────────────────────────────
+    // TABLE 3 — Deposited only
+    // Columns: Student | PID | Model | Deposited
+    // ─────────────────────────────────────────────────────────────────────────
+    pw.Widget table3(List<Map<String, dynamic>> records) {
+      final sorted = sortedBySid(records);
+      final rows   = <pw.TableRow>[
+        headerRow(['Student', 'PID', 'Model', 'Deposited']),
+      ];
+
+      String? prevSid;
+      int grp = 0;
+      for (int i = 0; i < sorted.length; i++) {
+        final r   = sorted[i];
+        final sid = r['sid'] as String;
+        if (sid != prevSid) { grp++; prevSid = sid; }
+
+        final isFirst = i == 0 || sorted[i - 1]['sid'] != sid;
+        final bg      = rowBg(isStressed(r['stored_at'] as String?), grp);
+        final pid     = r['pid'] as String;
+
+        rows.add(pw.TableRow(
+          decoration: pw.BoxDecoration(color: bg),
+          children: [
+            pw.Padding(padding: cp,
+                child: pw.Text(studentCell(r, isFirst), style: style)),
+            pw.Padding(padding: cp,
+                child: pw.Text(pid, style: styleMono)),
+            pw.Padding(padding: cp,
+                child: pw.Text(r['model'] as String? ?? '?', style: style)),
+            tsCell(r['stored_at'] as String?),
+          ],
+        ));
+      }
+
       return pw.Table(
         border: pw.TableBorder.all(color: PdfColors.grey400, width: 0.5),
         columnWidths: const {
-          0: pw.FlexColumnWidth(2.62),
-          1: pw.FlexColumnWidth(2.2),
-          2: pw.FlexColumnWidth(2.2),
+          0: pw.FlexColumnWidth(2.2),   // Student
+          1: pw.FlexColumnWidth(3.6),   // PID
+          2: pw.FlexColumnWidth(2.2),   // Model
+          3: pw.FlexColumnWidth(2.5),   // Deposited
         },
-        children: [
-          pw.TableRow(
-            decoration: const pw.BoxDecoration(
-                color: PdfColor.fromInt(0xFF2C2C2E)),
-            children: [
-              pw.Padding(padding: cp, child: pw.Text('PID',
-                  style: pw.TextStyle(font: fontB, fontSize: 8,
-                      color: PdfColors.white))),
-              pw.Padding(padding: cp, child: pw.Text('Model',
-                  style: pw.TextStyle(font: fontB, fontSize: 8,
-                      color: PdfColors.white))),
-              pw.Padding(padding: cp, child: pw.Text('Deposited',
-                  style: pw.TextStyle(font: fontB, fontSize: 8,
-                      color: PdfColors.white))),
-            ],
-          ),
-          ...rows.map((r) {
-            final pid = r['pid'] as String;
-            final bg  = rowBg(isStressed(r['stored_at'] as String?));
-            return pw.TableRow(
-              decoration: pw.BoxDecoration(color: bg),
-              children: [
-                pw.Padding(padding: cp, child: pw.Text(pid, style: styleMono)),
-                pw.Padding(padding: cp, child: pw.Text(
-                    r['model'] as String? ?? '?', style: style)),
-                pw.Padding(padding: cp, child: pw.Text(
-                    _fmt(r['stored_at'] as String?),
-                    style: isStressed(r['stored_at'] as String?)
-                        ? pw.TextStyle(font: fontB, fontSize: 8,
-                            color: PdfColor.fromHex('#E65100'))
-                        : style)),
-              ],
-            );
-          }),
-        ],
+        children: rows,
       );
     }
 
-    // ── Section widget ────────────────────────────────
+    // ── Section wrapper (one call per section, no per-student sub-headers) ───
     pw.Widget buildSection(
       String title,
       String subtitle,
       List<Map<String, dynamic>> records,
       pw.Widget Function(List<Map<String, dynamic>>) tableBuilder,
     ) {
-      final grouped  = byStudent(records);
-      final children = <pw.Widget>[
-        pw.Container(
-          color:   PdfColor.fromHex('#1C1C1E'),
-          padding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-          child: pw.Row(
-            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-            children: [
-              pw.Text(title,
-                  style: pw.TextStyle(font: fontB, fontSize: 11,
-                      color: PdfColors.white)),
-              pw.Text(subtitle,
-                  style: pw.TextStyle(font: font, fontSize: 8.5,
-                      color: PdfColors.grey300)),
-            ],
-          ),
-        ),
-        pw.SizedBox(height: 6),
-      ];
-
-      if (records.isEmpty) {
-        children.add(pw.Padding(
-          padding: const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-          child: pw.Text('No entries in this category.',
-              style: pw.TextStyle(font: font, fontSize: 8,
-                  color: PdfColors.grey600)),
-        ));
-      } else {
-        for (final entry in grouped.entries) {
-          final rows  = entry.value;
-          final label = studentLabel(rows);
-          children.addAll([
-            pw.Container(
-              padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-              decoration: pw.BoxDecoration(
-                color:  PdfColor.fromHex('#F0F0F0'),
-                border: pw.Border.all(color: PdfColors.grey400, width: 0.5),
-              ),
-              child: pw.Text(label, style: styleBold),
-            ),
-            tableBuilder(rows),
-            pw.SizedBox(height: 8),
-          ]);
-        }
-      }
-
-      children.addAll([
-        pw.Divider(color: PdfColors.grey400, thickness: 0.5),
-        pw.Padding(
-          padding: const pw.EdgeInsets.only(top: 2, bottom: 8),
-          child: pw.Text('Total entries: ${records.length}',
-              style: styleBold),
-        ),
-      ]);
-
       return pw.Column(
-          crossAxisAlignment: pw.CrossAxisAlignment.stretch,
-          children: children);
+        crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+        children: [
+          pw.Container(
+            color: PdfColor.fromHex('#1C1C1E'),
+            padding:
+                const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+            child: pw.Row(
+              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+              children: [
+                pw.Text(title,
+                    style: pw.TextStyle(
+                        font: fontB,
+                        fontSize: 11,
+                        color: PdfColors.white)),
+                pw.Text(subtitle,
+                    style: pw.TextStyle(
+                        font: font,
+                        fontSize: 8.5,
+                        color: PdfColors.grey300)),
+              ],
+            ),
+          ),
+          pw.SizedBox(height: 6),
+          records.isEmpty
+              ? pw.Padding(
+                  padding: const pw.EdgeInsets.symmetric(
+                      horizontal: 4, vertical: 8),
+                  child: pw.Text('No entries in this category.',
+                      style: pw.TextStyle(
+                          font: font,
+                          fontSize: 8,
+                          color: PdfColors.grey600)),
+                )
+              : tableBuilder(records),
+          pw.SizedBox(height: 4),
+          pw.Divider(color: PdfColors.grey400, thickness: 0.5),
+          pw.Padding(
+            padding: const pw.EdgeInsets.only(top: 2, bottom: 8),
+            child: pw.Text('Total entries: ${records.length}',
+                style: styleBold),
+          ),
+        ],
+      );
     }
 
-    // ── Page header ───────────────────────────────────
+    // ── Page header ───────────────────────────────────────────────────────────
     pw.Widget pageHeader() => pw.Column(
           crossAxisAlignment: pw.CrossAxisAlignment.stretch,
           children: [
@@ -403,9 +398,13 @@ class _ReportPageState extends State<ReportPage> {
               mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
               children: [
                 pw.Text('PHONE ACTIVITY REPORT',
-                    style: pw.TextStyle(font: fontB, fontSize: 14)),
-                pw.Text('Generated: ${_hdrFmt.format(DateTime.now())}',
-                    style: pw.TextStyle(font: font, fontSize: 8.5,
+                    style:
+                        pw.TextStyle(font: fontB, fontSize: 14)),
+                pw.Text(
+                    'Generated: ${_hdrFmt.format(DateTime.now())}',
+                    style: pw.TextStyle(
+                        font: font,
+                        fontSize: 8.5,
                         color: PdfColors.grey600)),
               ],
             ),
@@ -417,15 +416,19 @@ class _ReportPageState extends State<ReportPage> {
               pw.SizedBox(height: 2),
               pw.RichText(
                 text: pw.TextSpan(children: [
-                  pw.TextSpan(text: 'Normal hours: ',
+                  pw.TextSpan(
+                      text: 'Normal hours: ',
                       style: pw.TextStyle(font: font, fontSize: 9)),
                   pw.TextSpan(
-                      text: '${_stressStart.format(context)}  →  '
-                            '${_stressEnd.format(context)}',
+                      text: '${_stressStart.format(context)}'
+                            '  →  ${_stressEnd.format(context)}',
                       style: pw.TextStyle(font: fontB, fontSize: 9)),
                   pw.TextSpan(
-                      text: '   ■ Bold orange = outside normal hours',
-                      style: pw.TextStyle(font: font, fontSize: 8.5,
+                      text:
+                          '   ■ Bold orange = outside normal hours',
+                      style: pw.TextStyle(
+                          font: font,
+                          fontSize: 8.5,
                           color: PdfColor.fromHex('#E65100'))),
                 ]),
               ),
@@ -436,31 +439,38 @@ class _ReportPageState extends State<ReportPage> {
           ],
         );
 
-    // ── Assemble ──────────────────────────────────────
-    final allContent = <pw.Widget>[
-      pageHeader(),
-      buildSection('1.  DEPOSITED AND WITHDRAWN',
-          'Both operations within the interval', sec1, table1),
-      pw.SizedBox(height: 12),
-      buildSection('2.  WITHDRAWN WITHOUT DEPOSIT',
-          'Withdrawal in interval — deposit outside or prior', sec2, table2),
-      pw.SizedBox(height: 12),
-      buildSection('3.  DEPOSITED WITHOUT WITHDRAWAL',
-          'Deposit in interval — phone still stored or retrieved later',
-          sec3, table3),
-    ];
-
+    // ── Assemble document ─────────────────────────────────────────────────────
     doc.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
-        margin: const pw.EdgeInsets.all(28),
+        margin:     const pw.EdgeInsets.all(28),
         footer: (ctx) => pw.Align(
           alignment: pw.Alignment.centerRight,
-          child: pw.Text('Page ${ctx.pageNumber} / ${ctx.pagesCount}',
-              style: pw.TextStyle(font: font, fontSize: 8,
-                  color: PdfColors.grey500)),
+          child: pw.Text(
+              'Page ${ctx.pageNumber} / ${ctx.pagesCount}',
+              style: pw.TextStyle(
+                  font: font, fontSize: 8, color: PdfColors.grey500)),
         ),
-        build: (_) => allContent,
+        build: (_) => [
+          pageHeader(),
+          buildSection(
+            '1.  DEPOSITED AND WITHDRAWN',
+            'Both operations within the interval',
+            sec1, table1,
+          ),
+          pw.SizedBox(height: 12),
+          buildSection(
+            '2.  WITHDRAWN WITHOUT DEPOSIT',
+            'Withdrawal in interval — deposit outside or prior',
+            sec2, table2,
+          ),
+          pw.SizedBox(height: 12),
+          buildSection(
+            '3.  DEPOSITED WITHOUT WITHDRAWAL',
+            'Deposit in interval — phone still stored or retrieved later',
+            sec3, table3,
+          ),
+        ],
       ),
     );
 
@@ -468,7 +478,7 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   // ══════════════════════════════════════════════════════
-  // UI  (unchanged from original except _baseUrl usage)
+  // UI
   // ══════════════════════════════════════════════════════
 
   @override
@@ -501,7 +511,8 @@ class _ReportPageState extends State<ReportPage> {
                     onTap: () => _pickDate(true),
                   )),
                   const SizedBox(width: 10),
-                  _timeTile(label: _fromTime.format(context),
+                  _timeTile(
+                      label: _fromTime.format(context),
                       onTap: () => _pickTime(true)),
                 ]),
                 const SizedBox(height: 12),
@@ -514,7 +525,8 @@ class _ReportPageState extends State<ReportPage> {
                     onTap: () => _pickDate(false),
                   )),
                   const SizedBox(width: 10),
-                  _timeTile(label: _toTime.format(context),
+                  _timeTile(
+                      label: _toTime.format(context),
                       onTap: () => _pickTime(false)),
                 ]),
                 const SizedBox(height: 10),
@@ -522,7 +534,7 @@ class _ReportPageState extends State<ReportPage> {
                   padding: const EdgeInsets.symmetric(
                       horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
-                    color:  Colors.blue.withOpacity(0.1),
+                    color: Colors.blue.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(8),
                     border: Border.all(
                         color: Colors.blue.withOpacity(0.3)),
@@ -550,15 +562,16 @@ class _ReportPageState extends State<ReportPage> {
                     Switch(
                       value:       _stressEnabled,
                       activeColor: Colors.orange,
-                      onChanged:   (v) => setState(() => _stressEnabled = v),
+                      onChanged:   (v) =>
+                          setState(() => _stressEnabled = v),
                     ),
                   ],
                 ),
                 const Text(
                   'Highlight operations outside normal working hours '
                   'in the PDF (bold orange text).',
-                  style: TextStyle(color: Colors.white54, fontSize: 12,
-                      height: 1.4),
+                  style: TextStyle(
+                      color: Colors.white54, fontSize: 12, height: 1.4),
                 ),
                 if (_stressEnabled) ...[
                   const SizedBox(height: 14),
@@ -582,7 +595,7 @@ class _ReportPageState extends State<ReportPage> {
                     padding: const EdgeInsets.symmetric(
                         horizontal: 12, vertical: 8),
                     decoration: BoxDecoration(
-                      color:  Colors.orange.withOpacity(0.1),
+                      color: Colors.orange.withOpacity(0.1),
                       borderRadius: BorderRadius.circular(8),
                       border: Border.all(
                           color: Colors.orange.withOpacity(0.3)),
@@ -610,16 +623,18 @@ class _ReportPageState extends State<ReportPage> {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color:  Colors.red.withOpacity(0.15),
+                  color: Colors.red.withOpacity(0.15),
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: Colors.red.withOpacity(0.4)),
+                  border: Border.all(
+                      color: Colors.red.withOpacity(0.4)),
                 ),
                 child: Row(children: [
                   const Icon(Icons.error_outline,
                       color: Colors.redAccent, size: 18),
                   const SizedBox(width: 10),
                   Expanded(child: Text(_errorMsg!,
-                      style: const TextStyle(color: Colors.redAccent))),
+                      style:
+                          const TextStyle(color: Colors.redAccent))),
                 ]),
               ),
               const SizedBox(height: 16),
@@ -632,7 +647,9 @@ class _ReportPageState extends State<ReportPage> {
                       child: CircularProgressIndicator(
                           strokeWidth: 2, color: Colors.white))
                   : const Icon(Icons.picture_as_pdf_outlined),
-              label: Text(_loading ? 'Generating…' : 'Generate & Preview PDF'),
+              label: Text(_loading
+                  ? 'Generating…'
+                  : 'Generate & Preview PDF'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.deepOrangeAccent,
                 foregroundColor: Colors.white,
@@ -668,16 +685,16 @@ class _ReportPageState extends State<ReportPage> {
 
   Widget _sectionLabel(String text) => Text(text,
       style: TextStyle(
-          fontSize:   11,
+          fontSize: 11,
           fontWeight: FontWeight.w700,
-          color:      Colors.white.withOpacity(0.4),
+          color: Colors.white.withOpacity(0.4),
           letterSpacing: 0.9));
 
   Widget _label(String text) => Text(text,
       style: const TextStyle(color: Colors.white70, fontSize: 13));
 
   Widget _dateTile({
-    required String   label,
+    required String label,
     required IconData icon,
     required VoidCallback onTap,
   }) =>
@@ -685,17 +702,20 @@ class _ReportPageState extends State<ReportPage> {
         onTap: onTap,
         borderRadius: BorderRadius.circular(10),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          padding:
+              const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
-            color:  Colors.white.withOpacity(0.05),
+            color: Colors.white.withOpacity(0.05),
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: Colors.white.withOpacity(0.12)),
+            border:
+                Border.all(color: Colors.white.withOpacity(0.12)),
           ),
           child: Row(children: [
             Icon(icon, color: Colors.white54, size: 16),
             const SizedBox(width: 8),
             Text(label,
-                style: const TextStyle(color: Colors.white, fontSize: 14)),
+                style: const TextStyle(
+                    color: Colors.white, fontSize: 14)),
           ]),
         ),
       );
@@ -709,20 +729,23 @@ class _ReportPageState extends State<ReportPage> {
         onTap: onTap,
         borderRadius: BorderRadius.circular(10),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          padding:
+              const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
-            color:  color.withOpacity(0.07),
+            color: color.withOpacity(0.07),
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: color.withOpacity(0.2)),
+            border:
+                Border.all(color: color.withOpacity(0.2)),
           ),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
+          child:
+              Row(mainAxisSize: MainAxisSize.min, children: [
             Icon(Icons.access_time_outlined,
                 color: color.withOpacity(0.7), size: 16),
             const SizedBox(width: 6),
             Text(label,
                 style: TextStyle(
-                    color:      color,
-                    fontSize:   14,
+                    color: color,
+                    fontSize: 14,
                     fontWeight: FontWeight.w500)),
           ]),
         ),

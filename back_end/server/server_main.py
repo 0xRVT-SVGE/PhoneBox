@@ -188,6 +188,21 @@ if __name__ == "__main__":
     threading.Thread(target=scan_worker, daemon=True, name="ScanWorker").start()
     logger.info("Scan worker started")
 
+    # Opt #16: pre-warm DeepFace — loads SFace model in background so first scan
+    # has no cold-start delay (~1-3 s on first DeepFace.represent() call).
+    def _prewarm_deepface():
+         try:
+             import numpy as np
+             from deepface import DeepFace
+             dummy = np.zeros((160, 160, 3), dtype=np.uint8)
+             DeepFace.represent(img_path=dummy, model_name="SFace",
+                                detector_backend="opencv", enforce_detection=False)
+             logger.info("DeepFace model pre-warmed")
+         except Exception as e:
+             logger.warning(f"DeepFace pre-warm failed (non-fatal): {e}")
+
+    threading.Thread(target=_prewarm_deepface, daemon=True, name="DeepFacePrewarm").start()
+
     # 2. WebRTC async loop
     webrtc_handler.start()
 

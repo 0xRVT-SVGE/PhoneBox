@@ -292,7 +292,7 @@ class _ScanPageState extends State<ScanPage> {
                 child: AspectRatio(
                   aspectRatio: 16 / 9,
                   child: _remoteRenderer.srcObject != null
-                      ? RTCVideoView(_remoteRenderer)
+                      ? RepaintBoundary(child: RTCVideoView(_remoteRenderer))
                       : Container(color: Colors.black),
                 ),
               ),

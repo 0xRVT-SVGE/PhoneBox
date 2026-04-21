@@ -33,6 +33,8 @@ _UUID_RE_TRACKER = re.compile(
     re.IGNORECASE,
 )
 _qr_detector_tracker = cv2.QRCodeDetector()
+_orb_descriptor    = cv2.ORB_create(nfeatures=100)
+_orb_reidentifier  = cv2.ORB_create(nfeatures=200)
 
 logger = logging.getLogger(__name__)
 
@@ -348,8 +350,7 @@ def _orb_descriptors(gray, bbox):
     x,y,w,h=(int(v) for v in bbox)
     if w<10 or h<10: return None,None
     roi=gray[y:y+h, x:x+w]
-    orb=cv2.ORB_create(nfeatures=100)
-    kps,descs=orb.detectAndCompute(roi,None)
+    kps, descs = _orb_descriptor.detectAndCompute(roi, None)
     if descs is None or len(descs)<ORB_MIN_MATCHES: return None,None
     for kp in kps: kp.pt=(kp.pt[0]+x, kp.pt[1]+y)
     return kps,descs
@@ -366,8 +367,7 @@ def _orb_reidentify(gray, ref_descs, search_region=None):
         sg=gray[y1:y2, x1:x2]; ox,oy=x1,y1
     else:
         sg=gray; ox,oy=0,0
-    orb=cv2.ORB_create(nfeatures=200)
-    kps,descs=orb.detectAndCompute(sg,None)
+    kps,descs=_orb_reidentifier.detectAndCompute(sg,None)
     if descs is None or len(descs)<ORB_MIN_MATCHES: return None
     bf=cv2.BFMatcher(cv2.NORM_HAMMING,crossCheck=False)
     try: matches=bf.knnMatch(ref_descs,descs,k=2)
@@ -548,19 +548,24 @@ class PhoneTracker:
 
             bx=by=bw=bh=0
             if csrt_ok:
-                ok,raw=csrt.update(frame)
-                if ok:
-                    bx,by,bw,bh=(int(v) for v in raw)
-                    if bx+bw<=0 or bx>=fw or by+bh<=0 or by>=fh:
-                        csrt_ok=False
-                    else:
-                        reinit_count+=1
-                        if prev_gray is not None:
-                            pb=cv2.GaussianBlur(prev_gray,(MOTION_BLUR_K,)*2,0)
-                            cb=cv2.GaussianBlur(curr_gray,(MOTION_BLUR_K,)*2,0)
-                            mo=_motion_bbox(pb,cb)
-                            if mo and _iou((bx,by,bw,bh),mo)>=MOTION_IOU_MERGE:
-                                bx,by,bw,bh=_merge_bbox((bx,by,bw,bh),mo)
+                 ok,raw=csrt.update(frame)
+                 if ok:
+                     bx,by,bw,bh=(int(v) for v in raw)
+                     if bx+bw<=0 or bx>=fw or by+bh<=0 or by>=fh:
+                         csrt_ok=False
+                     else:
+                         reinit_count+=1
+                         # Opt #13: only merge motion every N frames when CSRT is healthy
+                         if prev_gray is not None and frame_count % CSRT_REINIT_INTERVAL == 0:
+                             pb=cv2.GaussianBlur(prev_gray,(MOTION_BLUR_K,)*2,0)
+                             cb=cv2.GaussianBlur(curr_gray,(MOTION_BLUR_K,)*2,0)
+                             mo=_motion_bbox(pb,cb)
+                             if mo and _iou((bx,by,bw,bh),mo)>=MOTION_IOU_MERGE:
+                                 bx,by,bw,bh=_merge_bbox((bx,by,bw,bh),mo)
+
+                # NOTE: reusing CSRT_REINIT_INTERVAL (=12) as the gate keeps it one constant.
+                # If you want a separate knob, add CSRT_MOTION_GATE_N to MotionConfig (Patch A)
+                # and use that variable instead.
                         if reinit_count>=CSRT_REINIT_INTERVAL:
                             # ── compat helper ──
                             csrt=_make_csrt_tracker(); csrt.init(frame,(bx,by,bw,bh))

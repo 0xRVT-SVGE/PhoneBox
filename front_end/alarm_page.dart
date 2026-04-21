@@ -323,8 +323,10 @@ class _AlarmPageState extends State<AlarmPage>
       fit: StackFit.expand,
       children: [
         connected && renderer.srcObject != null
-            ? RTCVideoView(renderer,
-                objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain)
+            ? RepaintBoundary(
+                child: RTCVideoView(renderer,
+                  objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain))
+
             : Container(
                 color: Colors.black,
                 child: Center(

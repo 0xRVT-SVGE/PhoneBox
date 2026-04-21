@@ -215,6 +215,7 @@ class MotionConfig:
     MIN_AREA             = 1500
     IOU_MERGE            = 0.20
     CSRT_REINIT_INTERVAL = 12
+    CSRT_MOTION_GATE_N   = 5   # Opt #13: run motion detect every N frames when CSRT OK
 
 
 # ============================================================
