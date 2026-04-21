@@ -1,10 +1,14 @@
-// admin_resolution_page.dart  (changed section only — full file)
+// admin_resolution_page.dart
 //
-// Key change: _noQrButtonTimer delay is now driven by `no_qr_button_delay_s`
-// sent in the `admin_remove_ok` payload, rather than a hardcoded 8 seconds.
-// The server sends AdminConfig.NO_QR_BUTTON_DELAY_S (default 25 s), which is
-// well below the QR scan timeout (90 s), so the button only appears when the
-// QR genuinely cannot be found.
+// Key additions:
+//   • _cameraIdleTimer  — fires after _kCameraIdleTimeout (60 s) of no phone
+//     being actively handled. On expiry the top-cam connection is closed to
+//     free server resources if the admin is AFK between phones.
+//   • _cancelCameraIdle() / _scheduleCameraIdle() — helpers called at the
+//     right moments (phone selected → cancel; phone placed/failed → schedule).
+//   • _ensureCameraConnected() — reconnects immediately when a phone is
+//     selected after an idle disconnect so the feed is ready before the
+//     "pick it up" step even starts.
 //
 // All other logic is unchanged.
 
@@ -83,10 +87,14 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
 
   bool   _noQrButtonVisible = false;
   Timer? _noQrButtonTimer;
-  // Delay in seconds before "No QR on this object" appears.
-  // Populated from the server's admin_remove_ok payload so it stays in sync
-  // with AdminConfig.NO_QR_BUTTON_DELAY_S without requiring a client rebuild.
   int _noQrButtonDelayS = 25;
+
+  // ── Idle camera timer ─────────────────────────────────
+  // When no phone is being actively handled for this long, the top-camera
+  // WebRTC session is closed to free server resources. It reconnects
+  // immediately when the admin selects the next phone.
+  static const Duration _kCameraIdleTimeout = Duration(seconds: 60);
+  Timer? _cameraIdleTimer;
 
   late AnimationController _cardAnim;
   late Animation<Offset>   _cardSlide;
@@ -96,6 +104,44 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
   bool _videoConnected  = false;
   bool _disposed        = false;
   bool _isReconnecting  = false;
+
+  // ── Idle timer helpers ────────────────────────────────
+
+  /// Start (or restart) the idle countdown. Called after a phone is
+  /// resolved, placed, failed, or staged — whenever the admin's hands
+  /// are empty and no active operation is running.
+  void _scheduleCameraIdle() {
+    _cameraIdleTimer?.cancel();
+    _cameraIdleTimer = Timer(_kCameraIdleTimeout, _onCameraIdleTimeout);
+  }
+
+  /// Cancel the idle countdown. Called whenever the admin selects a phone
+  /// or any operation that requires the camera becomes active.
+  void _cancelCameraIdle() {
+    _cameraIdleTimer?.cancel();
+    _cameraIdleTimer = null;
+  }
+
+  void _onCameraIdleTimeout() {
+    if (_disposed || !mounted) return;
+    // Only disconnect if we're in a genuinely idle state — no phone in hand,
+    // not scanning, not tracking.
+    if (_step == _Step.selectingPhone || _step == _Step.pickingUp) {
+      _pc?.onTrack = null;
+      _pc?.onConnectionState = null;
+      _pc?.close();
+      _pc = null;
+      if (mounted) setState(() => _videoConnected = false);
+    }
+  }
+
+  /// Reconnect if the camera was dropped during an idle period.
+  /// Safe to call multiple times — exits immediately if already connected.
+  void _ensureCameraConnected() {
+    if (!_videoConnected && !_isReconnecting && !_disposed && _pc == null) {
+      _startVideo();
+    }
+  }
 
   // ── Display helpers ───────────────────────────────────
 
@@ -266,7 +312,6 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
         _serverResponded();
         _sessionWasOpened = true;
         _sessionId        = data['session_id'];
-        // Server may send the preferred delay; fall back to 25 s.
         _noQrButtonDelayS =
             (data['no_qr_button_delay_s'] as num?)?.toInt() ?? 25;
         final List raw = data['mismatches'] ?? [];
@@ -301,7 +346,6 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
         _noQrButtonVisible = false;
         _noQrButtonTimer?.cancel();
 
-        // Use delay from server payload; fall back to stored session value.
         final delayS =
             (data['no_qr_button_delay_s'] as num?)?.toInt()
             ?? _noQrButtonDelayS;
@@ -374,9 +418,11 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
         _staged     = List<String>.from(data['staged']    ?? []);
         if (_staged.isNotEmpty) {
           setState(() => _step = _Step.unstageNext);
+          _scheduleCameraIdle(); // phone placed, hands empty → start idle timer
         } else if (_remaining.isEmpty) {
           _socket.adminSessionClose();
         } else {
+          _scheduleCameraIdle(); // will be cancelled when next phone is selected
           _autoSelect();
         }
       },
@@ -386,15 +432,18 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
         _remaining.remove(data['pid'].toString());
         if (_staged.isNotEmpty) {
           setState(() => _step = _Step.unstageNext);
+          _scheduleCameraIdle();
         } else if (_remaining.isEmpty) {
           _socket.adminSessionClose();
         } else {
+          _scheduleCameraIdle();
           _autoSelect();
         }
       },
       onAdminSessionClosed: (data) {
         if (!mounted) return;
         _serverResponded();
+        _cancelCameraIdle();
         _noQrButtonTimer?.cancel();
         _sessionCompleted = true;
         _summary          = data['summary'];
@@ -412,6 +461,7 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
             _step      = _Step.pickingUp;
             _scanError = _trackingFailureMsg(data['reason']?.toString() ?? msg);
           });
+          _scheduleCameraIdle();
           return;
         }
         if (_step == _Step.scanning) {
@@ -422,6 +472,7 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
       },
       onTrackingStarted: (_) {
         if (!mounted) return;
+        _cancelCameraIdle(); // active tracking — keep camera alive
         setState(() { _step = _Step.trackingAdmin; _qrVisible = true; _scanError = null; });
       },
       onTrackingUpdate: (data) {
@@ -432,6 +483,7 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
         if (!mounted) return;
         final reason = data['reason'] as String? ?? '';
         setState(() { _step = _Step.pickingUp; _scanError = _trackingFailureMsg(reason); });
+        _scheduleCameraIdle();
       },
     );
   }
@@ -518,6 +570,13 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
   }
 
   void _selectPhone(String pid) {
+    // Cancel any pending idle disconnect — we're actively working again.
+    _cancelCameraIdle();
+
+    // If camera was disconnected during an idle period, reconnect now so the
+    // feed is ready before the admin even picks up the phone.
+    _ensureCameraConnected();
+
     final lid = _mismatchMap[pid] ?? 0;
     _visitedPids.add(pid);
     setState(() {
@@ -533,6 +592,7 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
 
   void _onPickedUp() {
     if (_currentLid == null) return;
+    _cancelCameraIdle(); // phone in hand — keep camera alive
     _waitForServer();
     _socket.adminRemovePhone(_currentLid!);
   }
@@ -545,6 +605,7 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
 
   void _onUnstageNext() {
     if (_staged.isEmpty) return;
+    _cancelCameraIdle();
     _waitForServer();
     _socket.adminUnstagePhone(_staged.first);
   }
@@ -596,6 +657,7 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
   @override
   void dispose() {
     _disposed = true;
+    _cameraIdleTimer?.cancel();
     _openingTimer?.cancel();
     _serverTimer?.cancel();
     _noQrButtonTimer?.cancel();
@@ -1148,6 +1210,9 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
         _currentPid  = null; _currentLid = null;
         _sameSlot    = false; _scanError  = null;
         _step        = _Step.selectingPhone;
+        // The admin is browsing phones — start idle timer in case they
+        // walk away without selecting one.
+        _scheduleCameraIdle();
       }),
     ),
   );
@@ -1219,6 +1284,7 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
     );
 
     if (confirm != true || !mounted) return;
+    _cancelCameraIdle();
     _waitForServer();
     _socket.adminForceClose(safe: safe);
   }

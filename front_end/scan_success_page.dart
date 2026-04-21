@@ -40,16 +40,86 @@ class _ScanSuccessPageState extends State<ScanSuccessPage> {
   bool _loading = true;
   List<dynamic> _phones = [];
 
+  // ── Top-camera pre-connection ─────────────────────────
+  // Initialised eagerly so DVWBottomSheet can use the warm connection.
+  final _topRenderer    = RTCVideoRenderer();
+  RTCPeerConnection?    _topPc;
+  final _topConnected   = ValueNotifier<bool>(false);
+  bool _topConnecting   = false;
+  bool _topPageDisposed = false;
+
   @override
   void initState() {
     super.initState();
     _loadPhones();
+    _topRenderer.initialize().then((_) {
+      if (!_topPageDisposed) _preconnectTopCamera();
+    });
   }
 
   @override
   void dispose() {
+    _topPageDisposed = true;
+    _topPc?.onTrack = null;
+    _topPc?.onConnectionState = null;
+    _topPc?.close();
+    _topPc = null;
+    _topRenderer.srcObject = null;
+    _topRenderer.dispose();
+    _topConnected.dispose();
     _socketService.clearDvwCallbacks();
     super.dispose();
+  }
+
+  // Pre-connect the top (admin) camera in the background as soon as the
+  // page loads, so there is no visible lag when the user opens DVWBottomSheet.
+  Future<void> _preconnectTopCamera() async {
+    if (_topConnecting || _topConnected.value || _topPageDisposed) return;
+    _topConnecting = true;
+    try {
+      await ApiService.cancelAdmin();
+      _topPc = await createPeerConnection({
+        'iceServers': [{'urls': 'stun:stun.l.google.com:19302'}],
+      });
+      _topPc!.onTrack = (event) {
+        if (_topPageDisposed || !mounted) return;
+        if (event.streams.isNotEmpty) {
+          _topRenderer.srcObject = event.streams[0];
+          _topConnected.value = true;
+        }
+      };
+      _topPc!.onConnectionState = (state) async {
+        if (_topPageDisposed) return;
+        if (state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
+            state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
+          _topConnected.value = false;
+          await _topPc?.close();
+          _topPc = null;
+          await Future.delayed(const Duration(seconds: 3));
+          if (!_topPageDisposed) {
+            _topRenderer.srcObject = null;
+            _topConnecting = false;
+            _preconnectTopCamera();
+          }
+        }
+      };
+      final offer = await _topPc!.createOffer({
+        'offerToReceiveVideo': true,
+        'offerToReceiveAudio': false,
+      });
+      await _topPc!.setLocalDescription(offer);
+      final sdp = await ApiService.sendOffer(
+        offer.sdp!, mode: 'admin', maxRetries: 2,
+      );
+      if (sdp != null && !_topPageDisposed) {
+        await _topPc!.setRemoteDescription(RTCSessionDescription(sdp, 'answer'));
+      }
+    } catch (_) {
+      // Connection attempt failed silently; DVWBottomSheet will fall back to
+      // its own connection path if _topConnected.value remains false.
+    } finally {
+      _topConnecting = false;
+    }
   }
 
   Future<void> _loadPhones() async {
@@ -81,6 +151,10 @@ class _ScanSuccessPageState extends State<ScanSuccessPage> {
         isDeposit: isDeposit,
         socketService: _socketService,
         onComplete: _loadPhones,
+        // Pass the pre-connected renderer so the sheet shows the camera
+        // feed immediately without an extra WebRTC handshake.
+        sharedTopRenderer: _topRenderer,
+        topConnectedNotifier: _topConnected,
       ),
     );
   }
@@ -191,12 +265,24 @@ class DVWBottomSheet extends StatefulWidget {
   final SocketService socketService;
   final VoidCallback onComplete;
 
+  /// Optional pre-connected renderer from a parent page (e.g. ScanSuccessPage,
+  /// StudentPhonesPage). When provided the sheet skips its own WebRTC
+  /// handshake and immediately displays the already-live stream.
+  final RTCVideoRenderer? sharedTopRenderer;
+
+  /// Notifier owned by the parent that tracks whether [sharedTopRenderer]
+  /// is currently receiving video. The sheet subscribes to this so it can
+  /// hide the "Connecting…" spinner as soon as the parent's stream is live.
+  final ValueNotifier<bool>? topConnectedNotifier;
+
   const DVWBottomSheet({
     super.key,
     required this.pid,
     required this.isDeposit,
     required this.socketService,
     required this.onComplete,
+    this.sharedTopRenderer,
+    this.topConnectedNotifier,
   });
 
   @override
@@ -214,34 +300,67 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
   int    _successCountdown = 2;
 
   // ── Top-down camera ───────────────────────────────────
-  final RTCVideoRenderer _topRenderer = RTCVideoRenderer();
-  RTCPeerConnection?     _topPc;
+  // When a sharedTopRenderer is provided, this sheet is a "guest":
+  //   - it reads the renderer but never disposes it
+  //   - it does not create its own PC
+  //   - it does not call ApiService.cancelAdmin() on dispose
+  // When no shared renderer is provided this sheet owns its own renderer
+  // and PC (original behaviour).
+  late final RTCVideoRenderer _topRenderer;
+  bool _ownsTopRenderer = false;
+
+  RTCPeerConnection? _topPc;
   bool _topConnected  = false;
   bool _topConnecting = false;
   bool _disposed      = false;
+  bool _isReconnecting = false;
 
   @override
   void initState() {
     super.initState();
-    _topRenderer.initialize();
+
+    if (widget.sharedTopRenderer != null) {
+      // Guest mode: use the parent's renderer without initialising it again.
+      _topRenderer = widget.sharedTopRenderer!;
+      _ownsTopRenderer = false;
+      // Seed the connected flag from the notifier or the renderer's srcObject.
+      _topConnected = widget.topConnectedNotifier?.value
+          ?? (_topRenderer.srcObject != null);
+      widget.topConnectedNotifier?.addListener(_onParentConnectionChanged);
+    } else {
+      // Owner mode: create and initialise our own renderer.
+      _topRenderer = RTCVideoRenderer();
+      _ownsTopRenderer = true;
+      _topRenderer.initialize();
+    }
+
     _registerCallbacks();
+  }
+
+  void _onParentConnectionChanged() {
+    if (!mounted) return;
+    setState(() => _topConnected = widget.topConnectedNotifier!.value);
   }
 
   @override
   void dispose() {
     _disposed = true;
     _successTimer?.cancel();
+    widget.topConnectedNotifier?.removeListener(_onParentConnectionChanged);
     _disconnectTopCamera();
-    _topRenderer.dispose();
+    if (_ownsTopRenderer) {
+      _topRenderer.dispose();
+    }
     widget.socketService.clearDvwCallbacks();
     super.dispose();
   }
 
   // ── Top camera connection ─────────────────────────────
-  // Pre-connect as soon as the server confirms the slot (autoScanning state)
-  // so the feed is ready when tracking starts.
 
   Future<void> _connectTopCamera() async {
+    // Guest mode: the parent already manages the connection; nothing to do.
+    if (!_ownsTopRenderer) return;
+
     if (_topConnecting || _topConnected || _disposed) return;
     _topConnecting = true;
     try {
@@ -281,14 +400,20 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
   }
 
   void _disconnectTopCamera() {
-    _topPc?.onTrack           = null;
+    // Always clean up any PC this sheet created.
+    _topPc?.onTrack = null;
     _topPc?.onConnectionState = null;
     _topPc?.close();
     _topPc = null;
-    _topRenderer.srcObject = null;
-    _topConnected  = false;
-    _topConnecting = false;
-    ApiService.cancelAdmin();
+
+    if (_ownsTopRenderer) {
+      // Only touch the renderer and cancel the server connection when we
+      // own the renderer. In guest mode the parent is still using them.
+      _topRenderer.srcObject = null;
+      _topConnected  = false;
+      _topConnecting = false;
+      ApiService.cancelAdmin();
+    }
   }
 
   // ── Success auto-close ────────────────────────────────
@@ -316,8 +441,7 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
           _slot = data['slot'] as int? ?? ((data['lid'] as int? ?? 0) + 1);
           _step = DvwStep.autoScanning;
         });
-        // Pre-connect top camera NOW while QR is being scanned (~5-15 s).
-        // By the time tracking starts the ICE negotiation will be complete.
+        // In guest mode the camera is already warm; in owner mode start it now.
         _connectTopCamera();
       },
       onWithdrawWaiting: (data) {
@@ -326,7 +450,6 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
           _slot = data['slot'] as int? ?? ((data['lid'] as int? ?? 0) + 1);
           _step = DvwStep.autoScanning;
         });
-        // Same pre-connect optimization for withdraw.
         _connectTopCamera();
       },
       onDepositResult:  (data) => _handleResult(data as Map),
@@ -348,7 +471,6 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
           _step      = DvwStep.tracking;
           _qrVisible = true;
         });
-        // Connection was already started in autoScanning — no-op if connected.
         _connectTopCamera();
       },
       onTrackingUpdate: (data) {
@@ -406,8 +528,6 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
   @override
   Widget build(BuildContext context) {
     final screenH    = MediaQuery.of(context).size.height;
-    // Show camera during tracking AND autoScanning (pre-connect warms up,
-    // showing a connecting indicator is better than nothing).
     final showCamera = _step == DvwStep.tracking || _step == DvwStep.autoScanning;
 
     return Container(
@@ -422,18 +542,17 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
         mainAxisSize: MainAxisSize.min,
         children: [
           // Drag handle
-          // CORRECT — three levels, three closing lines
-        Padding(
-          padding: const EdgeInsets.only(top: 10, bottom: 4),
-          child: const SizedBox(
-            width: 36, height: 4,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                  color: Colors.white24,
-                  borderRadius: BorderRadius.all(Radius.circular(2))),
-            ),        // ← closes DecoratedBox
-          ),          // ← closes SizedBox
-        ),            // ← closes Padding
+          Padding(
+            padding: const EdgeInsets.only(top: 10, bottom: 4),
+            child: const SizedBox(
+              width: 36, height: 4,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                    color: Colors.white24,
+                    borderRadius: BorderRadius.all(Radius.circular(2))),
+              ),
+            ),
+          ),
 
           // ── Top-down camera (during autoScanning + tracking) ────
           if (showCamera)

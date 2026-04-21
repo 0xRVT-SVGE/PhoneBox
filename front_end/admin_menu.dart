@@ -282,7 +282,7 @@ class _StudentCard extends StatelessWidget {
 }
 
 // ══════════════════════════════════════════════════════════
-// STUDENT PHONES PAGE — with DVW + top camera
+// STUDENT PHONES PAGE — with DVW + top camera pre-connection
 // ══════════════════════════════════════════════════════════
 
 class StudentPhonesPage extends StatefulWidget {
@@ -298,16 +298,84 @@ class _StudentPhonesPageState extends State<StudentPhonesPage> {
   List<dynamic> _phones = [];
   bool _loading = true;
 
+  // ── Top-camera pre-connection ─────────────────────────
+  // Mirrors the pattern in ScanSuccessPage so DVWBottomSheet gets the
+  // already-warm stream rather than waiting for a fresh WebRTC handshake.
+  final _topRenderer    = RTCVideoRenderer();
+  RTCPeerConnection?    _topPc;
+  final _topConnected   = ValueNotifier<bool>(false);
+  bool _topConnecting   = false;
+  bool _topPageDisposed = false;
+
   @override
   void initState() {
     super.initState();
     _loadPhones();
+    _topRenderer.initialize().then((_) {
+      if (!_topPageDisposed) _preconnectTopCamera();
+    });
   }
 
   @override
   void dispose() {
+    _topPageDisposed = true;
+    _topPc?.onTrack = null;
+    _topPc?.onConnectionState = null;
+    _topPc?.close();
+    _topPc = null;
+    _topRenderer.srcObject = null;
+    _topRenderer.dispose();
+    _topConnected.dispose();
     _socketService.clearDvwCallbacks();
     super.dispose();
+  }
+
+  Future<void> _preconnectTopCamera() async {
+    if (_topConnecting || _topConnected.value || _topPageDisposed) return;
+    _topConnecting = true;
+    try {
+      await ApiService.cancelAdmin();
+      _topPc = await createPeerConnection({
+        'iceServers': [{'urls': 'stun:stun.l.google.com:19302'}],
+      });
+      _topPc!.onTrack = (event) {
+        if (_topPageDisposed || !mounted) return;
+        if (event.streams.isNotEmpty) {
+          _topRenderer.srcObject = event.streams[0];
+          _topConnected.value = true;
+        }
+      };
+      _topPc!.onConnectionState = (state) async {
+        if (_topPageDisposed) return;
+        if (state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
+            state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
+          _topConnected.value = false;
+          await _topPc?.close();
+          _topPc = null;
+          await Future.delayed(const Duration(seconds: 3));
+          if (!_topPageDisposed) {
+            _topRenderer.srcObject = null;
+            _topConnecting = false;
+            _preconnectTopCamera();
+          }
+        }
+      };
+      final offer = await _topPc!.createOffer({
+        'offerToReceiveVideo': true,
+        'offerToReceiveAudio': false,
+      });
+      await _topPc!.setLocalDescription(offer);
+      final sdp = await ApiService.sendOffer(
+        offer.sdp!, mode: 'admin', maxRetries: 2,
+      );
+      if (sdp != null && !_topPageDisposed) {
+        await _topPc!.setRemoteDescription(RTCSessionDescription(sdp, 'answer'));
+      }
+    } catch (_) {
+      // Silently ignore; DVWBottomSheet falls back to its own connection.
+    } finally {
+      _topConnecting = false;
+    }
   }
 
   Future<void> _loadPhones() async {
@@ -358,7 +426,7 @@ class _StudentPhonesPageState extends State<StudentPhonesPage> {
       context: context,
       isDismissible: false,
       enableDrag: false,
-      isScrollControlled: true,           // allows full-height when camera shown
+      isScrollControlled: true,
       backgroundColor: Colors.transparent,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
@@ -368,6 +436,9 @@ class _StudentPhonesPageState extends State<StudentPhonesPage> {
         isDeposit: isDeposit,
         socketService: _socketService,
         onComplete: _loadPhones,
+        // Share the pre-connected renderer so the camera appears immediately.
+        sharedTopRenderer: _topRenderer,
+        topConnectedNotifier: _topConnected,
       ),
     );
   }
