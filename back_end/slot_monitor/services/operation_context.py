@@ -8,7 +8,7 @@ Manages state for active Deposit/Withdraw/Verification operations.
 import logging
 import time
 import threading
-from typing import Optional, Dict, Any
+from typing import Callable, Optional, Dict, Any
 from threading import Lock, Thread, Event
 from dataclasses import dataclass, field
 
@@ -35,6 +35,16 @@ class Operation:
 
     cancel_event: threading.Event = field(default_factory=threading.Event)
     background_frame: Any = None   # Optional[np.ndarray]
+
+    # Slot-change verifier — created at operation start (before-snapshot),
+    # called after the action completes to confirm the slot physically changed.
+    #
+    # deposit  → created inside create_tracker_for_operation() after QR scan;
+    #            PhoneTracker calls it during the STABILIZING phase.
+    # withdraw → created in handle_withdraw() before QR scan starts;
+    #            _complete_withdraw() calls it after QR confirms phone in hand.
+    # verify   → created inside create_tracker_for_operation(); tracker calls it.
+    verify_fn: Optional[Callable[[], bool]] = None
 
     def is_expired(self, timeout: float) -> bool:
         elapsed = time.time() - (self.qr_scanned_at or self.started_at)
@@ -165,21 +175,17 @@ class OperationContext:
             op = self._operations.get(client_id)
             if op is None:
                 return False
-            op.stage          = "waiting_action"
-            op.qr_scanned_at  = time.time()
+            op.stage         = "waiting_action"
+            op.qr_scanned_at = time.time()
         logger.info(f"QR scanned: {op.op_type} client={client_id} PID={op.pid}")
         return True
 
     def set_tracking(self, client_id: str) -> bool:
-        """
-        Advance stage to "tracking". The cleanup thread ignores this stage.
-        """
         with self._lock:
             op = self._operations.get(client_id)
             if op is None:
                 return False
             op.stage = "tracking"
-        # NOTE: avoid Unicode arrows in log messages — breaks Windows cp1252 console
         logger.info(f"Operation stage -> tracking: client={client_id}")
         return True
 
@@ -207,7 +213,7 @@ class OperationContext:
     def clear_all(self):
         with self._lock:
             count = len(self._operations)
-            ops = list(self._operations.values())
+            ops   = list(self._operations.values())
             self._operations.clear()
         for op in ops:
             op.cancel_event.set()
@@ -240,13 +246,13 @@ class OperationContext:
         with self._lock:
             return {
                 cid: {
-                    "op_type":     op.op_type,
-                    "pid":         op.pid,
-                    "sid":         op.sid,
-                    "lid":         op.lid,
-                    "original_lid":op.original_lid,
-                    "stage":       op.stage,
-                    "elapsed":     time.time() - op.started_at,
+                    "op_type":      op.op_type,
+                    "pid":          op.pid,
+                    "sid":          op.sid,
+                    "lid":          op.lid,
+                    "original_lid": op.original_lid,
+                    "stage":        op.stage,
+                    "elapsed":      time.time() - op.started_at,
                 }
                 for cid, op in self._operations.items()
             }

@@ -4,11 +4,8 @@
 """
 Async event-driven camera system for slot monitoring.
 
-Multi-subscriber broadcast
-──────────────────────────
-Per-subscriber Future broadcast: _set_frame_event() resolves ALL pending
-futures simultaneously so no worker starves another.  Subscriber identity
-is tracked in a set for O(1) membership checks.
+Multi-subscriber broadcast: _set_frame_event() resolves ALL pending
+futures simultaneously so no worker starves another.
 """
 
 import cv2
@@ -18,6 +15,7 @@ import threading
 import time
 from typing import List, Optional, Set
 import numpy as np
+from back_end.config import SlotMonitorConfig as _SMC
 
 logger = logging.getLogger(__name__)
 
@@ -32,16 +30,14 @@ class AsyncFrameBuffer:
         self._latest_frame: Optional[np.ndarray] = None
         self._frame_count  = 0
 
-        # Per-subscriber Future broadcast.
         self._waiters: List[asyncio.Future] = []
         self._loop:    Optional[asyncio.AbstractEventLoop] = None
 
-        self._running         = False
-        self._capture_thread  = None
+        self._running        = False
+        self._capture_thread = None
 
-        # Set for O(1) membership check (was List)
-        self._subscribers:     Set[str] = set()
-        self._max_subscribers  = max_subscribers
+        self._subscribers:    Set[str] = set()
+        self._max_subscribers = max_subscribers
 
         self._notification_latency_ms = 0.0
 
@@ -75,12 +71,16 @@ class AsyncFrameBuffer:
 
         logger.info("Waiting for first frame...")
         start = time.time()
-        while self._frame_count == 0 and time.time() - start < 5.0:
+        while (self._frame_count == 0
+               and time.time() - start < _SMC.CAMERA_INIT_TIMEOUT):
             time.sleep(0.01)
 
         if self._frame_count == 0:
             self._running = False
-            raise RuntimeError("Failed to capture initial frame within 5 seconds")
+            raise RuntimeError(
+                f"Failed to capture initial frame within "
+                f"{_SMC.CAMERA_INIT_TIMEOUT}s"
+            )
 
         logger.info(f"Async camera {camera_id} started ({width}x{height} @ {fps}fps)")
 
@@ -100,9 +100,12 @@ class AsyncFrameBuffer:
         actual_w   = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         actual_h   = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         actual_fps = int(cap.get(cv2.CAP_PROP_FPS))
-        logger.info(f"Camera {camera_id} opened: {actual_w}x{actual_h} @ {actual_fps}fps")
+        logger.info(
+            f"Camera {camera_id} opened: {actual_w}x{actual_h} @ {actual_fps}fps"
+        )
 
-        for _ in range(10):   # warm up
+        # Discard auto-exposure warmup frames
+        for _ in range(_SMC.CAMERA_WARMUP_FRAMES):
             cap.read()
 
         frame_interval = 1.0 / fps
@@ -148,11 +151,6 @@ class AsyncFrameBuffer:
                 fut.set_result(True)
 
     async def wait_for_frame(self, subscriber_id: str = "unknown") -> np.ndarray:
-        """
-        Wait for the next frame (async, no polling).
-
-        Zero CPU usage while waiting; immediate wake-up on new frame.
-        """
         if subscriber_id not in self._subscribers:
             if len(self._subscribers) < self._max_subscribers:
                 self._subscribers.add(subscriber_id)
@@ -173,7 +171,6 @@ class AsyncFrameBuffer:
             return self._latest_frame
 
     def get_frame_sync(self) -> Optional[np.ndarray]:
-        """Get latest frame synchronously (for non-async code)."""
         with self._frame_lock:
             return self._latest_frame.copy() if self._latest_frame is not None else None
 
@@ -220,7 +217,9 @@ class AsyncCameraCapture:
         if not frame_buffer.is_running():
             raise RuntimeError("Frame buffer is not running")
 
-        logger.info(f"AsyncCameraCapture initialized (cam {camera_id}, {width}x{height})")
+        logger.info(
+            f"AsyncCameraCapture initialized (cam {camera_id}, {width}x{height})"
+        )
 
     async def read(self, subscriber_id: str = "unknown") -> np.ndarray:
         return await self.frame_buffer.wait_for_frame(subscriber_id)

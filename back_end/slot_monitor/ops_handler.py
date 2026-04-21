@@ -21,7 +21,6 @@ from back_end.config import QRConfig as _QRC
 
 logger = logging.getLogger(__name__)
 
-# Edit back_end/config.py → QRConfig.DVW_SCAN_TIMEOUT to change this.
 QR_SCAN_TIMEOUT = _QRC.DVW_SCAN_TIMEOUT
 
 
@@ -39,7 +38,11 @@ class DVWSocketHandler:
         client_id = request.sid
         op = op_ctx.get(client_id)
         if op is None:
-            self.socketio.emit("operation_error", {"status": "error", "message": "no_active_operation"}, to=client_id, namespace="/",)
+            self.socketio.emit(
+                "operation_error",
+                {"status": "error", "message": "no_active_operation"},
+                to=client_id, namespace="/",
+            )
             return
 
         logger.info(
@@ -48,7 +51,11 @@ class DVWSocketHandler:
         )
         top_camera.clear_context_overlay()
         op_ctx.clear(client_id)
-        self.socketio.emit("operation_cancelled", {"status": "success", "pid": op.pid}, to=client_id, namespace="/",)
+        self.socketio.emit(
+            "operation_cancelled",
+            {"status": "success", "pid": op.pid},
+            to=client_id, namespace="/",
+        )
 
     # ══════════════════════════════════════════════════════
     # DEPOSIT
@@ -58,44 +65,59 @@ class DVWSocketHandler:
         client_id = request.sid
         pid = data.get("pid")
         if not pid:
-            self.socketio.emit("operation_error", {"status": "error", "message": "missing_pid"}, to=client_id, namespace="/",)
+            self.socketio.emit(
+                "operation_error",
+                {"status": "error", "message": "missing_pid"},
+                to=client_id, namespace="/",
+            )
             return
 
         pid = str(pid)
-
-        # All DB validation (pid_exists, already_stored, slot_occupied) is
-        # handled atomically inside deposit_phone_db via a conditional INSERT
-        # + advisory lock.  Pre-checking here would add redundant round-trips
-        # and open a TOCTOU race window.
         lid = SlotMonitorDB.get_next_free_lid()
         if lid is None:
-            self.socketio.emit("operation_error", {"status": "error", "message": "no_free_slots"}, to=client_id, namespace="/",)
+            self.socketio.emit(
+                "operation_error",
+                {"status": "error", "message": "no_free_slots"},
+                to=client_id, namespace="/",
+            )
             return
 
         self._pause_slot(lid)
         try:
             op_ctx.start(client_id, "deposit", pid=pid, lid=lid)
         except RuntimeError:
-            self.socketio.emit("operation_error", {"status": "error", "message": "operation_already_active"}, to=client_id, namespace="/",)
+            self.socketio.emit(
+                "operation_error",
+                {"status": "error", "message": "operation_already_active"},
+                to=client_id, namespace="/",
+            )
             self._restore_slot(lid, is_occupied=False)
             return
 
-        # Start camera and capture background frame BEFORE the thread starts
-        # so the QR scan has a warm camera and a valid empty-slot background.
         top_camera.start()
         op = op_ctx.get(client_id)
         if op is not None:
             top_camera.wait_for_frame(timeout=0.3)
             raw = top_camera.get_raw_frame()
             op.background_frame = raw if raw is not None else top_camera.get_frame()
+            # NOTE: deposit verifier is created later inside
+            # create_tracker_for_operation(), after QR confirms the phone
+            # is in the student's hand (slot is definitely empty at that point).
 
-        self.socketio.emit("deposit_waiting_for_qr", {
-            "status":  "waiting",
-            "pid":     pid,
-            "lid":     lid,
-            "slot":    lid + 1,
-            "message": f"Hold QR for phone {pid} under the top camera, then carry it to slot {lid + 1}",
-        }, to=client_id, namespace="/",)
+        self.socketio.emit(
+            "deposit_waiting_for_qr",
+            {
+                "status":  "waiting",
+                "pid":     pid,
+                "lid":     lid,
+                "slot":    lid + 1,
+                "message": (
+                    f"Hold QR for phone {pid} under the top camera, "
+                    f"then carry it to slot {lid + 1}"
+                ),
+            },
+            to=client_id, namespace="/",
+        )
 
         threading.Thread(
             target=self._scan_and_dispatch,
@@ -112,32 +134,63 @@ class DVWSocketHandler:
         client_id = request.sid
         pid = data.get("pid")
         if not pid:
-            self.socketio.emit("operation_error", {"status": "error", "message": "missing_pid"}, to=client_id, namespace="/",)
+            self.socketio.emit(
+                "operation_error",
+                {"status": "error", "message": "missing_pid"},
+                to=client_id, namespace="/",
+            )
             return
 
         pid = str(pid)
         lid = SlotMonitorDB.get_lid_for_pid(pid)
         if lid is None:
-            self.socketio.emit("operation_error", {"status": "error", "message": "phone_not_in_storage", "pid": pid}, to=client_id, namespace="/",)
+            self.socketio.emit(
+                "operation_error",
+                {"status": "error", "message": "phone_not_in_storage", "pid": pid},
+                to=client_id, namespace="/",
+            )
             return
 
         self._pause_slot(lid)
         try:
             op_ctx.start(client_id, "withdraw", pid=pid, lid=lid)
         except RuntimeError:
-            self.socketio.emit("operation_error", {"status": "error", "message": "operation_already_active"}, to=client_id, namespace="/",)
+            self.socketio.emit(
+                "operation_error",
+                {"status": "error", "message": "operation_already_active"},
+                to=client_id, namespace="/",
+            )
             self._restore_slot(lid, is_occupied=True)
             return
 
-        self.socketio.emit("withdraw_waiting_for_action", {
-            "status":  "waiting",
-            "pid":     pid,
-            "lid":     lid,
-            "slot":    lid + 1,
-            "message": f"Remove phone {pid} from slot {lid + 1}, then hold its QR under the top camera",
-        }, to=client_id, namespace="/",)
+        # Create withdrawal verifier NOW — phone is still in the slot, so
+        # the before-snapshot correctly captures the "occupied" state.
+        # After the QR scan confirms the phone is in the student's hand,
+        # _complete_withdraw() calls verify_fn() to confirm the slot emptied.
+        op = op_ctx.get(client_id)
+        if op is not None:
+            try:
+                op.verify_fn = self.slot_ops.make_placement_verifier(lid)
+            except Exception as exc:
+                logger.warning(
+                    f"[DVW] Withdraw verifier creation failed LID={lid}: {exc}"
+                )
 
-        # Auto-start QR scan — no button press needed.
+        self.socketio.emit(
+            "withdraw_waiting_for_action",
+            {
+                "status":  "waiting",
+                "pid":     pid,
+                "lid":     lid,
+                "slot":    lid + 1,
+                "message": (
+                    f"Remove phone {pid} from slot {lid + 1}, "
+                    "then hold its QR under the top camera"
+                ),
+            },
+            to=client_id, namespace="/",
+        )
+
         threading.Thread(
             target=self._scan_and_dispatch,
             args=(client_id,),
@@ -155,7 +208,11 @@ class DVWSocketHandler:
         original_lid = data.get("original_lid")
 
         if not pid or original_lid is None:
-            self.socketio.emit("operation_error", {"status": "error", "message": "missing_parameters"}, to=client_id, namespace="/",)
+            self.socketio.emit(
+                "operation_error",
+                {"status": "error", "message": "missing_parameters"},
+                to=client_id, namespace="/",
+            )
             return
 
         pid          = str(pid)
@@ -163,24 +220,32 @@ class DVWSocketHandler:
 
         target_lid = SlotMonitorDB.get_lid_for_pid(pid)
         if target_lid is None:
-            self.socketio.emit("operation_error", {
-                "status":  "error",
-                "message": "phone_not_registered_to_any_slot",
-                "pid":     pid,
-            }, to=client_id, namespace="/",)
+            self.socketio.emit(
+                "operation_error",
+                {
+                    "status":  "error",
+                    "message": "phone_not_registered_to_any_slot",
+                    "pid":     pid,
+                },
+                to=client_id, namespace="/",
+            )
             return
 
         if target_lid != original_lid:
             blocking_pid = SlotMonitorDB.get_pid_for_lid(target_lid)
             if blocking_pid is not None and blocking_pid != pid:
-                self.socketio.emit("operation_error", {
-                    "status":       "error",
-                    "message":      "swap_requires_admin_resolution",
-                    "pid":          pid,
-                    "original_lid": original_lid,
-                    "target_lid":   target_lid,
-                    "blocking_pid": blocking_pid,
-                }, to=client_id, namespace="/",)
+                self.socketio.emit(
+                    "operation_error",
+                    {
+                        "status":       "error",
+                        "message":      "swap_requires_admin_resolution",
+                        "pid":          pid,
+                        "original_lid": original_lid,
+                        "target_lid":   target_lid,
+                        "blocking_pid": blocking_pid,
+                    },
+                    to=client_id, namespace="/",
+                )
                 return
 
         self._pause_slot(original_lid)
@@ -193,56 +258,54 @@ class DVWSocketHandler:
                 pid=pid, lid=target_lid, original_lid=original_lid,
             )
         except RuntimeError:
-            self.socketio.emit("operation_error", {"status": "error", "message": "operation_already_active"}, to=client_id, namespace="/",)
+            self.socketio.emit(
+                "operation_error",
+                {"status": "error", "message": "operation_already_active"},
+                to=client_id, namespace="/",
+            )
             self._restore_slot(original_lid, is_occupied=True)
             if target_lid != original_lid:
                 self._restore_slot(target_lid, is_occupied=False)
             return
 
-        # NOTE: background_frame is NOT captured here.
-        # At this point the phone is still physically in original_lid,
-        # so capturing now would include the phone in the background image,
-        # defeating the frame-diff detection.
-        # It is captured in _complete_verify, after QR scan confirms the
-        # phone is in the admin's hand and the destination slot is clear.
-
         same_slot = (target_lid == original_lid)
-        self.socketio.emit("verify_waiting_for_action", {
-            "status":        "waiting",
-            "pid":           pid,
-            "original_lid":  original_lid,
-            "original_slot": original_lid + 1,
-            "target_lid":    target_lid,
-            "target_slot":   target_lid + 1,
-            "same_slot":     same_slot,
-            "message": (
-                f"Take phone {pid} from slot {original_lid + 1}, "
-                "scan QR, place back in same slot."
-                if same_slot else
-                f"Take phone {pid} from slot {original_lid + 1}, "
-                f"scan QR, place in slot {target_lid + 1}."
-            ),
-        }, to=client_id, namespace="/",)
+        self.socketio.emit(
+            "verify_waiting_for_action",
+            {
+                "status":        "waiting",
+                "pid":           pid,
+                "original_lid":  original_lid,
+                "original_slot": original_lid + 1,
+                "target_lid":    target_lid,
+                "target_slot":   target_lid + 1,
+                "same_slot":     same_slot,
+                "message": (
+                    f"Take phone {pid} from slot {original_lid + 1}, "
+                    "scan QR, place back in same slot."
+                    if same_slot else
+                    f"Take phone {pid} from slot {original_lid + 1}, "
+                    f"scan QR, place in slot {target_lid + 1}."
+                ),
+            },
+            to=client_id, namespace="/",
+        )
 
     # ══════════════════════════════════════════════════════
-    # QR SCANNED  (verify only — deposit/withdraw auto-scan above)
+    # QR SCANNED  (verify only)
     # ══════════════════════════════════════════════════════
 
     def handle_qr_scanned(self, data: dict):
-        """
-        Client-triggered QR scan.  Only meaningful for *verify* operations;
-        deposit and withdraw start scanning automatically in handle_deposit /
-        handle_withdraw so this event is a no-op for those op types.
-        """
         client_id = request.sid
         op = op_ctx.get(client_id)
         if op is None:
-            self.socketio.emit("operation_error", {"status": "error", "message": "no_active_operation"}, to=client_id, namespace="/",)
+            self.socketio.emit(
+                "operation_error",
+                {"status": "error", "message": "no_active_operation"},
+                to=client_id, namespace="/",
+            )
             return
         if op.op_type in ("deposit", "withdraw"):
-            # Scan already running in background — ignore.
-            return
-        # verify: kick off scan in a background thread so we don’t block SocketIO.
+            return   # auto-scan already running
         threading.Thread(
             target=self._scan_and_dispatch,
             args=(client_id,),
@@ -251,14 +314,10 @@ class DVWSocketHandler:
         ).start()
 
     # ══════════════════════════════════════════════════════
-    # SCAN WORKER  (runs in daemon thread for all op types)
+    # SCAN WORKER
     # ══════════════════════════════════════════════════════
 
     def _scan_and_dispatch(self, client_id: str) -> None:
-        """
-        Blocking QR scan + dispatch to the correct completion handler.
-        Always runs in a daemon thread — uses self.socketio.emit (never Flask emit).
-        """
         op = op_ctx.get(client_id)
         if op is None:
             return
@@ -283,7 +342,8 @@ class DVWSocketHandler:
 
             if scan_result["status"] != "success":
                 self.socketio.emit(
-                    "operation_error", scan_result, to=client_id, namespace="/"
+                    "operation_error", scan_result,
+                    to=client_id, namespace="/",
                 )
                 op_ctx.clear(client_id)
                 return
@@ -317,27 +377,22 @@ class DVWSocketHandler:
     # ══════════════════════════════════════════════════════
 
     def _complete_deposit(self, op):
-        """
-        QR confirmed for deposit.
-        Sets DVW context overlay (destination slot highlighted),
-        then launches PhoneTracker.
-        Falls back to _finalize_deposit directly if tracker unavailable.
-        """
         client_id = op.client_id
         pid       = op.pid
         lid       = op.lid
 
-        # Set context overlay before tracker starts
         all_rois = load_all_top_rois()
         if all_rois:
             top_camera.set_context_overlay(
                 make_dvw_context_overlay(
                     all_rois   = all_rois,
-                    source_lid = None,   # deposit has no source slot
+                    source_lid = None,
                     dest_lid   = lid,
                 )
             )
 
+        # Verifier is created inside create_tracker_for_operation():
+        # at that point QR is confirmed, phone is in student's hand, slot is empty.
         tracker = create_tracker_for_operation(op, self.socketio, self.slot_ops)
 
         if tracker is None:
@@ -366,10 +421,6 @@ class DVWSocketHandler:
         )
 
     def _finalize_deposit(self, op):
-        """
-        Called by PhoneTracker on success, or directly as fallback.
-        Runs in tracker daemon thread — uses socketio.emit().
-        """
         pid, lid, client_id = op.pid, op.lid, op.client_id
 
         top_camera.clear_context_overlay()
@@ -389,7 +440,10 @@ class DVWSocketHandler:
 
         db_result = self.slot_ops.deposit_phone_db(pid, lid)
         if db_result["status"] != "success":
-            self.socketio.emit("deposit_result", db_result, to=client_id, namespace="/")
+            self.socketio.emit(
+                "deposit_result", db_result,
+                to=client_id, namespace="/",
+            )
             op_ctx.clear(client_id)
             return
 
@@ -408,15 +462,13 @@ class DVWSocketHandler:
         )
 
     def _on_tracking_failed(self, op, reason: str):
-        """Called by PhoneTracker on any failure. Runs in tracker daemon thread."""
         client_id = op.client_id
         top_camera.clear_context_overlay()
         op_ctx.clear(client_id)
 
         messages = {
             "qr_lost":
-                "QR code disappeared before the phone reached the slot. "
-                "This may indicate a substitution attempt. Please retry.",
+                "QR code disappeared before the phone reached the slot.",
             "out_of_frame":
                 "Phone left the camera view before reaching the slot. Please retry.",
             "timeout":            "Placement timed out. Please retry.",
@@ -424,9 +476,8 @@ class DVWSocketHandler:
                 "Phone not detected entering the camera view. Please retry.",
             "cancelled":          "Operation was cancelled.",
             "phone_not_in_slot":
-                "The QR was hidden but the phone was not detected in the slot "
-                "by the internal camera. Please actually place the phone in the "
-                "slot and retry.",
+                "The phone was not detected in the slot by the internal camera. "
+                "Please actually place the phone in the slot and retry.",
             "insertion_timeout":
                 "The phone did not complete insertion within the allowed time. "
                 "Place it fully into the slot and retry.",
@@ -450,9 +501,38 @@ class DVWSocketHandler:
     def _complete_withdraw(self, op):
         pid, lid, client_id = op.pid, op.lid, op.client_id
 
+        # Verify the slot physically changed (phone was actually removed).
+        # verify_fn was created in handle_withdraw() while the phone was still
+        # in the slot, so it has an "occupied" before-snapshot.
+        if op.verify_fn is not None:
+            if not op.verify_fn():
+                logger.warning(
+                    f"[DVW] Withdraw slot-change check FAILED: "
+                    f"PID={pid} LID={lid} — slot did not change"
+                )
+                self.socketio.emit(
+                    "operation_error",
+                    {
+                        "status":  "error",
+                        "message": "phone_not_removed",
+                        "detail":  (
+                            "The slot does not appear to have changed. "
+                            "Make sure the phone was physically removed before scanning."
+                        ),
+                        "pid": pid,
+                        "lid": lid,
+                    },
+                    to=client_id, namespace="/",
+                )
+                op_ctx.clear(client_id)
+                return
+
         db_result = self.slot_ops.withdraw_phone_db(pid)
         if db_result["status"] != "success":
-            self.socketio.emit("withdraw_result", db_result, to=client_id, namespace="/",)
+            self.socketio.emit(
+                "withdraw_result", db_result,
+                to=client_id, namespace="/",
+            )
             op_ctx.clear(client_id)
             return
 
@@ -461,37 +541,28 @@ class DVWSocketHandler:
         )
         self._resume_slot(lid)
         op_ctx.complete(client_id)
-        self.socketio.emit("withdraw_result", {
-            "status":     "success",
-            "pid":        pid,
-            "lid":        lid,
-            "slot":       lid + 1,
-            "storage_id": db_result.get("storage_id"),
-        }, to=client_id, namespace="/",)
+        self.socketio.emit(
+            "withdraw_result",
+            {
+                "status":     "success",
+                "pid":        pid,
+                "lid":        lid,
+                "slot":       lid + 1,
+                "storage_id": db_result.get("storage_id"),
+            },
+            to=client_id, namespace="/",
+        )
 
     def _complete_verify(self, op):
-        """
-        QR confirmed for verify.
-
-        Background frame is captured HERE because the phone was still in
-        original_lid when handle_verify ran — we couldn't use that frame.
-        By now the QR scan has confirmed the phone is in the student's
-        hand, so both original_lid and target_lid are clear.
-
-        We wait for a fresh frame from the camera to ensure the background
-        image doesn't include the phone.
-        """
         client_id    = op.client_id
         pid          = op.pid
         target_lid   = op.lid
         original_lid = op.original_lid
 
-        # Wait for a fresh frame (camera is running since QR scan just used it)
         top_camera.wait_for_frame(timeout=0.5)
         op.background_frame = top_camera.get_frame()
         top_camera.clear_frame_event()
 
-        # Set context overlay: source (orange) + destination (yellow pulsing)
         all_rois = load_all_top_rois()
         if all_rois:
             top_camera.set_context_overlay(
@@ -533,10 +604,6 @@ class DVWSocketHandler:
         )
 
     def _finalize_verify(self, op):
-        """
-        Called by PhoneTracker on success, or directly as fallback.
-        Runs in tracker daemon thread — uses socketio.emit().
-        """
         pid, original_lid, target_lid, client_id = (
             op.pid, op.original_lid, op.lid, op.client_id
         )

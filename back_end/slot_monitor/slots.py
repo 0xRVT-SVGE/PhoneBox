@@ -1,9 +1,9 @@
 # ============================================================
-# FILE: back_end/slot_monitor/slots.py  (generate_grid_rois section only)
+# FILE: back_end/slot_monitor/slots.py
 # ============================================================
 """
-Unified slot abstraction — ROI loading now reads from rois_bottom.json
-(written by the calibration tool) instead of the old rois_saved.json.
+Unified slot abstraction — ROI loading reads from rois_bottom.json
+(written by the calibration tool).
 """
 
 import cv2
@@ -15,10 +15,10 @@ import numpy as np
 from collections import deque
 from typing import Optional, Tuple, Dict
 from back_end.slot_monitor.slot_embed import compute_embedding, embedding_distance
+from back_end.config import SlotMonitorConfig as _SMC
 
 logger = logging.getLogger(__name__)
 
-# Path to the bottom-camera ROI file written by roi_calibration.py
 _TOOLS_DIR      = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "tools"
 )
@@ -45,12 +45,10 @@ class Slot:
         self.mismatch  = False
         self.last_dist = 0.0
 
-        # Grace period. Pre-set to far past by pre_flag_mismatch() for slots
-        # that are already wrong at startup — fires alarm on first frame.
         self._grace_start_ts: Optional[float] = None
 
-        # deque(maxlen) gives O(1) append+evict; list.pop(0) was O(n).
-        self.distances_history: deque = deque(maxlen=10)
+        # maxlen from config — O(1) append+evict
+        self.distances_history: deque = deque(maxlen=_SMC.DISTANCE_HISTORY_MAXLEN)
 
     # ── Pre-flag (startup mismatches) ─────────────────────
 
@@ -59,7 +57,7 @@ class Slot:
         Mark this slot as already-mismatched before workers start.
         Grace period is considered expired on the very first update() call.
         """
-        self.mismatch = False
+        self.mismatch        = False
         self._grace_start_ts = time.time() - 1000.0   # always expired
 
     # ── ROI extraction ────────────────────────────────────
@@ -104,15 +102,15 @@ class Slot:
             grace_period: float,
     ) -> dict:
         self.last_dist = dist
-        self.distances_history.append(dist)  # deque(maxlen) auto-evicts oldest
+        self.distances_history.append(dist)
 
         now = time.time()
 
         # ── CASE 1: NORMAL ─────────────────────────────
         if dist < mismatch_threshold:
-            stop_alarm = self.mismatch
-            self.mismatch         = False
-            self._grace_start_ts  = None
+            stop_alarm           = self.mismatch
+            self.mismatch        = False
+            self._grace_start_ts = None
             return {
                 "trigger_alarm": False,
                 "stop_alarm":    stop_alarm,
@@ -120,9 +118,6 @@ class Slot:
             }
 
         # ── CASE 2: SUSPICIOUS ─────────────────────────
-        # If _grace_start_ts was pre-set 1000 s in the past by
-        # pre_flag_mismatch(), grace_elapsed is immediately >= grace_period
-        # and the alarm fires on the very first frame.
         if self._grace_start_ts is None:
             self._grace_start_ts = now
 
@@ -136,7 +131,7 @@ class Slot:
     # ── Baseline management ───────────────────────────────
 
     def reset_baseline(self, new_emb: np.ndarray):
-        self.baseline = new_emb.copy()
+        self.baseline        = new_emb.copy()
         self.distances_history.clear()
         self.mismatch        = False
         self._grace_start_ts = None
@@ -148,9 +143,10 @@ class Slot:
         logger.debug(f"Slot {self.lid} baseline adapted (soft)")
 
     def _should_recalculate(self, recalc_threshold: float) -> bool:
-        if len(self.distances_history) < 5:
+        n = _SMC.RECALC_MIN_SAMPLES
+        if len(self.distances_history) < n:
             return False
-        recent = list(self.distances_history)[-5:]
+        recent = list(self.distances_history)[-n:]
         return all(recalc_threshold < d < self.last_dist * 1.5 for d in recent)
 
     def get_status(self) -> dict:
@@ -168,7 +164,7 @@ class Slot:
         return (
             f"Slot(lid={self.lid}, "
             f"{'OCCUPIED' if self.is_occupied else 'EMPTY'}, "
-            f"{'⚠️ MISMATCH' if self.mismatch else '✓ OK'}, "
+            f"{'MISMATCH' if self.mismatch else 'OK'}, "
             f"dist={self.last_dist:.4f})"
         )
 
@@ -187,24 +183,20 @@ def generate_grid_rois(
     frame:        Optional[np.ndarray] = None,
 ) -> Dict[int, Tuple[int, int, int, int]]:
     """
-    Load bottom-camera ROIs from rois_bottom.json (written by the calibration
-    tool at startup).  Falls back to an auto-generated equal-area grid if the
-    file is missing or has the wrong number of entries.
-
-    The interactive ROI editor that used to live here has been moved to
-    back_end/slot_monitor/tools/roi_calibration.py which runs at startup
-    before the slot monitor is created.
+    Load bottom-camera ROIs from rois_bottom.json.
+    Falls back to an auto-generated equal-area grid if the file is missing
+    or has the wrong number of entries.
     """
     if num_lids is None:
         num_lids = rows * cols
 
     def _default() -> list:
-        rois = []
-        total_sx = spacing * (cols + 1)
-        total_sy = spacing * (rows + 1)
-        cw = (frame_width  - total_sx) // cols
-        ch = (frame_height - total_sy) // rows
-        lid = 0
+        rois      = []
+        total_sx  = spacing * (cols + 1)
+        total_sy  = spacing * (rows + 1)
+        cw        = (frame_width  - total_sx) // cols
+        ch        = (frame_height - total_sy) // rows
+        lid       = 0
         for r in range(rows):
             for c in range(cols):
                 if lid >= num_lids:
@@ -217,7 +209,6 @@ def generate_grid_rois(
                 lid += 1
         return rois
 
-    # Try to load the calibrated file first
     rois_list = None
     if os.path.exists(ROI_FILE_BOTTOM):
         try:
@@ -230,11 +221,14 @@ def generate_grid_rois(
                 )
             else:
                 logger.warning(
-                    f"[Slots] {ROI_FILE_BOTTOM} has {len(data) if isinstance(data, list) else '?'} "
-                    f"entries but expected {num_lids}. Using default grid."
+                    f"[Slots] {ROI_FILE_BOTTOM} has "
+                    f"{len(data) if isinstance(data, list) else '?'} entries "
+                    f"but expected {num_lids}. Using default grid."
                 )
         except Exception as e:
-            logger.warning(f"[Slots] Failed to read {ROI_FILE_BOTTOM}: {e}. Using default grid.")
+            logger.warning(
+                f"[Slots] Failed to read {ROI_FILE_BOTTOM}: {e}. Using default grid."
+            )
 
     if rois_list is None:
         rois_list = _default()

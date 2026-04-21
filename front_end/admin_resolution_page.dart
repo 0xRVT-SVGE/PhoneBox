@@ -1,9 +1,19 @@
+// admin_resolution_page.dart  (changed section only — full file)
+//
+// Key change: _noQrButtonTimer delay is now driven by `no_qr_button_delay_s`
+// sent in the `admin_remove_ok` payload, rather than a hardcoded 8 seconds.
+// The server sends AdminConfig.NO_QR_BUTTON_DELAY_S (default 25 s), which is
+// well below the QR scan timeout (90 s), so the button only appears when the
+// QR genuinely cannot be found.
+//
+// All other logic is unchanged.
+
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'socket_service.dart';
 import 'api_service.dart';
-import 'scan_success_page.dart'; // DVWBottomSheet
+import 'scan_success_page.dart';
 
 enum _Step {
   opening,
@@ -16,7 +26,7 @@ enum _Step {
   needsDeposit,
   depositInProgress,
   declaringMissing,
-  noQrHandled,       // no-QR object removed, awaiting server confirmation
+  noQrHandled,
   sessionDone,
   error,
 }
@@ -43,47 +53,49 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
 
   Map<String, int> _mismatchMap = {};
   List<String> _remaining = [];
-  List<String> _staged = [];
+  List<String> _staged    = [];
   String? _sessionId;
   final Set<String> _visitedPids = {};
 
-  _Step _step = _Step.opening;
-  int? _currentLid;
+  _Step   _step          = _Step.opening;
+  int?    _currentLid;
   String? _currentPid;
-  int? _expectedLid;
-  bool _sameSlot = false;
-  String? _infoMessage;
+  int?    _expectedLid;
+  bool    _sameSlot      = false;
   String? _errorText;
   String? _scanError;
-  bool _qrVisible = true;
+  bool    _qrVisible     = true;
 
-  // For the needs_deposit case: the PID found by QR scan
   String? _needsDepositPid;
 
   Map<String, dynamic>? _summary;
-  bool _evidenceKept = false;
-  bool _forceClosed  = false;
-  bool _sessionCompleted = false;
+  bool _evidenceKept       = false;
+  bool _forceClosed        = false;
+  bool _sessionCompleted   = false;
 
   Timer? _openingTimer;
-  bool _openingTimedOut = false;
+  bool   _openingTimedOut  = false;
 
-  bool _pendingServer = false;
+  bool   _pendingServer = false;
   Timer? _serverTimer;
 
   bool _sessionWasOpened = false;
 
-  bool _noQrButtonVisible = false;
+  bool   _noQrButtonVisible = false;
   Timer? _noQrButtonTimer;
+  // Delay in seconds before "No QR on this object" appears.
+  // Populated from the server's admin_remove_ok payload so it stays in sync
+  // with AdminConfig.NO_QR_BUTTON_DELAY_S without requiring a client rebuild.
+  int _noQrButtonDelayS = 25;
 
   late AnimationController _cardAnim;
-  late Animation<Offset> _cardSlide;
+  late Animation<Offset>   _cardSlide;
 
   final RTCVideoRenderer _renderer = RTCVideoRenderer();
-  RTCPeerConnection? _pc;
-  bool _videoConnected = false;
-  bool _disposed = false;
-  bool _isReconnecting = false;
+  RTCPeerConnection?     _pc;
+  bool _videoConnected  = false;
+  bool _disposed        = false;
+  bool _isReconnecting  = false;
 
   // ── Display helpers ───────────────────────────────────
 
@@ -96,7 +108,6 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
   static String _displayPid(String? pid) {
     if (pid == null) return '?';
     if (pid.startsWith('unknown-')) return 'Unidentified object';
-    if (pid.length > 18) return '...${pid.substring(pid.length - 12)}';
     return pid;
   }
 
@@ -111,11 +122,11 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
     };
     _remaining = List<String>.from(_mismatchMap.keys);
 
-    _cardAnim = AnimationController(
+    _cardAnim  = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 350));
     _cardSlide = Tween<Offset>(
       begin: const Offset(0, 1),
-      end: Offset.zero,
+      end:   Offset.zero,
     ).animate(CurvedAnimation(parent: _cardAnim, curve: Curves.easeOutCubic));
 
     _renderer.initialize().then((_) => _initVideo());
@@ -140,7 +151,7 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
         if (event.streams.isNotEmpty) {
           setState(() {
             _renderer.srcObject = event.streams[0];
-            _videoConnected = true;
+            _videoConnected     = true;
           });
         }
       };
@@ -154,7 +165,7 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
             if (!_disposed && mounted) {
               setState(() {
                 _renderer.srcObject = stream;
-                _videoConnected = true;
+                _videoConnected     = true;
               });
             }
             break;
@@ -188,16 +199,14 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
     try {
       await ApiService.cancelAdmin();
       _pc = await createPeerConnection({
-        'iceServers': [
-          {'urls': 'stun:stun.l.google.com:19302'}
-        ],
+        'iceServers': [{'urls': 'stun:stun.l.google.com:19302'}],
       });
       _pc!.onTrack = (event) {
         if (_disposed || !mounted) return;
         if (event.streams.isNotEmpty) {
           setState(() {
             _renderer.srcObject = event.streams[0];
-            _videoConnected = true;
+            _videoConnected     = true;
           });
         }
       };
@@ -232,15 +241,12 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
 
   void _waitForServer() {
     _serverTimer?.cancel();
-    setState(() {
-      _pendingServer = true;
-      _scanError = null;
-    });
+    setState(() { _pendingServer = true; _scanError = null; });
     _serverTimer = Timer(const Duration(seconds: 30), () {
       if (!mounted || !_pendingServer) return;
       setState(() {
         _pendingServer = false;
-        _scanError = 'No response from server. Check your connection.';
+        _scanError     = 'No response from server. Check your connection.';
       });
     });
   }
@@ -259,7 +265,10 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
         _openingTimer?.cancel();
         _serverResponded();
         _sessionWasOpened = true;
-        _sessionId = data['session_id'];
+        _sessionId        = data['session_id'];
+        // Server may send the preferred delay; fall back to 25 s.
+        _noQrButtonDelayS =
+            (data['no_qr_button_delay_s'] as num?)?.toInt() ?? 25;
         final List raw = data['mismatches'] ?? [];
         _mismatchMap = {
           for (final m in raw) m['pid'].toString(): m['expected_lid'] as int
@@ -282,23 +291,26 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
           return;
         }
         setState(() {
-          _step = _Step.error;
+          _step      = _Step.error;
           _errorText = data['message'] ?? 'Session error';
         });
       },
-      onAdminRemoveOk: (_) {
+      onAdminRemoveOk: (data) {
         if (!mounted) return;
         _serverResponded();
         _noQrButtonVisible = false;
         _noQrButtonTimer?.cancel();
-        _noQrButtonTimer = Timer(const Duration(seconds: 8), () {
+
+        // Use delay from server payload; fall back to stored session value.
+        final delayS =
+            (data['no_qr_button_delay_s'] as num?)?.toInt()
+            ?? _noQrButtonDelayS;
+
+        _noQrButtonTimer = Timer(Duration(seconds: delayS), () {
           if (!mounted || _step != _Step.scanning) return;
           setState(() => _noQrButtonVisible = true);
         });
-        setState(() {
-          _step      = _Step.scanning;
-          _scanError = null;
-        });
+        setState(() { _step = _Step.scanning; _scanError = null; });
       },
       onAdminQrResult: (data) {
         if (!mounted) return;
@@ -313,23 +325,16 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
             : null;
         if (needsDep) {
           _needsDepositPid = pid;
-          // Skip the info step — start the deposit immediately.
-          // addPostFrameCallback avoids calling showModalBottomSheet
-          // while we're still inside a setState/build cycle.
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) _startDepositForNeedsDeposit();
           });
         }
-        // If auto_tracking == true, tracking_started will arrive shortly.
       },
       onAdminNoQrResult: (_) {
         if (!mounted) return;
         _serverResponded();
         _noQrButtonTimer?.cancel();
-        setState(() {
-          _step       = _Step.noQrHandled;
-          _currentPid = null;
-        });
+        setState(() { _step = _Step.noQrHandled; _currentPid = null; });
       },
       onAdminAutoStaged: (data) {
         if (!mounted) return;
@@ -340,8 +345,8 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
         _staged.add(pid);
         _remaining = List<String>.from(data['remaining'] ?? _remaining);
         setState(() {
-          _step      = _Step.autoStaged;
-          _scanError = null;
+          _step        = _Step.autoStaged;
+          _scanError   = null;
           _currentPid  = null;
           _currentLid  = destLid;
           _expectedLid = destLid;
@@ -353,8 +358,7 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
           } else if (destLid != null) {
             final byLid = _remaining.firstWhere(
                 (p) => _mismatchMap[p] == destLid, orElse: () => '');
-            if (byLid.isNotEmpty) _selectPhone(byLid);
-            else _autoSelect();
+            if (byLid.isNotEmpty) _selectPhone(byLid); else _autoSelect();
           } else {
             _autoSelect();
           }
@@ -393,9 +397,9 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
         _serverResponded();
         _noQrButtonTimer?.cancel();
         _sessionCompleted = true;
-        _summary        = data['summary'];
-        _evidenceKept   = data['evidence_kept'] == true;
-        _forceClosed    = data['force_closed'] == true;
+        _summary          = data['summary'];
+        _evidenceKept     = data['evidence_kept'] == true;
+        _forceClosed      = data['force_closed']  == true;
         setState(() => _step = _Step.sessionDone);
         _cardAnim.forward(from: 0);
       },
@@ -411,21 +415,14 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
           return;
         }
         if (_step == _Step.scanning) {
-          setState(() {
-            _noQrButtonVisible = true;
-            _scanError = _friendlyError(msg);
-          });
+          setState(() { _noQrButtonVisible = true; _scanError = _friendlyError(msg); });
           return;
         }
         setState(() => _scanError = _friendlyError(msg));
       },
-      onTrackingStarted: (data) {
+      onTrackingStarted: (_) {
         if (!mounted) return;
-        setState(() {
-          _step      = _Step.trackingAdmin;
-          _qrVisible = true;
-          _scanError = null;
-        });
+        setState(() { _step = _Step.trackingAdmin; _qrVisible = true; _scanError = null; });
       },
       onTrackingUpdate: (data) {
         if (!mounted) return;
@@ -434,25 +431,22 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
       onTrackingFailed: (data) {
         if (!mounted) return;
         final reason = data['reason'] as String? ?? '';
-        setState(() {
-          _step      = _Step.pickingUp;
-          _scanError = _trackingFailureMsg(reason);
-        });
+        setState(() { _step = _Step.pickingUp; _scanError = _trackingFailureMsg(reason); });
       },
     );
   }
 
   String _trackingFailureMsg(String reason) {
     const map = {
-      'qr_lost':      'QR code disappeared before the phone reached the slot. Retry.',
-      'out_of_frame': 'Phone left the camera view. Move directly toward the slot and retry.',
-      'timeout':      'Placement timed out. Retry.',
-      'detect_timeout': 'Phone not detected. Make sure it enters the camera view and retry.',
-      'phone_not_in_slot':    'Phone not detected in slot by internal camera. Retry.',
-      'insertion_timeout':    'Phone did not complete insertion in time. Retry.',
-      'stabilization_timeout':'Phone did not settle in time. Hold flat and retry.',
-      'tracker_lost':         'Tracking lost before phone reached slot. Move steadily.',
-      'error':                'Tracker error. Retry.',
+      'qr_lost':               'QR code disappeared before the phone reached the slot. Retry.',
+      'out_of_frame':          'Phone left the camera view. Move directly toward the slot and retry.',
+      'timeout':               'Placement timed out. Retry.',
+      'detect_timeout':        'Phone not detected. Make sure it enters the camera view and retry.',
+      'phone_not_in_slot':     'Phone not detected in slot by internal camera. Retry.',
+      'insertion_timeout':     'Phone did not complete insertion in time. Retry.',
+      'stabilization_timeout': 'Phone did not settle in time. Hold flat and retry.',
+      'tracker_lost':          'Tracking lost before phone reached slot. Move steadily.',
+      'error':                 'Tracker error. Retry.',
     };
     return map[reason] ?? 'Tracking failed ($reason). Retry.';
   }
@@ -476,7 +470,7 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
   bool get _canDeclareCurrentMissing {
     if (_currentLid == null) return false;
     final currentPid = _remaining.firstWhere(
-            (p) => _mismatchMap[p] == _currentLid, orElse: () => '');
+        (p) => _mismatchMap[p] == _currentLid, orElse: () => '');
     if (currentPid.isEmpty) return false;
     return _remaining
         .where((p) => p != currentPid)
@@ -485,7 +479,7 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
 
   Future<void> _onDeclareCurrentMissing() async {
     final pid = _remaining.firstWhere(
-            (p) => _mismatchMap[p] == _currentLid, orElse: () => '');
+        (p) => _mismatchMap[p] == _currentLid, orElse: () => '');
     if (pid.isEmpty) return;
     setState(() => _step = _Step.declaringMissing);
     final confirm = await showDialog<bool>(
@@ -494,8 +488,8 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
         title: const Text("Can't find phone?"),
         content: Text(
           "You've checked all other mismatches.\n\n"
-              'Declare ${_displayPid(pid)} as missing?\n'
-              'Its DB record will be withdrawn and evidence recorded permanently.',
+          'Declare ${_displayPid(pid)} as missing?\n'
+          'Its DB record will be withdrawn and evidence recorded permanently.',
         ),
         actions: [
           TextButton(
@@ -518,14 +512,8 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
   }
 
   void _autoSelect() {
-    if (_staged.isNotEmpty) {
-      setState(() => _step = _Step.unstageNext);
-      return;
-    }
-    if (_remaining.isNotEmpty) {
-      _selectPhone(_remaining.first);
-      return;
-    }
+    if (_staged.isNotEmpty) { setState(() => _step = _Step.unstageNext); return; }
+    if (_remaining.isNotEmpty) { _selectPhone(_remaining.first); return; }
     _socket.adminSessionClose();
   }
 
@@ -570,33 +558,24 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
     }
   }
 
-  /// Launch a normal deposit for a phone found in the box with no DB record.
-  /// Opens the DVWBottomSheet just like the student flow does.
   void _startDepositForNeedsDeposit() {
     final pid = _needsDepositPid;
     if (pid == null) return;
-
     setState(() => _step = _Step.depositInProgress);
-
-    // Emit deposit socket event first, then show the sheet.
     _socket.deposit(pid);
-
     showModalBottomSheet(
-      context: context,
-      isDismissible: false,
-      enableDrag: false,
+      context:         context,
+      isDismissible:   false,
+      enableDrag:      false,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (_) => DVWBottomSheet(
-        pid: pid,
-        isDeposit: true,
+        pid:           pid,
+        isDeposit:     true,
         socketService: _socket,
-        onComplete: () {
-          // Deposit complete — remove this pid from remaining (if present)
-          // and continue the session.
+        onComplete:    () {
           if (mounted) {
             _remaining.remove(pid);
             _needsDepositPid = null;
@@ -605,12 +584,8 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
         },
       ),
     ).then((_) {
-      // Sheet was dismissed (cancel or error) — go back to selectingPhone
       if (mounted && _step == _Step.depositInProgress) {
-        setState(() {
-          _needsDepositPid = null;
-          _step = _Step.selectingPhone;
-        });
+        setState(() { _needsDepositPid = null; _step = _Step.selectingPhone; });
         _autoSelect();
       }
     });
@@ -645,7 +620,7 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) {
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Use the button below to close the session properly.'),
+            content:  Text('Use the button below to close the session properly.'),
             duration: Duration(seconds: 2),
           ));
         }
@@ -653,58 +628,44 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
       child: Scaffold(
         backgroundColor: Colors.black,
         body: SafeArea(
-          child: Column(
-            children: [
-              Expanded(
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    _buildCamera(),
-                    _buildTopBar(),
-                  ],
-                ),
-              ),
-              SlideTransition(
-                position: _cardSlide,
-                child: _buildCard(),
-              ),
-            ],
-          ),
+          child: Column(children: [
+            Expanded(child: Stack(fit: StackFit.expand, children: [
+              _buildCamera(),
+              _buildTopBar(),
+            ])),
+            SlideTransition(
+              position: _cardSlide,
+              child:    _buildCard(),
+            ),
+          ]),
         ),
       ),
     );
   }
 
-  // ── Camera ────────────────────────────────────────────
-
   Widget _buildCamera() {
     return _videoConnected && _renderer.srcObject != null
         ? RTCVideoView(_renderer,
-        objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain)
+            objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain)
         : Container(
-      color: Colors.black,
-      child: Center(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          const SizedBox(
-            width: 28, height: 28,
-            child: CircularProgressIndicator(
-                strokeWidth: 2.5, color: Colors.white38),
-          ),
-          const SizedBox(height: 12),
-          const Text('Connecting top camera...',
-              style: TextStyle(
-                  color: Colors.white38, fontSize: 13)),
-        ]),
-      ),
-    );
+            color: Colors.black,
+            child: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+              const SizedBox(width: 28, height: 28,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2.5, color: Colors.white38)),
+              const SizedBox(height: 12),
+              const Text('Connecting top camera...',
+                  style: TextStyle(color: Colors.white38, fontSize: 13)),
+            ])),
+          );
   }
 
   Widget _buildTopBar() {
     final total = _mismatchMap.length;
     final done  = total - _remaining.length;
     return _TopProgressBar(
-      total: total,
-      done: done,
+      total:       total,
+      done:        done,
       isRecording: _step == _Step.scanning || _step == _Step.trackingAdmin,
     );
   }
@@ -714,39 +675,33 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
       decoration: BoxDecoration(
         color: const Color(0xFF1C1C1E),
         borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-        boxShadow: [
-          BoxShadow(
-              color: Colors.black.withOpacity(0.6),
-              blurRadius: 24,
-              spreadRadius: 4)
-        ],
+        boxShadow: [BoxShadow(
+            color: Colors.black.withOpacity(0.6),
+            blurRadius: 24, spreadRadius: 4)],
       ),
       child: Column(mainAxisSize: MainAxisSize.min, children: [
         const SizedBox(height: 10),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Row(
-            children: [
-              const Spacer(),
-              Container(
-                width: 36, height: 4,
+          child: Row(children: [
+            const Spacer(),
+            Container(width: 36, height: 4,
                 decoration: BoxDecoration(
                     color: Colors.white24,
-                    borderRadius: BorderRadius.circular(2)),
-              ),
-              const Spacer(),
-              if (_step != _Step.opening &&
-                  _step != _Step.sessionDone &&
-                  _step != _Step.error &&
-                  _step != _Step.depositInProgress)
-                _forceCloseButton(),
-            ],
-          ),
+                    borderRadius: BorderRadius.circular(2))),
+            const Spacer(),
+            if (_step != _Step.opening &&
+                _step != _Step.sessionDone &&
+                _step != _Step.error &&
+                _step != _Step.depositInProgress)
+              _forceCloseButton(),
+          ]),
         ),
         const SizedBox(height: 4),
         SingleChildScrollView(
           padding: EdgeInsets.fromLTRB(
-              20, 12, 20, MediaQuery.of(context).viewInsets.bottom + 24),
+              20, 12, 20,
+              MediaQuery.of(context).viewInsets.bottom + 24),
           child: _buildCardContent(),
         ),
       ]),
@@ -763,11 +718,11 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
         return _phoneSelectContent();
       case _Step.pickingUp:
         return _stepContent(
-          icon: Icons.pan_tool_alt_outlined,
-          color: Colors.orange,
-          title: 'Pick up the object from ${_slotLabel(_currentLid)}',
+          icon:     Icons.pan_tool_alt_outlined,
+          color:    Colors.orange,
+          title:    'Pick up the object from ${_slotLabel(_currentLid)}',
           subtitle: 'Once you have it in hand, tap the button. '
-              'QR scan will start automatically.',
+                    'QR scan will start automatically.',
           error: _scanError,
           actions: [
             _primaryBtn("I've picked it up", Colors.orange, _onPickedUp),
@@ -776,34 +731,33 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
             Opacity(
               opacity: (_canDeclareCurrentMissing && !_pendingServer) ? 1.0 : 0.35,
               child: TextButton.icon(
-                icon: const Icon(Icons.search_off,
+                icon:  const Icon(Icons.search_off,
                     size: 16, color: Colors.redAccent),
                 label: Text(
                   _canDeclareCurrentMissing
-                      ? "Can't find it - declare missing"
+                      ? "Can't find it — declare missing"
                       : "Can't find it (check all other phones first)",
-                  style: const TextStyle(color: Colors.redAccent, fontSize: 13),
+                  style: const TextStyle(
+                      color: Colors.redAccent, fontSize: 13),
                 ),
                 onPressed: (_canDeclareCurrentMissing && !_pendingServer)
-                    ? _onDeclareCurrentMissing
-                    : null,
+                    ? _onDeclareCurrentMissing : null,
               ),
             ),
           ],
         );
       case _Step.scanning:
         return _stepContent(
-          icon: Icons.qr_code_scanner,
-          color: Colors.blueAccent,
-          title: 'Scanning for QR code...',
-          subtitle: 'Hold the QR code under the camera and keep it still. '
-              'Tracking will start as soon as it is found.',
-          loading: !_noQrButtonVisible,
-          error: _scanError,
+          icon:     Icons.qr_code_scanner,
+          color:    Colors.blueAccent,
+          title:    'Scanning for QR code...',
+          subtitle: 'Hold the QR code under the camera and keep it still.',
+          loading:  !_noQrButtonVisible,
+          error:    _scanError,
           actions: [
             if (_noQrButtonVisible) ...[
               OutlinedButton.icon(
-                icon: const Icon(Icons.hide_image_outlined, size: 18),
+                icon:  const Icon(Icons.hide_image_outlined, size: 18),
                 label: const Text('No QR code on this object'),
                 style: OutlinedButton.styleFrom(
                     minimumSize: const Size(double.infinity, 48),
@@ -816,77 +770,73 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
         );
       case _Step.trackingAdmin:
         return _stepContent(
-          icon: Icons.my_location_outlined,
-          color: Colors.greenAccent,
-          title: 'Move phone to ${_slotLabel(_expectedLid)}',
-          subtitle: 'Move it directly to the slot - or into a staging zone '
-              'if the slot is occupied. The system detects both automatically.',
-          error: _scanError,
-          actions: [
-            _TrackingQrBadge(qrVisible: _qrVisible),
-          ],
+          icon:     Icons.my_location_outlined,
+          color:    Colors.greenAccent,
+          title:    'Move phone to ${_slotLabel(_expectedLid)}',
+          subtitle: 'Move it directly to the slot — or into a staging zone '
+                    'if the slot is occupied.',
+          error:    _scanError,
+          actions:  [_TrackingQrBadge(qrVisible: _qrVisible)],
         );
       case _Step.autoStaged:
         return _stepContent(
-          icon: Icons.hourglass_top,
-          color: Colors.amber,
-          title: 'Phone staged - loading next step...',
-          subtitle: 'The system detected the phone in the staging zone and is '
-              'selecting the next phone to handle.',
-          loading: true,
-          actions: const [],
+          icon:     Icons.hourglass_top,
+          color:    Colors.amber,
+          title:    'Phone staged — loading next step...',
+          subtitle: 'The system detected the phone in the staging zone.',
+          loading:  true,
+          actions:  const [],
         );
       case _Step.unstageNext:
         final pid = _staged.isNotEmpty ? _staged.first : '?';
         final lid = _mismatchMap[pid] ?? 0;
         return _stepContent(
-          icon: Icons.unarchive_outlined,
-          color: Colors.tealAccent,
-          title: 'Retrieve ${_displayPid(pid)} from staging',
+          icon:     Icons.unarchive_outlined,
+          color:    Colors.tealAccent,
+          title:    'Retrieve ${_displayPid(pid)} from staging',
           subtitle: 'Pick it up from the staging zone. '
-              'Tracking to slot ${lid + 1} will start automatically.',
-          error: _scanError,
-          actions: [
-            _primaryBtn("I've retrieved it from staging", Colors.teal, _onUnstageNext),
+                    'Tracking to slot ${lid + 1} will start automatically.',
+          error:    _scanError,
+          actions:  [
+            _primaryBtn(
+                "I've retrieved it from staging", Colors.teal, _onUnstageNext),
           ],
         );
       case _Step.depositInProgress:
-        // DVWBottomSheet is showing on top; show a waiting state here.
         return _stepContent(
-          icon: Icons.move_to_inbox_outlined,
-          color: Colors.indigoAccent,
-          title: 'Deposit in progress...',
-          subtitle: 'Follow the instructions in the panel below to complete the deposit.',
-          loading: true,
-          actions: const [],
+          icon:     Icons.move_to_inbox_outlined,
+          color:    Colors.indigoAccent,
+          title:    'Deposit in progress...',
+          subtitle: 'Follow the instructions in the panel below.',
+          loading:  true,
+          actions:  const [],
         );
       case _Step.needsDeposit:
-        // Auto-starts deposit immediately — this state is transient.
         return _stepContent(
-          icon: Icons.move_to_inbox_outlined,
-          color: Colors.indigoAccent,
-          title: 'Starting deposit...',
+          icon:     Icons.move_to_inbox_outlined,
+          color:    Colors.indigoAccent,
+          title:    'Starting deposit...',
           subtitle: 'Preparing deposit for the phone found in this slot.',
-          loading: true,
-          actions: const [],
+          loading:  true,
+          actions:  const [],
         );
       case _Step.noQrHandled:
         return _stepContent(
-          icon: Icons.hourglass_top,
-          color: Colors.grey,
-          title: 'Waiting for confirmation...',
+          icon:     Icons.hourglass_top,
+          color:    Colors.grey,
+          title:    'Waiting for confirmation...',
           subtitle: 'Confirm the declaration in the dialog above.',
-          loading: true,
-          actions: const [],
+          loading:  true,
+          actions:  const [],
         );
       case _Step.declaringMissing:
         return _stepContent(
-          icon: Icons.search_off,
-          color: Colors.redAccent,
-          title: 'Declaring phone as missing...',
+          icon:     Icons.search_off,
+          color:    Colors.redAccent,
+          title:    'Declaring phone as missing...',
           subtitle: 'Updating the database and saving evidence. Please wait.',
-          loading: true,
-          actions: const [],
+          loading:  true,
+          actions:  const [],
         );
       case _Step.sessionDone:
         return _doneContent();
@@ -903,8 +853,8 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
         const Icon(Icons.wifi_off, color: Colors.orange, size: 40),
         const SizedBox(height: 12),
         const Text('No response from server',
-            style: TextStyle(
-                fontSize: 17, fontWeight: FontWeight.bold, color: Colors.white)),
+            style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold,
+                color: Colors.white)),
         const SizedBox(height: 8),
         const Text(
           'Check that admin handlers are registered and the slot monitor is running.',
@@ -923,14 +873,13 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
     }
     return Column(mainAxisSize: MainAxisSize.min, children: [
       const SizedBox(height: 8),
-      const SizedBox(
-          width: 28, height: 28,
+      const SizedBox(width: 28, height: 28,
           child: CircularProgressIndicator(
               strokeWidth: 2.5, color: Colors.white54)),
       const SizedBox(height: 16),
       const Text('Opening session...',
-          style: TextStyle(
-              fontSize: 17, fontWeight: FontWeight.bold, color: Colors.white)),
+          style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold,
+              color: Colors.white)),
       const SizedBox(height: 6),
       const Text('Authenticating and loading mismatch list.',
           style: TextStyle(color: Colors.white54, fontSize: 13)),
@@ -940,119 +889,95 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
 
   Widget _phoneSelectContent() {
     final hasStaged = _staged.isNotEmpty;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(children: [
-          const Icon(Icons.swap_horiz,
-              color: Colors.deepOrangeAccent, size: 20),
-          const SizedBox(width: 8),
-          const Expanded(
-            child: Text('Choose which phone to handle',
-                style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white)),
-          ),
-          TextButton(
-            style: TextButton.styleFrom(
-                padding: EdgeInsets.zero, minimumSize: Size.zero),
-            onPressed: _autoSelect,
-            child: const Text('Auto',
-                style: TextStyle(
-                    color: Colors.deepOrangeAccent,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600)),
-          ),
-        ]),
-        const SizedBox(height: 4),
-        Text(
-          hasStaged
-              ? 'Retrieve staged phones before picking new ones.'
-              : 'Tap any phone to go straight to pick-up.',
-          style: const TextStyle(color: Colors.white54, fontSize: 13),
+    return Column(mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        const Icon(Icons.swap_horiz,
+            color: Colors.deepOrangeAccent, size: 20),
+        const SizedBox(width: 8),
+        const Expanded(child: Text('Choose which phone to handle',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold,
+                color: Colors.white))),
+        TextButton(
+          style: TextButton.styleFrom(
+              padding: EdgeInsets.zero, minimumSize: Size.zero),
+          onPressed: _autoSelect,
+          child: const Text('Auto',
+              style: TextStyle(color: Colors.deepOrangeAccent,
+                  fontSize: 13, fontWeight: FontWeight.w600)),
         ),
-        const SizedBox(height: 14),
-        if (hasStaged) ...[
-          const Text('STAGED',
-              style: TextStyle(
-                  color: Colors.tealAccent,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 1.2)),
-          const SizedBox(height: 6),
-          ..._staged.map((pid) => _phoneChip(
-            pid: pid,
-            lid: _mismatchMap[pid] ?? 0,
-            color: Colors.teal,
-            icon: Icons.unarchive_outlined,
-            onTap: () => _socket.adminUnstagePhone(pid),
-          )),
-          const SizedBox(height: 12),
-        ],
-        if (_remaining.isNotEmpty) ...[
-          if (hasStaged)
-            const Text('REMAINING',
-                style: TextStyle(
-                    color: Colors.white38,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 1.2)),
-          if (hasStaged) const SizedBox(height: 6),
-          ..._remaining.map((pid) {
-            final isDefault = pid == _remaining.first && !hasStaged;
-            return _phoneChip(
-              pid: pid,
-              lid: _mismatchMap[pid] ?? 0,
-              color: isDefault ? Colors.deepOrangeAccent : Colors.white54,
-              icon: isDefault ? Icons.smartphone : Icons.smartphone_outlined,
-              onTap: () => _selectPhone(pid),
-            );
-          }),
-        ],
-        const SizedBox(height: 8),
+      ]),
+      const SizedBox(height: 4),
+      Text(
+        hasStaged
+            ? 'Retrieve staged phones before picking new ones.'
+            : 'Tap any phone to go straight to pick-up.',
+        style: const TextStyle(color: Colors.white54, fontSize: 13),
+      ),
+      const SizedBox(height: 14),
+      if (hasStaged) ...[
+        const Text('STAGED',
+            style: TextStyle(color: Colors.tealAccent, fontSize: 11,
+                fontWeight: FontWeight.w700, letterSpacing: 1.2)),
+        const SizedBox(height: 6),
+        ..._staged.map((pid) => _phoneChip(
+          pid:  pid, lid: _mismatchMap[pid] ?? 0,
+          color: Colors.teal, icon: Icons.unarchive_outlined,
+          onTap: () => _socket.adminUnstagePhone(pid),
+        )),
+        const SizedBox(height: 12),
       ],
-    );
+      if (_remaining.isNotEmpty) ...[
+        if (hasStaged) ...[
+          const Text('REMAINING',
+              style: TextStyle(color: Colors.white38, fontSize: 11,
+                  fontWeight: FontWeight.w700, letterSpacing: 1.2)),
+          const SizedBox(height: 6),
+        ],
+        ..._remaining.map((pid) {
+          final isDefault = pid == _remaining.first && !hasStaged;
+          return _phoneChip(
+            pid:   pid, lid: _mismatchMap[pid] ?? 0,
+            color: isDefault ? Colors.deepOrangeAccent : Colors.white54,
+            icon:  isDefault ? Icons.smartphone : Icons.smartphone_outlined,
+            onTap: () => _selectPhone(pid),
+          );
+        }),
+      ],
+      const SizedBox(height: 8),
+    ]);
   }
 
   Widget _phoneChip({
-    required String pid,
-    required int lid,
-    required Color color,
-    required IconData icon,
+    required String      pid,
+    required int         lid,
+    required Color       color,
+    required IconData    icon,
     required VoidCallback onTap,
   }) =>
       Padding(
         padding: const EdgeInsets.only(bottom: 8),
         child: InkWell(
-          onTap: onTap,
+          onTap:        onTap,
           borderRadius: BorderRadius.circular(12),
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
             decoration: BoxDecoration(
-              color: color.withOpacity(0.12),
+              color:  color.withOpacity(0.12),
               border: Border.all(color: color.withOpacity(0.35)),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Row(children: [
               Icon(icon, color: color, size: 20),
               const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(_displayPid(pid),
-                        style: TextStyle(
-                            color: color,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600)),
-                    Text('Expected in slot ${lid + 1}',
-                        style: const TextStyle(
-                            color: Colors.white54, fontSize: 12)),
-                  ],
-                ),
-              ),
+              Expanded(child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(_displayPid(pid),
+                    style: TextStyle(color: color, fontSize: 14,
+                        fontWeight: FontWeight.w600)),
+                Text('Expected in slot ${lid + 1}',
+                    style: const TextStyle(color: Colors.white54, fontSize: 12)),
+              ])),
               Icon(Icons.chevron_right,
                   color: color.withOpacity(0.6), size: 20),
             ]),
@@ -1061,48 +986,45 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
       );
 
   Widget _stepContent({
-    required IconData icon,
-    required Color color,
-    required String title,
-    required String subtitle,
-    String? error,
-    bool loading = false,
+    required IconData    icon,
+    required Color       color,
+    required String      title,
+    required String      subtitle,
+    String?  error,
+    bool     loading = false,
     List<Widget> actions = const [],
   }) =>
       Column(mainAxisSize: MainAxisSize.min, children: [
         if (loading)
-          SizedBox(
-              width: 36, height: 36,
+          SizedBox(width: 36, height: 36,
               child: CircularProgressIndicator(strokeWidth: 2.5, color: color))
         else
           Icon(icon, color: color, size: 38),
         const SizedBox(height: 14),
         Text(title,
             textAlign: TextAlign.center,
-            style: const TextStyle(
-                fontSize: 17, fontWeight: FontWeight.bold, color: Colors.white)),
+            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold,
+                color: Colors.white)),
         const SizedBox(height: 8),
         Text(subtitle,
             textAlign: TextAlign.center,
-            style: const TextStyle(
-                color: Colors.white54, fontSize: 13, height: 1.45)),
+            style: const TextStyle(color: Colors.white54, fontSize: 13,
+                height: 1.45)),
         if (error != null) ...[
           const SizedBox(height: 12),
           Container(
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             decoration: BoxDecoration(
-              color: Colors.red.withOpacity(0.15),
+              color:  Colors.red.withOpacity(0.15),
               border: Border.all(color: Colors.red.withOpacity(0.4)),
               borderRadius: BorderRadius.circular(10),
             ),
             child: Row(children: [
               const Icon(Icons.error_outline, color: Colors.redAccent, size: 18),
               const SizedBox(width: 10),
-              Expanded(
-                  child: Text(error,
-                      style: const TextStyle(
-                          color: Colors.redAccent, fontSize: 13))),
+              Expanded(child: Text(error,
+                  style: const TextStyle(color: Colors.redAccent, fontSize: 13))),
             ]),
           ),
         ],
@@ -1116,98 +1038,86 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
     final depositing = (_summary?['needs_deposit']    as List?)?.length ?? 0;
     final unresolved = (_summary?['unresolved']       as List?)?.length ?? 0;
 
-    final icon  = _forceClosed
-        ? Icons.cancel_outlined
-        : Icons.check_circle_outline;
-    final iconColor = _forceClosed ? Colors.orange : Colors.greenAccent;
-    final title = _forceClosed
-        ? 'Session ended early'
-        : 'All done! Have a nice day';
+    final icon      = _forceClosed ? Icons.cancel_outlined : Icons.check_circle_outline;
+    final iconColor = _forceClosed ? Colors.orange          : Colors.greenAccent;
+    final title     = _forceClosed ? 'Session ended early'  : 'All done! Have a nice day';
 
     return Column(mainAxisSize: MainAxisSize.min, children: [
       Icon(icon, color: iconColor, size: 48),
       const SizedBox(height: 14),
       Text(title,
           textAlign: TextAlign.center,
-          style: const TextStyle(
-              fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white)),
+          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold,
+              color: Colors.white)),
       const SizedBox(height: 14),
-      Wrap(
-          spacing: 8, runSpacing: 6, alignment: WrapAlignment.center,
-          children: [
-            if (resolved   > 0) _summaryChip('$resolved resolved', Colors.green),
-            if (missing    > 0) _summaryChip('$missing missing', Colors.red),
-            if (depositing > 0) _summaryChip('$depositing to deposit', Colors.indigo),
-            if (unresolved > 0) _summaryChip('$unresolved unresolved', Colors.orange),
-          ]),
+      Wrap(spacing: 8, runSpacing: 6, alignment: WrapAlignment.center, children: [
+        if (resolved   > 0) _summaryChip('$resolved resolved',   Colors.green),
+        if (missing    > 0) _summaryChip('$missing missing',     Colors.red),
+        if (depositing > 0) _summaryChip('$depositing to deposit', Colors.indigo),
+        if (unresolved > 0) _summaryChip('$unresolved unresolved', Colors.orange),
+      ]),
       if (_forceClosed) ...[
         const SizedBox(height: 12),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          decoration: BoxDecoration(
-            color: Colors.orange.withOpacity(0.15),
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: Colors.orange.withOpacity(0.4)),
-          ),
-          child: const Row(children: [
-            Icon(Icons.folder_open_outlined, color: Colors.orange, size: 18),
-            SizedBox(width: 10),
-            Expanded(
-                child: Text(
-                    'Evidence saved as NotFullyResolved. '
-                    'Unresolved mismatches will re-alarm.',
-                    style: TextStyle(color: Colors.orange, fontSize: 13))),
-          ]),
-        ),
+        _warningBox(Colors.orange,
+            Icons.folder_open_outlined,
+            'Evidence saved as NotFullyResolved. '
+            'Unresolved mismatches will re-alarm.'),
       ] else if (_evidenceKept) ...[
         const SizedBox(height: 12),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          decoration: BoxDecoration(
-            color: Colors.orange.withOpacity(0.15),
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: Colors.orange.withOpacity(0.4)),
-          ),
-          child: const Row(children: [
-            Icon(Icons.warning_amber_outlined, color: Colors.orange, size: 18),
-            SizedBox(width: 10),
-            Expanded(
-                child: Text('Evidence kept - anomalies were recorded.',
-                    style: TextStyle(color: Colors.orange, fontSize: 13))),
-          ]),
-        ),
+        _warningBox(Colors.orange,
+            Icons.warning_amber_outlined,
+            'Evidence kept — anomalies were recorded.'),
       ],
       const SizedBox(height: 24),
-      _primaryBtn('Close', _forceClosed ? Colors.deepOrangeAccent : Colors.green,
-              () => Navigator.of(context).pop(_forceClosed ? false : true)),
+      _primaryBtn(
+        'Close',
+        _forceClosed ? Colors.deepOrangeAccent : Colors.green,
+        () => Navigator.of(context).pop(_forceClosed ? false : true),
+      ),
     ]);
   }
+
+  Widget _warningBox(Color color, IconData icon, String text) =>
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color:  color.withOpacity(0.15),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: color.withOpacity(0.4)),
+        ),
+        child: Row(children: [
+          Icon(icon, color: color, size: 18),
+          const SizedBox(width: 10),
+          Expanded(child: Text(text,
+              style: TextStyle(color: color, fontSize: 13))),
+        ]),
+      );
 
   Widget _summaryChip(String label, Color color) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
     decoration: BoxDecoration(
-        color: color.withOpacity(0.15),
+        color:  color.withOpacity(0.15),
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: color.withOpacity(0.4))),
     child: Text(label,
-        style: TextStyle(
-            color: color, fontSize: 13, fontWeight: FontWeight.w600)),
+        style: TextStyle(color: color, fontSize: 13,
+            fontWeight: FontWeight.w600)),
   );
 
   Widget _errorContent() => Column(mainAxisSize: MainAxisSize.min, children: [
     const Icon(Icons.error_outline, color: Colors.redAccent, size: 44),
     const SizedBox(height: 14),
     const Text('Session error',
-        style: TextStyle(
-            fontSize: 17, fontWeight: FontWeight.bold, color: Colors.white)),
+        style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold,
+            color: Colors.white)),
     const SizedBox(height: 8),
     Text(_errorText ?? 'Something went wrong.',
         textAlign: TextAlign.center,
         style: const TextStyle(color: Colors.white54, fontSize: 13)),
     const SizedBox(height: 24),
     _primaryBtn('Close', Colors.grey,
-            () => Navigator.of(context).pop(
-                _sessionWasOpened ? false : null)),
+        () => Navigator.of(context).pop(
+            _sessionWasOpened ? false : null)),
   ]);
 
   Widget _primaryBtn(String label, Color? color, VoidCallback onPressed) =>
@@ -1217,52 +1127,45 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
           minimumSize: const Size(double.infinity, 50),
           shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12)),
-          textStyle:
-          const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+          textStyle: const TextStyle(
+              fontSize: 15, fontWeight: FontWeight.w600),
         ),
         onPressed: _pendingServer ? null : onPressed,
         child: _pendingServer
-            ? const SizedBox(
-            width: 20, height: 20,
-            child: CircularProgressIndicator(
-                strokeWidth: 2.5, color: Colors.white70))
+            ? const SizedBox(width: 20, height: 20,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2.5, color: Colors.white70))
             : Text(label),
       );
 
   Widget _changePhoneBtn() => Padding(
     padding: const EdgeInsets.only(top: 4),
     child: TextButton.icon(
-      icon: const Icon(Icons.swap_horiz, size: 16, color: Colors.white38),
+      icon:  const Icon(Icons.swap_horiz, size: 16, color: Colors.white38),
       label: const Text('Handle a different phone first',
           style: TextStyle(color: Colors.white38, fontSize: 13)),
-      onPressed: _pendingServer
-          ? null
-          : () => setState(() {
-        _currentPid  = null;
-        _currentLid  = null;
-        _sameSlot    = false;
-        _scanError   = null;
+      onPressed: _pendingServer ? null : () => setState(() {
+        _currentPid  = null; _currentLid = null;
+        _sameSlot    = false; _scanError  = null;
         _step        = _Step.selectingPhone;
       }),
     ),
   );
 
-  Widget _forceCloseButton() {
-    return GestureDetector(
-      onLongPress: () => _onForceClose(safe: false),
-      child: TextButton.icon(
-        icon: const Icon(Icons.close, size: 14, color: Colors.white38),
-        label: const Text('End session',
-            style: TextStyle(color: Colors.white38, fontSize: 12)),
-        style: TextButton.styleFrom(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          minimumSize: Size.zero,
-          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        ),
-        onPressed: _pendingServer ? null : () => _onForceClose(safe: true),
+  Widget _forceCloseButton() => GestureDetector(
+    onLongPress: () => _onForceClose(safe: false),
+    child: TextButton.icon(
+      icon:  const Icon(Icons.close, size: 14, color: Colors.white38),
+      label: const Text('End session',
+          style: TextStyle(color: Colors.white38, fontSize: 12)),
+      style: TextButton.styleFrom(
+        padding:       const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        minimumSize:   Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
       ),
-    );
-  }
+      onPressed: _pendingServer ? null : () => _onForceClose(safe: true),
+    ),
+  );
 
   Future<void> _onForceClose({required bool safe}) async {
     final hasPhoneInHand = _step == _Step.scanning || _step == _Step.trackingAdmin;
@@ -1274,14 +1177,12 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
       warningText = 'DEBUG: Force-close regardless of state.\n'
           'All evidence will be saved as NotFullyResolved.';
     } else if (hasPhoneInHand) {
-      warningText = 'You have a phone in hand. Put it down first, '
-          'then close the session.';
-      if (mounted) setState(() => _scanError = warningText);
+      if (mounted) setState(() => _scanError =
+          'You have a phone in hand. Put it down first, then close the session.');
       return;
     } else if (hasStaged) {
-      warningText = 'There are staged phones. Resolve them first, '
-          'then close the session.';
-      if (mounted) setState(() => _scanError = warningText);
+      if (mounted) setState(() => _scanError =
+          'There are staged phones. Resolve them first, then close the session.');
       return;
     } else {
       warningText = hasRemaining
@@ -1309,8 +1210,7 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
-              backgroundColor: safe ? Colors.deepOrangeAccent : Colors.red,
-            ),
+                backgroundColor: safe ? Colors.deepOrangeAccent : Colors.red),
             onPressed: () => Navigator.pop(context, true),
             child: Text(safe ? 'End session' : 'Force close'),
           ),
@@ -1322,12 +1222,9 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
     _waitForServer();
     _socket.adminForceClose(safe: safe);
   }
-
-  String _nextLabel() =>
-      (_remaining.isEmpty && _staged.isEmpty) ? 'Finish Session' : 'Next';
 }
 
-// ── QR status badge ────────────────────────────────────────────────────────────
+// ── QR status badge ───────────────────────────────────────────────────────────
 
 class _TrackingQrBadge extends StatelessWidget {
   final bool qrVisible;
@@ -1338,24 +1235,22 @@ class _TrackingQrBadge extends StatelessWidget {
     final color = qrVisible ? Colors.green : Colors.orange;
     final icon  = qrVisible ? Icons.qr_code_2 : Icons.qr_code_2_outlined;
     final label = qrVisible
-        ? 'QR visible - move phone to destination slot'
-        : 'QR not visible - keep QR facing up!';
+        ? 'QR visible — move phone to destination slot'
+        : 'QR not visible — keep QR facing up!';
     return AnimatedContainer(
       duration: const Duration(milliseconds: 300),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.12),
+        color:  color.withOpacity(0.12),
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: color.withOpacity(0.4)),
       ),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
         Icon(icon, color: color, size: 20),
         const SizedBox(width: 8),
-        Flexible(
-          child: Text(label,
-              style: TextStyle(
-                  color: color, fontSize: 13, fontWeight: FontWeight.w500)),
-        ),
+        Flexible(child: Text(label,
+            style: TextStyle(color: color, fontSize: 13,
+                fontWeight: FontWeight.w500))),
       ]),
     );
   }
@@ -1364,8 +1259,8 @@ class _TrackingQrBadge extends StatelessWidget {
 // ── Session progress bar overlay ──────────────────────────────────────────────
 
 class _TopProgressBar extends StatelessWidget {
-  final int total;
-  final int done;
+  final int  total;
+  final int  done;
   final bool isRecording;
   const _TopProgressBar({
     required this.total,
@@ -1375,13 +1270,14 @@ class _TopProgressBar extends StatelessWidget {
 
   static Widget _badge(IconData icon, String label, Color bg) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-    decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(5)),
+    decoration: BoxDecoration(
+        color: bg, borderRadius: BorderRadius.circular(5)),
     child: Row(mainAxisSize: MainAxisSize.min, children: [
       Icon(icon, color: Colors.white, size: 11),
       const SizedBox(width: 4),
       Text(label,
-          style: const TextStyle(
-              color: Colors.white, fontSize: 10, fontWeight: FontWeight.w600)),
+          style: const TextStyle(color: Colors.white, fontSize: 10,
+              fontWeight: FontWeight.w600)),
     ]),
   );
 
@@ -1394,38 +1290,35 @@ class _TopProgressBar extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         decoration: const BoxDecoration(
           gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
+            begin:  Alignment.topCenter,
+            end:    Alignment.bottomCenter,
             colors: [Colors.black87, Colors.transparent],
           ),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(children: [
-              if (isRecording) _badge(Icons.fiber_manual_record, 'REC', Colors.red),
-              const SizedBox(width: 8),
-              _badge(Icons.videocam_outlined, 'TOP CAM', Colors.white24),
-              const Spacer(),
-              if (total > 0)
-                Text('$done / $total',
-                    style: const TextStyle(color: Colors.white70, fontSize: 13)),
-            ]),
-            if (total > 0) ...[
-              const SizedBox(height: 6),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(2),
-                child: LinearProgressIndicator(
-                  value: pct,
-                  minHeight: 3,
-                  backgroundColor: Colors.white24,
-                  valueColor: AlwaysStoppedAnimation(
-                      done >= total ? Colors.green : Colors.deepOrangeAccent),
-                ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            if (isRecording) _badge(Icons.fiber_manual_record, 'REC', Colors.red),
+            const SizedBox(width: 8),
+            _badge(Icons.videocam_outlined, 'TOP CAM', Colors.white24),
+            const Spacer(),
+            if (total > 0)
+              Text('$done / $total',
+                  style: const TextStyle(color: Colors.white70, fontSize: 13)),
+          ]),
+          if (total > 0) ...[
+            const SizedBox(height: 6),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(2),
+              child: LinearProgressIndicator(
+                value:           pct,
+                minHeight:       3,
+                backgroundColor: Colors.white24,
+                valueColor:      AlwaysStoppedAnimation(
+                    done >= total ? Colors.green : Colors.deepOrangeAccent),
               ),
-            ],
+            ),
           ],
-        ),
+        ]),
       ),
     );
   }

@@ -1,13 +1,9 @@
 # ============================================================
-# FILE: server/slot_monitor/db_interface.py
+# FILE: back_end/slot_monitor/db_interface.py
 # ============================================================
 """
 Unified database interface for slot monitoring.
-Supports both sync (for legacy/calibration) and async (for monitoring) operations.
-
-USAGE:
-- Sync methods: For calibration, one-time operations, legacy code
-- Async methods: For real-time monitoring (high performance)
+Supports both sync (for legacy/calibration) and async (for monitoring).
 """
 
 import asyncio
@@ -23,16 +19,14 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================
-# EMBEDDING SERIALIZATION (used by both sync and async)
+# EMBEDDING SERIALIZATION
 # ============================================================
 
 def embedding_to_bytes(emb: np.ndarray) -> bytes:
-    """Convert numpy embedding to bytes for DB storage."""
     return emb.astype(np.float32).tobytes()
 
 
 def embedding_from_bytes(data: bytes) -> np.ndarray:
-    """Convert bytes from DB to numpy embedding."""
     return np.frombuffer(data, dtype=np.float32)
 
 
@@ -41,42 +35,21 @@ def embedding_from_bytes(data: bytes) -> np.ndarray:
 # ============================================================
 
 class SlotMonitorDB:
-    """
-    Synchronous DB interface for slot monitoring.
-
-    USE FOR:
-    - Calibration scripts (embed_calibration.py)
-    - One-time operations (setup, testing)
-    - Legacy code that can't use async
-
-    PERFORMANCE: Blocking I/O (fine for non-realtime operations)
-    """
-
-    # ------------------------------------------------------------
-    # BASELINE MANAGEMENT
-    # ------------------------------------------------------------
 
     @staticmethod
     def fetch_occupied_slots() -> List[Tuple[int, str]]:
-        """
-        Fetch all currently occupied slots.
-
-        Returns:
-            List of (lid, pid) tuples
-        """
         conn = get_conn()
         try:
             with conn.cursor() as cur:
                 cur.execute("""
-                            SELECT lid, pid
-                            FROM phone_storage
-                            WHERE retrieved_at IS NULL
-                            ORDER BY lid;
-                            """)
+                    SELECT lid, pid
+                    FROM phone_storage
+                    WHERE retrieved_at IS NULL
+                    ORDER BY lid;
+                """)
                 rows = cur.fetchall()
                 logger.info(f"Fetched {len(rows)} occupied slots from DB")
                 return rows
-
         except Exception as e:
             logger.error(f"Failed to fetch occupied slots: {e}")
             return []
@@ -85,32 +58,23 @@ class SlotMonitorDB:
 
     @staticmethod
     def fetch_all_baselines() -> Dict[int, np.ndarray]:
-        """
-        Fetch ALL slot baselines (occupied and empty slots).
-
-        Returns:
-            Dict mapping lid -> baseline_embedding
-        """
         conn = get_conn()
         try:
             with conn.cursor() as cur:
                 cur.execute("""
-                            SELECT lid, embedding
-                            FROM slot_baselines
-                            WHERE embedding IS NOT NULL
-                              AND embedding != '\\x00'::bytea
-                            ORDER BY lid;
-                            """)
-                rows = cur.fetchall()
-
+                    SELECT lid, embedding
+                    FROM slot_baselines
+                    WHERE embedding IS NOT NULL
+                      AND embedding != '\\x00'::bytea
+                    ORDER BY lid;
+                """)
+                rows      = cur.fetchall()
                 baselines = {}
                 for lid, emb_bytes in rows:
                     if emb_bytes:
                         baselines[lid] = embedding_from_bytes(emb_bytes)
-
                 logger.info(f"Fetched {len(baselines)} baselines from DB")
                 return baselines
-
         except Exception as e:
             logger.error(f"Failed to fetch baselines: {e}")
             return {}
@@ -119,47 +83,36 @@ class SlotMonitorDB:
 
     @staticmethod
     def save_baseline(lid: int, embedding: np.ndarray):
-        """Save or update baseline embedding for a slot."""
         conn = get_conn()
         try:
             emb_bytes = embedding_to_bytes(embedding)
-
             with conn.cursor() as cur:
                 cur.execute("""
-                            INSERT INTO slot_baselines (lid, embedding)
-                            VALUES (%s, %s) ON CONFLICT (lid)
-                            DO UPDATE SET
-                                embedding = EXCLUDED.embedding,
-                                calibrated_at = NOW()
-                            """, (lid, emb_bytes))
+                    INSERT INTO slot_baselines (lid, embedding)
+                    VALUES (%s, %s) ON CONFLICT (lid)
+                    DO UPDATE SET
+                        embedding     = EXCLUDED.embedding,
+                        calibrated_at = NOW()
+                """, (lid, emb_bytes))
                 conn.commit()
                 logger.debug(f"Saved baseline for slot {lid}")
-
         except Exception as e:
             conn.rollback()
             logger.error(f"Failed to save baseline for slot {lid}: {e}")
         finally:
             put_conn(conn)
 
-    # ------------------------------------------------------------
-    # SLOT STATE QUERIES
-    # ------------------------------------------------------------
-
     @staticmethod
     def get_pid_for_lid(lid: int) -> Optional[str]:
-        """Get phone ID for a given location."""
         conn = get_conn()
         try:
             with conn.cursor() as cur:
                 cur.execute("""
-                            SELECT pid
-                            FROM phone_storage
-                            WHERE lid = %s
-                              AND retrieved_at IS NULL LIMIT 1;
-                            """, (lid,))
+                    SELECT pid FROM phone_storage
+                    WHERE lid = %s AND retrieved_at IS NULL LIMIT 1;
+                """, (lid,))
                 row = cur.fetchone()
                 return row[0] if row else None
-
         except Exception as e:
             logger.error(f"Failed to get PID for LID {lid}: {e}")
             return None
@@ -168,18 +121,14 @@ class SlotMonitorDB:
 
     @staticmethod
     def is_slot_occupied(lid: int) -> bool:
-        """Check if a slot is currently occupied."""
         conn = get_conn()
         try:
             with conn.cursor() as cur:
                 cur.execute("""
-                            SELECT EXISTS(SELECT 1
-                                          FROM phone_storage
-                                          WHERE lid = %s
-                                            AND retrieved_at IS NULL);
-                            """, (lid,))
+                    SELECT EXISTS(SELECT 1 FROM phone_storage
+                                  WHERE lid = %s AND retrieved_at IS NULL);
+                """, (lid,))
                 return cur.fetchone()[0]
-
         except Exception as e:
             logger.error(f"Failed to check occupancy for slot {lid}: {e}")
             return False
@@ -188,11 +137,6 @@ class SlotMonitorDB:
 
     @staticmethod
     def count_stored_phones() -> Optional[int]:
-        """
-        Return the number of phones currently in storage (retrieved_at IS NULL).
-        Used by AdminSessionContext for the phone count invariant check.
-        Returns None on DB error.
-        """
         conn = get_conn()
         try:
             with conn.cursor() as cur:
@@ -208,22 +152,12 @@ class SlotMonitorDB:
             put_conn(conn)
 
     @staticmethod
-    def pid_exists(pid: int) -> bool:
-        """
-        Check if a phone PID exists in the database.
-
-        Args:
-            pid: Phone ID
-
-        Returns:
-            True if phone exists, False otherwise
-        """
+    def pid_exists(pid: str) -> bool:
         conn = get_conn()
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT EXISTS (SELECT 1 FROM phones WHERE pid = %s);",
-                    (pid,)
+                    "SELECT EXISTS(SELECT 1 FROM phones WHERE pid = %s);", (pid,)
                 )
                 return cur.fetchone()[0]
         except Exception as e:
@@ -233,25 +167,14 @@ class SlotMonitorDB:
             put_conn(conn)
 
     @staticmethod
-    def is_phone_stored(pid: int) -> bool:
-        """
-        Check if a phone is currently in storage (not yet retrieved).
-
-        Args:
-            pid: Phone ID
-
-        Returns:
-            True if the phone has an active storage record
-        """
+    def is_phone_stored(pid: str) -> bool:
         conn = get_conn()
         try:
             with conn.cursor() as cur:
                 cur.execute("""
-                            SELECT EXISTS(SELECT 1
-                                          FROM phone_storage
-                                          WHERE pid = %s
-                                            AND retrieved_at IS NULL);
-                            """, (pid,))
+                    SELECT EXISTS(SELECT 1 FROM phone_storage
+                                  WHERE pid = %s AND retrieved_at IS NULL);
+                """, (pid,))
                 return cur.fetchone()[0]
         except Exception as e:
             logger.error(f"Failed to check storage status for PID {pid}: {e}")
@@ -261,25 +184,18 @@ class SlotMonitorDB:
 
     @staticmethod
     def get_next_free_lid() -> Optional[int]:
-        """
-        Return the next available (free) LID for phone storage.
-
-        Returns:
-            lid if a free slot exists, None if storage is full
-        """
         conn = get_conn()
         try:
             with conn.cursor() as cur:
                 cur.execute("""
-                            SELECT l.lid
-                            FROM locations l
-                                     LEFT JOIN phone_storage ps
-                                               ON l.lid = ps.lid
-                                                   AND ps.retrieved_at IS NULL
-                            WHERE ps.pid IS NULL
-                            ORDER BY l.lid
-                            LIMIT 1;
-                            """)
+                    SELECT l.lid
+                    FROM locations l
+                    LEFT JOIN phone_storage ps
+                           ON l.lid = ps.lid AND ps.retrieved_at IS NULL
+                    WHERE ps.pid IS NULL
+                    ORDER BY l.lid
+                    LIMIT 1;
+                """)
                 row = cur.fetchone()
                 return row[0] if row else None
         except Exception as e:
@@ -289,26 +205,14 @@ class SlotMonitorDB:
             put_conn(conn)
 
     @staticmethod
-    def get_lid_for_pid(pid: int) -> Optional[int]:
-        """
-        Get the current storage location for a phone.
-
-        Args:
-            pid: Phone ID
-
-        Returns:
-            lid if phone is currently stored, None otherwise
-        """
+    def get_lid_for_pid(pid: str) -> Optional[int]:
         conn = get_conn()
         try:
             with conn.cursor() as cur:
                 cur.execute("""
-                            SELECT lid
-                            FROM phone_storage
-                            WHERE pid = %s
-                              AND retrieved_at IS NULL
-                            LIMIT 1;
-                            """, (pid,))
+                    SELECT lid FROM phone_storage
+                    WHERE pid = %s AND retrieved_at IS NULL LIMIT 1;
+                """, (pid,))
                 row = cur.fetchone()
                 return row[0] if row else None
         except Exception as e:
@@ -318,26 +222,14 @@ class SlotMonitorDB:
             put_conn(conn)
 
     @staticmethod
-    def update_storage_lid(pid: int, new_lid: int) -> bool:
-        """
-        Update the storage location for a phone (used during verification).
-
-        Args:
-            pid: Phone ID
-            new_lid: New location ID
-
-        Returns:
-            True on success, False on failure
-        """
+    def update_storage_lid(pid: str, new_lid: int) -> bool:
         conn = get_conn()
         try:
             with conn.cursor() as cur:
                 cur.execute("""
-                            UPDATE phone_storage
-                            SET lid = %s
-                            WHERE pid = %s
-                              AND retrieved_at IS NULL;
-                            """, (new_lid, pid))
+                    UPDATE phone_storage SET lid = %s
+                    WHERE pid = %s AND retrieved_at IS NULL;
+                """, (new_lid, pid))
                 conn.commit()
                 logger.debug(f"Updated storage LID for PID={pid} to LID={new_lid}")
                 return True
@@ -348,15 +240,8 @@ class SlotMonitorDB:
         finally:
             put_conn(conn)
 
-
-
     @staticmethod
     def get_sid_for_pid(pid: str):
-        """
-        Return the student SID that owns the phone identified by pid.
-        Used to verify a student is operating on their own phone.
-        Returns None if the phone does not exist.
-        """
         conn = get_conn()
         try:
             with conn.cursor() as cur:
@@ -369,73 +254,59 @@ class SlotMonitorDB:
         finally:
             put_conn(conn)
 
+
 # ============================================================
 # ASYNC DATABASE INTERFACE (Real-time Monitoring)
 # ============================================================
 
-# Sentinel for the PID cache — distinguishes a cached None (empty slot) from
-# a cache miss.  Using `object()` instead of None avoids an ambiguous check.
 _CACHE_MISS = object()
 
 
 class AsyncSlotMonitorDB:
     """
     Async database interface for slot monitoring.
-
-    USE FOR:
-    - Real-time monitoring (camera_test_async.py)
-    - High-performance operations (500+ slots)
-    - Event-driven workers
-
-    PERFORMANCE:
-    - 3-5x faster than sync (non-blocking I/O)
-    - Connection pooling (5-20 persistent connections)
-    - Prepared statements (automatic optimization)
-    - Batch operations (10x faster for bulk updates)
+    Uses asyncpg connection pool for high-performance real-time operations.
     """
 
     def __init__(
             self,
-            host=_DC.SYNC_HOST,
-            port=_DC.SYNC_PORT,
-            database=_DC.SYNC_DATABASE,
-            user=Secrets.DB_USER,
-            password=Secrets.DB_PASSWORD,
-            min_pool_size: int = _DC.SYNC_POOL_MIN,
-            max_pool_size: int = _DC.SYNC_POOL_MAX,
+            # NOTE: these default to the ASYNC pool settings, not SYNC.
+            # The two pools have different size tuning — ASYNC is larger
+            # because slot-monitor workers issue many concurrent queries.
+            host:         str = _DC.ASYNC_HOST,
+            port:         int = _DC.ASYNC_PORT,
+            database:     str = _DC.ASYNC_DATABASE,
+            user:         str = Secrets.DB_USER,
+            password:     str = Secrets.DB_PASSWORD,
+            min_pool_size: int = _DC.ASYNC_POOL_MIN,
+            max_pool_size: int = _DC.ASYNC_POOL_MAX,
     ):
-        self.host = host
-        self.port = port
-        self.database = database
-        self.user = user
-        self.password = password
+        self.host          = host
+        self.port          = port
+        self.database      = database
+        self.user          = user
+        self.password      = password
         self.min_pool_size = min_pool_size
         self.max_pool_size = max_pool_size
 
         self._pool: Optional[asyncpg.Pool] = None
-
-        # Internal cache - not exposed to callers
-        self._pid_cache: Dict[int, str] = {}
+        self._pid_cache: Dict[int, str]    = {}
         self._cache_lock = asyncio.Lock()
 
     async def connect(self):
-        """
-        Create connection pool.
-        MUST be called before using any async DB methods.
-        """
         if self._pool is not None:
             logger.warning("Connection pool already exists")
             return
 
         self._pool = await asyncpg.create_pool(
-            host=self.host,
-            port=self.port,
-            database=self.database,
-            user=self.user,
-            password=self.password,
-            min_size=self.min_pool_size,
-            max_size=self.max_pool_size,
-            command_timeout=10.0,
+            host            = self.host,
+            port            = self.port,
+            database        = self.database,
+            user            = self.user,
+            password        = self.password,
+            min_size        = self.min_pool_size,
+            max_size        = self.max_pool_size,
+            command_timeout = _DC.ASYNC_CMD_TIMEOUT,
         )
 
         logger.info(
@@ -444,7 +315,6 @@ class AsyncSlotMonitorDB:
         )
 
     async def close(self):
-        """Close connection pool."""
         if self._pool:
             await self._pool.close()
             logger.info("AsyncPG pool closed")
@@ -453,12 +323,9 @@ class AsyncSlotMonitorDB:
         if self._pool is None:
             raise RuntimeError("Database not connected. Call connect() first.")
 
-    # ------------------------------------------------------------
-    # BASELINE OPERATIONS
-    # ------------------------------------------------------------
+    # ── Baseline operations ───────────────────────────────
 
     async def save_baseline(self, lid: int, embedding: np.ndarray):
-        """Save baseline embedding for a slot."""
         self._require_pool()
         emb_bytes = embedding_to_bytes(embedding)
         await self._pool.execute(
@@ -468,27 +335,22 @@ class AsyncSlotMonitorDB:
                 SET embedding     = EXCLUDED.embedding,
                     calibrated_at = EXCLUDED.calibrated_at
             """,
-            lid, emb_bytes
+            lid, emb_bytes,
         )
 
     async def fetch_baseline(self, lid: int) -> Optional[np.ndarray]:
-        """Fetch baseline for a single slot."""
         self._require_pool()
         row = await self._pool.fetchrow(
-            "SELECT embedding FROM slot_baselines WHERE lid = $1",
-            lid
+            "SELECT embedding FROM slot_baselines WHERE lid = $1", lid
         )
         return embedding_from_bytes(row["embedding"]) if row else None
 
     async def fetch_all_baselines(self) -> Dict[int, np.ndarray]:
-        """Fetch all baselines (used during initialization)."""
         self._require_pool()
         rows = await self._pool.fetch(
             """
-            SELECT lid, embedding
-            FROM slot_baselines
-            WHERE embedding IS NOT NULL
-              AND embedding != '\\x00'::bytea
+            SELECT lid, embedding FROM slot_baselines
+            WHERE embedding IS NOT NULL AND embedding != '\\x00'::bytea
             ORDER BY lid
             """
         )
@@ -500,27 +362,16 @@ class AsyncSlotMonitorDB:
         return baselines
 
     async def delete_baseline(self, lid: int):
-        """Delete baseline for a slot."""
         self._require_pool()
         await self._pool.execute(
-            "DELETE FROM slot_baselines WHERE lid = $1",
-            lid
+            "DELETE FROM slot_baselines WHERE lid = $1", lid
         )
 
     async def save_baselines_batch(self, baselines: Dict[int, np.ndarray]):
-        """
-        Save multiple baselines in a single transaction.
-        10x faster than individual saves for bulk operations.
-        """
         self._require_pool()
         if not baselines:
             return
-
-        data = [
-            (lid, embedding_to_bytes(emb))
-            for lid, emb in baselines.items()
-        ]
-
+        data = [(lid, embedding_to_bytes(emb)) for lid, emb in baselines.items()]
         async with self._pool.acquire() as conn:
             async with conn.transaction():
                 await conn.executemany(
@@ -530,17 +381,13 @@ class AsyncSlotMonitorDB:
                         SET embedding     = EXCLUDED.embedding,
                             calibrated_at = EXCLUDED.calibrated_at
                     """,
-                    data
+                    data,
                 )
-
         logger.info(f"Saved {len(baselines)} baselines in batch (async)")
 
-    # ------------------------------------------------------------
-    # OCCUPANCY QUERIES
-    # ------------------------------------------------------------
+    # ── Occupancy queries ─────────────────────────────────
 
     async def get_num_lid(self) -> int:
-        """Return the number of available lids (max lid + 1)."""
         self._require_pool()
         num_lid = await self._pool.fetchval(
             "SELECT COALESCE(MAX(lid), 0) + 1 FROM locations;"
@@ -548,16 +395,13 @@ class AsyncSlotMonitorDB:
         return num_lid or 1
 
     async def get_next_free_lid(self) -> Optional[int]:
-        """Return the next available (free) LID for phone storage."""
         self._require_pool()
         return await self._pool.fetchval(
             """
-            SELECT l.lid
-            FROM locations l
+            SELECT l.lid FROM locations l
             WHERE NOT EXISTS (
                 SELECT 1 FROM phone_storage ps
-                WHERE ps.lid = l.lid
-                  AND ps.retrieved_at IS NULL
+                WHERE ps.lid = l.lid AND ps.retrieved_at IS NULL
             )
             ORDER BY l.lid
             FOR UPDATE SKIP LOCKED
@@ -566,14 +410,11 @@ class AsyncSlotMonitorDB:
         )
 
     async def fetch_occupied_slots(self) -> List[Tuple[int, str]]:
-        """Fetch all currently occupied slots."""
         self._require_pool()
         rows = await self._pool.fetch(
             """
-            SELECT lid, pid
-            FROM phone_storage
-            WHERE retrieved_at IS NULL
-            ORDER BY lid
+            SELECT lid, pid FROM phone_storage
+            WHERE retrieved_at IS NULL ORDER BY lid
             """
         )
         result = [(row["lid"], row["pid"]) for row in rows]
@@ -581,32 +422,19 @@ class AsyncSlotMonitorDB:
         return result
 
     async def get_pid_for_lid(self, lid: int) -> Optional[str]:
-        """
-        Get phone ID for a location (with internal caching).
-
-        In asyncio there is only one running coroutine at a time, so the
-        dict read is safe without a lock.  We only acquire the lock when
-        populating the cache to prevent a double-fetch if two coroutines
-        miss simultaneously (unlikely but possible in a large worker pool).
-        """
-        # Fast path: no lock needed for a dict read in single-threaded asyncio.
         cached = self._pid_cache.get(lid, _CACHE_MISS)
         if cached is not _CACHE_MISS:
-            return cached  # type: ignore[return-value]
+            return cached
 
         self._require_pool()
         async with self._cache_lock:
-            # Re-check inside lock to avoid redundant DB queries.
             cached = self._pid_cache.get(lid, _CACHE_MISS)
             if cached is not _CACHE_MISS:
-                return cached  # type: ignore[return-value]
-
+                return cached
             row = await self._pool.fetchrow(
                 """
-                SELECT pid
-                FROM phone_storage
-                WHERE lid = $1
-                  AND retrieved_at IS NULL
+                SELECT pid FROM phone_storage
+                WHERE lid = $1 AND retrieved_at IS NULL
                 """,
                 lid,
             )
@@ -615,50 +443,35 @@ class AsyncSlotMonitorDB:
             return value
 
     async def get_lid_for_pid(self, pid: str) -> Optional[int]:
-        """Get location ID for a stored phone."""
         self._require_pool()
         row = await self._pool.fetchrow(
             """
-            SELECT lid
-            FROM phone_storage
-            WHERE pid = $1
-              AND retrieved_at IS NULL
-            LIMIT 1
+            SELECT lid FROM phone_storage
+            WHERE pid = $1 AND retrieved_at IS NULL LIMIT 1
             """,
-            pid
+            pid,
         )
         return row["lid"] if row else None
 
     async def is_slot_occupied(self, lid: int) -> bool:
-        """Check if a slot is currently occupied."""
         self._require_pool()
         return await self._pool.fetchval(
             """
-            SELECT EXISTS(SELECT 1
-                          FROM phone_storage
-                          WHERE lid = $1
-                            AND retrieved_at IS NULL)
+            SELECT EXISTS(SELECT 1 FROM phone_storage
+                          WHERE lid = $1 AND retrieved_at IS NULL)
             """,
-            lid
+            lid,
         )
 
     async def update_storage_lid(self, pid: str, new_lid: int) -> bool:
-        """
-        Update the storage location for a phone (used during verification).
-
-        Returns:
-            True on success, False on failure
-        """
         self._require_pool()
         try:
             await self._pool.execute(
                 """
-                UPDATE phone_storage
-                SET lid = $1
-                WHERE pid = $2
-                  AND retrieved_at IS NULL
+                UPDATE phone_storage SET lid = $1
+                WHERE pid = $2 AND retrieved_at IS NULL
                 """,
-                new_lid, pid
+                new_lid, pid,
             )
             await self._invalidate_cache(new_lid)
             return True
@@ -666,17 +479,12 @@ class AsyncSlotMonitorDB:
             logger.error(f"Failed to update storage LID for PID={pid}: {e}")
             return False
 
-    # ------------------------------------------------------------
-    # INTERNAL CACHE MANAGEMENT
-    # ------------------------------------------------------------
+    # ── Cache management ──────────────────────────────────
 
-
-    def invalidate_pid_cache_sync(self, lid=None):
+    def invalidate_pid_cache_sync(self, lid: Optional[int] = None):
         """
         Synchronously drop one or all entries from the PID cache.
-        Safe to call from any thread (dict.pop is GIL-atomic under CPython).
-        Called by SlotOperations after deposit/withdraw so monitoring
-        workers never serve stale cached PIDs.
+        GIL-atomic dict.pop — safe to call from any thread.
         """
         if lid is not None:
             self._pid_cache.pop(lid, None)
@@ -686,27 +494,15 @@ class AsyncSlotMonitorDB:
             logger.debug("[AsyncDB] PID cache cleared (all)")
 
     async def _invalidate_cache(self, lid: Optional[int] = None):
-        """
-        Invalidate PID cache after mutating operations.
-        Called internally — callers do not need to manage this.
-        """
         async with self._cache_lock:
             if lid is not None:
                 self._pid_cache.pop(lid, None)
             else:
                 self._pid_cache.clear()
 
-    # ------------------------------------------------------------
-    # HEALTH CHECK
-    # ------------------------------------------------------------
+    # ── Health check ──────────────────────────────────────
 
     async def is_healthy(self) -> bool:
-        """
-        Test database connection.
-
-        Returns:
-            True if connection is healthy
-        """
         if self._pool is None:
             return False
         try:
@@ -718,19 +514,10 @@ class AsyncSlotMonitorDB:
 
 
 # ============================================================
-# ASYNC CONTEXT MANAGER (Convenience)
+# ASYNC CONTEXT MANAGER
 # ============================================================
 
 class AsyncDBContext:
-    """
-    Async context manager for database lifecycle.
-
-    Usage:
-        async with AsyncDBContext() as db:
-            baseline = await db.fetch_baseline(lid)
-            await db.save_baseline(lid, new_baseline)
-    """
-
     def __init__(self, **kwargs):
         self.db = AsyncSlotMonitorDB(**kwargs)
 
@@ -740,47 +527,3 @@ class AsyncDBContext:
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.db.close()
-
-
-# ============================================================
-# USAGE EXAMPLES
-# ============================================================
-
-"""
-SYNC USAGE (Calibration, legacy code):
-
-    from db_interface import SlotMonitorDB
-
-    baselines = SlotMonitorDB.fetch_all_baselines()
-    SlotMonitorDB.save_baseline(lid=0, embedding=emb)
-    occupied  = SlotMonitorDB.fetch_occupied_slots()
-    lid       = SlotMonitorDB.get_next_free_lid()
-    stored    = SlotMonitorDB.is_phone_stored(pid)
-    lid       = SlotMonitorDB.get_lid_for_pid(pid)
-    ok        = SlotMonitorDB.update_storage_lid(pid, new_lid)
-
-
-ASYNC USAGE (Real-time monitoring):
-
-    from db_interface import AsyncSlotMonitorDB
-
-    db = AsyncSlotMonitorDB(host="localhost", database="phone_monitor")
-    await db.connect()
-
-    baselines = await db.fetch_all_baselines()
-    await db.save_baseline(lid=0, embedding=emb)
-    occupied  = await db.fetch_occupied_slots()
-    healthy   = await db.is_healthy()
-
-    await db.close()
-
-
-ASYNC WITH CONTEXT MANAGER (Recommended):
-
-    from db_interface import AsyncDBContext
-
-    async with AsyncDBContext() as db:
-        baselines = await db.fetch_all_baselines()
-        await db.save_baseline(lid=0, embedding=emb)
-    # Auto-closes connection
-"""

@@ -25,11 +25,10 @@ class AlarmController:
     Note on false positives during DVW operations:
         The worker layer (worker_async.py) suppresses trigger() calls while
         any DVW or admin session is active, so this class never needs to
-        filter them itself.  AlarmController only sees legitimate triggers.
+        filter them itself.
 
     Clip saving:
         Rolling-buffer clips are submitted to BackgroundEncoder (non-blocking).
-        The call returns in microseconds — no stalling of the async worker loop.
     """
 
     def __init__(self):
@@ -63,11 +62,6 @@ class AlarmController:
     # ── Mismatch tracking ─────────────────────────────────
 
     def trigger(self, pid: str, lid: int):
-        """
-        Record a new mismatch and fire the alarm if not already active.
-        Callers (worker_async._process_slot) are responsible for suppressing
-        this call during DVW / admin operations.
-        """
         pid      = str(pid)
         snapshot = None
 
@@ -95,7 +89,6 @@ class AlarmController:
                 "mismatches":     [[p, l] for p, l in snapshot],
             })
 
-        # Non-blocking — delegates to BackgroundEncoder
         self._save_alarm_clips(pid, lid)
 
     def _save_alarm_clips(self, pid: str, lid: int):
@@ -109,7 +102,6 @@ class AlarmController:
             logger.warning(f"[Alarm] Failed to queue alarm clips: {e}")
 
     def resolve(self, pid: str, lid: int):
-        """Remove one mismatch; clear the alarm if the set becomes empty."""
         with self._lock:
             self.mismatches.discard((pid, lid))
             logger.info(f"Mismatch resolved: PID={pid}, LID={lid}")
@@ -117,13 +109,11 @@ class AlarmController:
                 self._clear_active_alarm()
 
     def stop_if_clear(self):
-        """Clear alarm when all mismatches have been resolved externally."""
         with self._lock:
             if self.active and not self.mismatches:
                 self._clear_active_alarm()
 
     def clear(self):
-        """Admin override — discard all mismatches and clear alarm."""
         with self._lock:
             count = len(self.mismatches)
             self.mismatches.clear()
@@ -146,7 +136,6 @@ class AlarmController:
     # ── Admin auth ────────────────────────────────────────
 
     def authenticate_admin(self, password: str) -> dict:
-        # TODO: Replace with proper authentication
         if password == Secrets.ADMIN_PASSWORD:
             with self._lock:
                 snapshot = list(self.mismatches)
