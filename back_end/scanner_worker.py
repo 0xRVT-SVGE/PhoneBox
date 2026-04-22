@@ -4,6 +4,11 @@
 """
 Scan worker — face + barcode verification.
 
+Opt #3: _deepface_represent uses ONNX Runtime (face_embedder) when
+        available, falls back to DeepFace + TensorFlow.
+Opt #26: fetch_student_by_sid uses Redis cache (scanner_worker_cache)
+         when available, falls back to direct API call.
+
 Shutdown ownership: scanner_loop calls stop_scan() when it exits.
 """
 
@@ -11,14 +16,18 @@ import json
 import re
 import time
 import threading
+import logging
 import cv2
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 from deepface import DeepFace
 from pyzbar.pyzbar import decode, ZBarSymbol
 import requests
+
 from back_end.scanner_state import scanner_state
 from back_end.config import ScannerConfig as _SC, ServerConfig as _SVC
+
+logger = logging.getLogger(__name__)
 
 API_BASE             = _SVC.STUDENT_API_BASE
 SIMILARITY_THRESHOLD = _SC.SIMILARITY_THRESHOLD
@@ -33,9 +42,25 @@ _scan_start_event = threading.Event()
 _scan_stop_event  = threading.Event()
 
 _PG_ARRAY_SPLIT_RE = re.compile(r",\s*")
-
-# Cached resize scale factor — computed once on first face-scan call.
 _resize_scale: float | None = None
+
+# ── Opt #3: ONNX face embedder (graceful fallback if unavailable) ─────────────
+try:
+    from back_end.face_embedder import represent as _onnx_represent
+    from back_end.face_embedder import is_onnx_ready as _onnx_ready
+    _ONNX_MODULE_AVAILABLE = True
+except ImportError:
+    _onnx_represent        = None
+    _onnx_ready            = lambda: False
+    _ONNX_MODULE_AVAILABLE = False
+
+# ── Opt #26: Redis student cache (graceful fallback if unavailable) ───────────
+try:
+    from back_end.scanner_worker_cache import fetch_student_cached as _cache_fetch
+    _CACHE_AVAILABLE = True
+except ImportError:
+    _cache_fetch     = None
+    _CACHE_AVAILABLE = False
 
 
 # ============================================================
@@ -69,12 +94,10 @@ def parse_pg_array(embed_value):
     return None
 
 
-def fetch_student_by_sid(sid):
+def _fetch_from_api(sid: str):
+    """Direct REST API call — used by the cache-miss path."""
     try:
-        r = requests.get(
-            f"{API_BASE}/{sid}",
-            timeout=_SVC.STUDENT_API_TIMEOUT,
-        )
+        r = requests.get(f"{API_BASE}/{sid}", timeout=_SVC.STUDENT_API_TIMEOUT)
         if r.status_code == 200:
             wrapper = r.json()
             student = wrapper["data"]
@@ -85,12 +108,41 @@ def fetch_student_by_sid(sid):
     return None
 
 
-def _deepface_represent(resized):
+def fetch_student_by_sid(sid: str):
+    """
+    Fetch student by SID.
+
+    Opt #26: wraps the API call with a 60-second Redis TTL cache so
+    repeated barcode reads of the same student within one session never
+    hit the DB more than once.  Falls back to a direct API call if
+    Redis is unavailable or scanner_worker_cache is not installed.
+    """
+    if _CACHE_AVAILABLE:
+        return _cache_fetch(sid, _fetch_from_api, parse_pg_array)
+    return _fetch_from_api(sid)
+
+
+def _deepface_represent(resized: np.ndarray):
+    """
+    Compute face embedding(s) from a BGR image.
+
+    Opt #3: tries ONNX Runtime first (~3× faster on CPU, 10-50× on GPU).
+    Falls back to DeepFace + TensorFlow if ONNX is unavailable or fails.
+
+    Returns same format as DeepFace.represent():
+      [{"embedding": [...], "facial_area": {"x","y","w","h"}}, ...]
+    """
+    if _ONNX_MODULE_AVAILABLE and _onnx_ready():
+        try:
+            return _onnx_represent(resized)
+        except Exception as exc:
+            logger.debug(f"[ScanWorker] ONNX failed, falling back: {exc}")
+
     return DeepFace.represent(
-        img_path         = resized,
-        model_name       = _SC.FACE_MODEL,
-        detector_backend = _SC.FACE_DETECTOR_BACKEND,
-        enforce_detection= False,
+        img_path          = resized,
+        model_name        = _SC.FACE_MODEL,
+        detector_backend  = _SC.FACE_DETECTOR_BACKEND,
+        enforce_detection = False,
     )
 
 
@@ -141,7 +193,7 @@ def run_scan_session():
 
         frame, roi_coords, timestamp = task
 
-        if frame is None:   # sentinel
+        if frame is None:
             break
 
         # ── BARCODE ──────────────────────────────────────

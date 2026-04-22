@@ -191,17 +191,36 @@ if __name__ == "__main__":
     # Opt #16: pre-warm DeepFace — loads SFace model in background so first scan
     # has no cold-start delay (~1-3 s on first DeepFace.represent() call).
     def _prewarm_deepface():
-         try:
-             import numpy as np
+        """Pre-warm face embedding backends (ONNX and DeepFace fallback)."""
+        import numpy as np
+        # Opt #3: try ONNX first — initialises session and runs one dummy pass
+        try:
+             from back_end.face_embedder import prewarm as _onnx_prewarm
+             if _onnx_prewarm():
+                 logger.info("Face embedder: ONNX Runtime pre-warmed")
+                 return   # ONNX is ready; no need to also warm TF
+        except Exception as e:
+                 logger.debug(f"ONNX prewarm skipped: {e}")
+                 # Opt #16: fall back to warming DeepFace/TensorFlow
+        try:
              from deepface import DeepFace
              dummy = np.zeros((160, 160, 3), dtype=np.uint8)
              DeepFace.represent(img_path=dummy, model_name="SFace",
                                 detector_backend="opencv", enforce_detection=False)
-             logger.info("DeepFace model pre-warmed")
-         except Exception as e:
+             logger.info("Face embedder: DeepFace (TF) pre-warmed")
+        except Exception as e:
              logger.warning(f"DeepFace pre-warm failed (non-fatal): {e}")
 
     threading.Thread(target=_prewarm_deepface, daemon=True, name="DeepFacePrewarm").start()
+    # Opt #17: pre-warm BackgroundEncoder — starts its daemon worker thread
+    # immediately so the first alarm clip has no queue-startup latency.
+    try:
+        from back_end.slot_monitor.admin.background_encoder import BackgroundEncoder
+        BackgroundEncoder.instance()
+        logger.info("BackgroundEncoder pre-warmed")
+    except Exception as e:
+        logger.warning(f"BackgroundEncoder pre-warm failed (non-fatal): {e}")
+
 
     # 2. WebRTC async loop
     webrtc_handler.start()
