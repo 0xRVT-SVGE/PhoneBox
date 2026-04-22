@@ -565,9 +565,6 @@ class PhoneTracker:
                              if mo and _iou((bx,by,bw,bh),mo)>=MOTION_IOU_MERGE:
                                  bx,by,bw,bh=_merge_bbox((bx,by,bw,bh),mo)
 
-                # NOTE: reusing CSRT_REINIT_INTERVAL (=12) as the gate keeps it one constant.
-                # If you want a separate knob, add CSRT_MOTION_GATE_N to MotionConfig (Patch A)
-                # and use that variable instead.
                          if reinit_count>=CSRT_REINIT_INTERVAL:
                             # ── compat helper ──
                             csrt=_make_csrt_tracker(); csrt.init(frame,(bx,by,bw,bh))
