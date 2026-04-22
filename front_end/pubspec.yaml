@@ -12,7 +12,11 @@ dependencies:
     sdk: flutter
 
   cupertino_icons: ^1.0.8
-  http: ^1.2.2
+
+  # Opt #29: dio replaces http — persistent keep-alive connections,
+  # single multiplexed transport, eliminates TCP handshake per request.
+  dio: ^5.4.0
+
   flutter_html: ^3.0.0
 
   # WebRTC

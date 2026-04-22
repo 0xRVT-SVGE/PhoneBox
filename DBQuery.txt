@@ -454,3 +454,102 @@ CREATE INDEX IF NOT EXISTS idx_evidence_items_session
 
 CREATE INDEX IF NOT EXISTS idx_evidence_items_event
     ON evidence_items (event_type);
+
+
+
+
+
+-- ============================================================
+-- FILE: back_end/Database/migrations/pgvector_migration.sql
+-- Opt #36 — pgvector for slot_baselines
+-- ============================================================
+-- Run ONCE as the database owner.  Safe to re-run (idempotent).
+--
+-- Prerequisites:
+--   Ubuntu/Debian: sudo apt install postgresql-16-pgvector
+--   (adjust version number to match your PostgreSQL install)
+--
+-- EMBEDDING_DIM = 96  (HIST_BINS=32 + DCT_SIZE²=64, slot_embed.py)
+-- ============================================================
+
+BEGIN;
+
+-- 1. Enable extension ─────────────────────────────────────────
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- 2. Add column (no-op if already exists) ─────────────────────
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE  table_name  = 'slot_baselines'
+        AND    column_name = 'embedding_vec'
+    ) THEN
+        ALTER TABLE slot_baselines ADD COLUMN embedding_vec vector(96);
+        RAISE NOTICE 'Added embedding_vec column';
+    ELSE
+        RAISE NOTICE 'embedding_vec column already exists — skipping';
+    END IF;
+END $$;
+
+-- 3. Migrate existing bytea rows → vector ─────────────────────
+-- The bytea column stores 96 little-endian IEEE-754 float32 values.
+-- We decode each 4-byte group, cast to float4, collect into an array,
+-- then cast to vector(96).
+DO $$
+DECLARE
+    r        RECORD;
+    vec_arr  float4[];
+    i        int;
+    b0 int; b1 int; b2 int; b3 int;
+    bits int;
+BEGIN
+    FOR r IN
+        SELECT lid, embedding
+        FROM   slot_baselines
+        WHERE  embedding     IS NOT NULL
+        AND    embedding     != '\x'::bytea
+        AND    embedding_vec IS NULL
+    LOOP
+        vec_arr := ARRAY[]::float4[];
+        FOR i IN 0..95 LOOP
+            b0 := get_byte(r.embedding, i * 4);
+            b1 := get_byte(r.embedding, i * 4 + 1);
+            b2 := get_byte(r.embedding, i * 4 + 2);
+            b3 := get_byte(r.embedding, i * 4 + 3);
+            -- reassemble little-endian 32-bit pattern
+            bits := b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+            vec_arr := array_append(vec_arr, bits::bit(32)::float4);
+        END LOOP;
+
+        UPDATE slot_baselines
+        SET    embedding_vec = vec_arr::vector(96)
+        WHERE  lid = r.lid;
+    END LOOP;
+
+    RAISE NOTICE 'Migrated % row(s)', (
+        SELECT COUNT(*) FROM slot_baselines WHERE embedding_vec IS NOT NULL
+    );
+END $$;
+
+-- 4. HNSW index for approximate nearest-neighbour cosine search ─
+--    m=16  ef_construction=64 are good defaults for 96-dim vectors.
+CREATE INDEX IF NOT EXISTS idx_slot_baselines_hnsw
+    ON slot_baselines
+    USING hnsw (embedding_vec vector_cosine_ops)
+    WITH (m = 16, ef_construction = 64);
+
+COMMIT;
+
+-- ── Verify ──────────────────────────────────────────────────
+-- SELECT lid,
+--        octet_length(embedding)   AS bytea_bytes,
+--        vector_dims(embedding_vec) AS vec_dims
+-- FROM   slot_baselines
+-- LIMIT  5;
+
+-- ── Rollback ────────────────────────────────────────────────
+-- BEGIN;
+-- DROP   INDEX  IF EXISTS idx_slot_baselines_hnsw;
+-- ALTER  TABLE  slot_baselines DROP COLUMN IF EXISTS embedding_vec;
+-- COMMIT;
