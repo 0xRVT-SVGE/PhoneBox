@@ -4,6 +4,20 @@
 """
 QR Code scanning and PID validation.
 
+Opt #4 — zxing-cpp backend with cv2 fallback
+----------------------------------------------
+zxing-cpp (pip install zxing-cpp) is a pure C++ multi-format decoder
+with Python bindings.  It is ~3-5× faster than cv2.QRCodeDetector on
+typical phone-sized QR stickers and handles low-contrast / partially
+obscured codes more robustly.
+
+At module load we try to import zxingcpp.  If it is unavailable the
+module silently falls back to cv2.QRCodeDetector — behaviour is
+identical, just slower.  No code-path changes required in callers.
+
+Install:   pip install zxing-cpp
+Verify:    python -c "import zxingcpp; print(zxingcpp.__version__)"
+
 Changes from original:
   - read_pid_from_buffer() and scan_and_validate_pid_from_buffer() now
     accept an optional cancel_event: threading.Event.  The scan loop
@@ -24,7 +38,20 @@ if TYPE_CHECKING:
     from back_end.slot_monitor.camera.top_camera import TopCamera
 
 logger = logging.getLogger(__name__)
-_qr_detector = cv2.QRCodeDetector()
+
+# ── Opt #4: zxing-cpp with graceful fallback ──────────────────────────────────
+try:
+    import zxingcpp as _zxing
+    _ZXING_AVAILABLE = True
+    logger.info("[QRReader] zxing-cpp available — using fast C++ decoder")
+except ImportError:
+    _zxing = None
+    _ZXING_AVAILABLE = False
+    logger.info("[QRReader] zxing-cpp not installed — falling back to cv2.QRCodeDetector")
+    logger.info("[QRReader] Install with: pip install zxing-cpp")
+
+# cv2 fallback detector — created once, reused across all calls
+_cv2_qr_detector = cv2.QRCodeDetector()
 
 # ──────────────────────────────────────────────────────────────────────────────
 # PID parsing (shared by both paths)
@@ -40,11 +67,34 @@ def _parse_pid(raw: str) -> Optional[str]:
     data = raw.strip()
     if data.upper().startswith("PID:"):
         data = data[4:].strip()
-
-    # UUID format — phones.pid primary key
     if _UUID_RE.match(data):
         return data.lower()
     return None
+
+
+# ── QR decode dispatcher ─────────────────────────────────────────────────────
+
+def _decode_qr(gray) -> Optional[str]:
+    """
+    Decode a QR code from a grayscale frame.
+
+    Uses zxing-cpp when available (Opt #4), falls back to cv2.QRCodeDetector.
+    Returns the raw decoded string, or None if nothing was found.
+    """
+    if _ZXING_AVAILABLE:
+        # zxing-cpp: returns a list of Result objects; grab the first QR code
+        try:
+            results = _zxing.read_barcodes(gray)
+            for r in results:
+                if r.valid and r.text:
+                    return r.text
+        except Exception as e:
+            logger.debug(f"[QRReader] zxing-cpp error, falling back to cv2: {e}")
+            # Fall through to cv2
+
+    # cv2 fallback
+    data, _, _ = _cv2_qr_detector.detectAndDecode(gray)
+    return data if data else None
 
 
 # ── Path 1: direct camera open ────────────────────────────
@@ -67,10 +117,8 @@ def read_pid_from_camera(
             if not ret or frame is None:
                 continue
 
-            # Convert once (faster detection)
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-            data, points, _ = _qr_detector.detectAndDecode(gray)
+            data = _decode_qr(gray)
 
             if data:
                 pid = _parse_pid(data)
@@ -78,6 +126,7 @@ def read_pid_from_camera(
                     logger.info(f"QR scan (direct): PID={pid}")
                     return pid
                 logger.warning(f"QR scan: unrecognised format: {data!r}")
+
         logger.warning("QR scan (direct) timed out")
         return None
     finally:
@@ -129,14 +178,11 @@ def read_pid_from_buffer(
     logger.info(f"QR scan started via frame buffer (timeout={timeout_sec}s)")
     deadline = time.time() + timeout_sec
 
-    # Resolve the frame-getter once before the loop — avoids a hasattr() call
-    # (which does a dict lookup + exception catch) on every single frame.
     get_frame_fn = (frame_buffer.get_raw_frame
                     if hasattr(frame_buffer, "get_raw_frame")
                     else frame_buffer.get_frame)
 
     while time.time() < deadline:
-        # Check cancellation first — exits within one loop iteration
         if cancel_event is not None and cancel_event.is_set():
             logger.info("QR scan (buffer): cancelled")
             return None
@@ -156,7 +202,7 @@ def read_pid_from_buffer(
             continue
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        data, points, _ = _qr_detector.detectAndDecode(gray)
+        data = _decode_qr(gray)
 
         if data:
             pid = _parse_pid(data)

@@ -4,27 +4,21 @@
 """
 Rolling frame buffer — continuous circular recording.
 
-Two buffers, two feed strategies:
+Opt #8  — TurboJPEG encoder with cv2 fallback
+----------------------------------------------
+libjpeg-turbo is 2-6× faster than the reference libjpeg used by
+cv2.imencode at equivalent quality.  Every push() call encodes a JPEG
+frame; at 30 fps × 2 cameras this is the hottest non-CV path in the
+process.
 
-    face_rolling_buffer (FaceRollingBuffer)
-        Camera: front/face camera (camera 0)
-        Feed:   PUSH-BASED — scanner_loop.process_frame() calls
-                face_rolling_buffer.push(frame) once per frame.
-                No background thread, zero polling overhead.
-        Saved:  on alarm trigger  → evidence/alarms/{pid}_lid{N}_{ts}_face.mp4
-                on admin session kept → evidence/{session_id}/{pid}_face_{ts}.mp4
+Install:   pip install PyTurboJPEG
+           Ubuntu/Debian: sudo apt install libturbojpeg
+Verify:    python -c "from turbojpeg import TurboJPEG; TurboJPEG()"
 
-    top_rolling_buffer (TopRollingBuffer)
-        Camera: top-down camera (camera 2)
-        Feed:   Opt #19: EVENT-BASED feeder — blocks on top_camera._frame_event
-                then throttles to target fps via a timestamp gate.
-                No more unconditional time.sleep() spinning.
-        Saved:  prepended to admin evidence clips (pre-pickup footage)
+Falls back to cv2.imencode if PyTurboJPEG is not installed.
+No caller changes required.
 
-Memory estimate (JPEG quality 70, 30s buffer):
-    Face (1080p, 30fps):  ~60KB/frame × 900 frames ≈ 54MB
-    Top  (720p,  20fps):  ~40KB/frame × 600 frames ≈ 24MB
-    Total ≈ 78MB at peak
+Opt #19 — Event-based TopRollingBuffer feed loop (already in source)
 """
 
 import cv2
@@ -49,6 +43,35 @@ EVIDENCE_BASE_DIR = Path(_EC.BASE_DIR)
 
 _Frame = Tuple[float, bytes]
 
+# ── Opt #8: TurboJPEG — 2-6x faster JPEG encoding at same quality ────────────
+try:
+    from turbojpeg import TurboJPEG as _TurboJPEG
+    _turbo = _TurboJPEG()
+    _TURBO_AVAILABLE = True
+    logger.info("[RollingBuffer] TurboJPEG ready — using libjpeg-turbo encoder")
+except Exception:
+    _turbo = None
+    _TURBO_AVAILABLE = False
+    logger.info(
+        "[RollingBuffer] TurboJPEG not found — using cv2.imencode. "
+        "Speed up with: pip install PyTurboJPEG && sudo apt install libturbojpeg"
+    )
+
+
+def _encode_jpeg(frame: np.ndarray, quality: int) -> Optional[bytes]:
+    """
+    Encode a BGR frame to JPEG bytes.
+    Uses TurboJPEG when available (Opt #8), otherwise cv2.imencode.
+    Returns bytes or None on failure.
+    """
+    if _TURBO_AVAILABLE:
+        try:
+            return _turbo.encode(frame, quality=quality)
+        except Exception as e:
+            logger.debug(f"[RollingBuffer] TurboJPEG error, falling back to cv2: {e}")
+    ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
+    return buf.tobytes() if ok else None
+
 
 # ── Core buffer ───────────────────────────────────────────────────────────────
 
@@ -61,14 +84,12 @@ class RollingBuffer:
         self._frames: deque[_Frame] = deque()
 
     def push(self, frame: np.ndarray):
-        ok, buf = cv2.imencode(
-            ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self._quality]
-        )
-        if not ok:
+        buf = _encode_jpeg(frame, self._quality)
+        if buf is None:
             return
         now = time.time()
         with self._lock:
-            self._frames.append((now, buf.tobytes()))
+            self._frames.append((now, buf))
             cutoff = now - self._duration
             while self._frames and self._frames[0][0] < cutoff:
                 self._frames.popleft()
@@ -92,9 +113,7 @@ class RollingBuffer:
         if not frames:
             logger.warning(f"[RollingBuffer] Empty buffer — nothing to save to {path}")
             return False
-        first = cv2.imdecode(
-            np.frombuffer(frames[0][1], dtype=np.uint8), cv2.IMREAD_COLOR
-        )
+        first = cv2.imdecode(np.frombuffer(frames[0][1], dtype=np.uint8), cv2.IMREAD_COLOR)
         if first is None:
             return False
         h, w = first.shape[:2]
@@ -102,8 +121,7 @@ class RollingBuffer:
         writer = None
         for fourcc_str in ("mp4v", "XVID"):
             attempt = cv2.VideoWriter(
-                str(path), cv2.VideoWriter_fourcc(*fourcc_str), fps, (w, h)
-            )
+                str(path), cv2.VideoWriter_fourcc(*fourcc_str), fps, (w, h))
             if attempt.isOpened():
                 writer = attempt
                 break
@@ -113,54 +131,32 @@ class RollingBuffer:
             return False
         try:
             for _, jpeg_bytes in frames:
-                f = cv2.imdecode(
-                    np.frombuffer(jpeg_bytes, dtype=np.uint8), cv2.IMREAD_COLOR
-                )
+                f = cv2.imdecode(np.frombuffer(jpeg_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
                 if f is not None:
                     writer.write(f)
         finally:
             writer.release()
-        logger.info(
-            f"[RollingBuffer] Saved {len(frames)} frames "
-            f"({len(frames)/fps:.1f}s) to {path.name}"
-        )
+        logger.info(f"[RollingBuffer] Saved {len(frames)} frames ({len(frames)/fps:.1f}s) to {path.name}")
         return True
 
 
 # ── Face camera buffer (push-based, no thread) ────────────────────────────────
 
 class FaceRollingBuffer:
-    """
-    Rolling buffer for the front camera.
-
-    NO background thread — scanner_loop.process_frame() pushes frames
-    directly via face_rolling_buffer.push(frame).  This is faster and
-    simpler than polling scanner_state from a separate thread.
-    """
-
     def __init__(self):
         self._buffer = RollingBuffer()
 
     def push(self, frame: np.ndarray):
-        """Called from scanner_loop every frame. Thread-safe, ~0.1ms overhead."""
         self._buffer.push(frame)
 
     def save_alarm_clip(self, pid: str, lid: int) -> Optional[Path]:
-        """
-        Queue an alarm clip for background encoding.
-
-        Returns the path immediately (file will exist once encoding completes).
-        Non-blocking — does NOT stall the alarm trigger thread.
-        """
         frames = self._buffer.snapshot()
         if not frames:
             return None
         dt_str   = datetime.now().strftime("%Y%m%d-%H%M%S")
-        slot_num = lid + 1
         safe_pid = pid.replace("-", "")[:16]
-        path     = EVIDENCE_BASE_DIR / "alarms" / f"{safe_pid}_slot{slot_num}_{dt_str}_face.mp4"
+        path     = EVIDENCE_BASE_DIR / "alarms" / f"{safe_pid}_slot{lid+1}_{dt_str}_face.mp4"
         fps      = self._estimate_fps()
-
         from back_end.slot_monitor.admin.background_encoder import BackgroundEncoder
         ok = BackgroundEncoder.instance().submit(frames, path, fps)
         if ok:
@@ -168,21 +164,7 @@ class FaceRollingBuffer:
             return path
         return None
 
-    def save_session_clip(
-        self,
-        session_id: str,
-        pid: str,
-        callback=None,
-    ) -> Optional[Path]:
-        """
-        Queue a session evidence clip for background encoding.
-
-        Args:
-            callback: Called with `path` once encoding completes.
-                      Use this to do DB inserts that need the file to exist.
-
-        Returns the path immediately (file will exist once encoding completes).
-        """
+    def save_session_clip(self, session_id: str, pid: str, callback=None) -> Optional[Path]:
         frames = self._buffer.snapshot()
         if not frames:
             return None
@@ -190,7 +172,6 @@ class FaceRollingBuffer:
         safe_pid = pid.replace("-", "")[:16]
         path     = EVIDENCE_BASE_DIR / session_id / f"{safe_pid}_{dt_str}_face.mp4"
         fps      = self._estimate_fps()
-
         from back_end.slot_monitor.admin.background_encoder import BackgroundEncoder
         ok = BackgroundEncoder.instance().submit(frames, path, fps, callback=callback)
         if ok:
@@ -205,7 +186,6 @@ class FaceRollingBuffer:
         return self._buffer.frame_count()
 
     def _estimate_fps(self) -> float:
-        """Infer fps from buffer timestamps; falls back to 30."""
         frames = self._buffer.snapshot()
         if len(frames) < 10:
             return 30.0
@@ -217,17 +197,8 @@ class FaceRollingBuffer:
 
 class TopRollingBuffer:
     """
-    Rolling buffer for the top-down camera (camera 2).
-
-    Opt #19: Feed loop is EVENT-BASED — blocks on top_camera.wait_for_frame()
-    instead of unconditionally sleeping for the frame interval.  A timestamp
-    gate then enforces the target fps so we never record faster than needed.
-
-    This removes ~5-20 ms of pointless sleep overhead per second when the
-    camera is running at full speed, and is more responsive to actual frames.
-
-    Call set_active(True)  when an operation starts.
-    Call set_active(False) when it ends.
+    Opt #19: event-driven feed loop.
+    Opt #8 applies automatically via _encode_jpeg inside RollingBuffer.push().
     """
 
     def __init__(self):
@@ -237,12 +208,6 @@ class TopRollingBuffer:
         self._thread: Optional[threading.Thread] = None
 
     def set_active(self, active: bool):
-        """
-        Switch between idle (5 fps) and active (20 fps) recording.
-
-        active=True  → called when a DVW op or admin session starts
-        active=False → called when it ends (success, failure, or close)
-        """
         if self._active != active:
             self._active = active
             logger.info(
@@ -254,9 +219,7 @@ class TopRollingBuffer:
         if self._running:
             return
         self._running = True
-        self._thread  = threading.Thread(
-            target=self._feed_loop, daemon=True, name="TopRollingFeed"
-        )
+        self._thread  = threading.Thread(target=self._feed_loop, daemon=True, name="TopRollingFeed")
         self._thread.start()
         logger.info(f"[TopRollingBuffer] Started ({TOP_FPS_IDLE} fps idle)")
 
@@ -267,35 +230,18 @@ class TopRollingBuffer:
         logger.info("[TopRollingBuffer] Stopped")
 
     def _feed_loop(self):
-        """
-        Opt #19: event-driven feed — wake on top_camera frame event,
-        then enforce target fps via a timestamp gate.
-
-        Old approach: record t0, wait_for_frame(0.1), sleep(interval - elapsed)
-          → always paid a full sleep even when frames arrive on time.
-
-        New approach: block on wait_for_frame(0.1), skip if within interval,
-          push and update last_push timestamp.
-          → zero CPU between frames; no extra sleep calls.
-        """
+        """Opt #19: event-driven — blocks on frame event, no unconditional sleep."""
         from back_end.slot_monitor.camera.top_camera import top_camera
         last_push = 0.0
-
         while self._running:
             fps      = TOP_FPS if self._active else TOP_FPS_IDLE
             interval = 1.0 / fps
-
-            # Block until the top camera produces a new frame (or timeout).
-            # Timeout of 0.1 s means _running is re-checked at least every 100 ms.
             if not top_camera.wait_for_frame(timeout=0.1):
                 continue
-
-            # Timestamp gate: discard frames that arrive faster than target fps.
             now = time.time()
             if now - last_push < interval:
                 top_camera.clear_frame_event()
                 continue
-
             frame = top_camera.get_frame()
             top_camera.clear_frame_event()
             if frame is not None:
@@ -309,26 +255,17 @@ class TopRollingBuffer:
         return self._buffer.frame_count()
 
     def save_to_mp4(self, path: Path) -> bool:
-        """Synchronous save — kept for backward compat. Prefer save_alarm_clip."""
         fps = TOP_FPS if self._active else TOP_FPS_IDLE
         return self._buffer.save_to_mp4(path, fps=fps)
 
     def save_alarm_clip(self, pid: str, lid: int) -> Optional[Path]:
-        """
-        Queue a top-cam alarm clip for background encoding.
-
-        Returns the path immediately (file will exist once encoding completes).
-        Non-blocking — does NOT stall the alarm trigger thread.
-        """
         frames = self._buffer.snapshot()
         if not frames:
             return None
         dt_str   = datetime.now().strftime("%Y%m%d-%H%M%S")
-        slot_num = lid + 1
         safe_pid = pid.replace("-", "")[:16]
-        path     = EVIDENCE_BASE_DIR / "alarms" / f"{safe_pid}_slot{slot_num}_{dt_str}_top.mp4"
+        path     = EVIDENCE_BASE_DIR / "alarms" / f"{safe_pid}_slot{lid+1}_{dt_str}_top.mp4"
         fps      = float(TOP_FPS if self._active else TOP_FPS_IDLE)
-
         from back_end.slot_monitor.admin.background_encoder import BackgroundEncoder
         ok = BackgroundEncoder.instance().submit(frames, path, fps)
         if ok:
@@ -339,5 +276,5 @@ class TopRollingBuffer:
 
 # ── Global singletons ─────────────────────────────────────────────────────────
 
-face_rolling_buffer = FaceRollingBuffer()   # push-based, no thread
-top_rolling_buffer  = TopRollingBuffer()    # event-based thread, starts with top_camera
+face_rolling_buffer = FaceRollingBuffer()
+top_rolling_buffer  = TopRollingBuffer()

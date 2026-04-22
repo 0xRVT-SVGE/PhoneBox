@@ -10,6 +10,17 @@ Modes:
   admin   — top-down camera via top_camera (admin resolution session)
             frames are pre-annotated with staging ROI overlays
 
+Opt #7  — recv() no longer busy-polls. Each track awaits
+          run_in_executor(None, event.wait) which suspends the coroutine
+          until the camera thread fires the event, releasing the event
+          loop completely between frames. Eliminates up to 10 wake-up
+          cycles per frame (was: while not event.wait(0.01): sleep(0.001)).
+
+Opt #23 — Per-mode SDP bitrate caps:
+          admin   → 800 kbps  (QR codes must be sharp)
+          main    → 300 kbps  (face recognition detail)
+          preview → 300 kbps  (same as main)
+
 Shutdown ownership: webrtc_handler owns its async_loop and all peer
 connections. Call webrtc_handler.shutdown() to close everything cleanly.
 server_main does not need to touch async_loop directly.
@@ -46,6 +57,13 @@ _async_thread: threading.Thread = None
 # Hardware acceleration
 HW_ACCEL_AVAILABLE = False
 HW_CODEC = None
+
+# Opt #23: per-mode bitrate lookup — set once at module load from config.
+_BITRATE_BY_MODE = {
+    "admin":   _WRC.ADMIN_BITRATE_KBPS,
+    "main":    _WRC.MAIN_BITRATE_KBPS,
+    "preview": _WRC.MAIN_BITRATE_KBPS,
+}
 
 
 # ============================================================
@@ -129,18 +147,36 @@ class HWAccelVideoTrack(VideoStreamTrack):
 
 
 class MainVideoTrack(HWAccelVideoTrack):
+    """
+    Opt #7: replaced busy-poll loop with run_in_executor.
+
+    Old code (up to 10 wakeups per frame at 30 fps):
+        while not scanner_state._main_frame_event.wait(timeout=0.01):
+            await asyncio.sleep(0.001)
+
+    New code (zero wakeups — coroutine suspended until frame arrives):
+        await asyncio.get_event_loop().run_in_executor(
+            None, scanner_state._main_frame_event.wait
+        )
+    The blocking event.wait() runs in a thread-pool thread, not the
+    event loop, so the loop is free to serve other coroutines between
+    camera frames.
+    """
     kind = "video"
 
     async def recv(self):
         pts, time_base = await self.next_timestamp()
-        while not scanner_state._main_frame_event.wait(timeout=0.01):
-            await asyncio.sleep(0.001)
+        # Opt #7: suspend until frame arrives — no spin, no sleep
+        await asyncio.get_event_loop().run_in_executor(
+            None, scanner_state._main_frame_event.wait
+        )
         frame = scanner_state.get_frame()
         scanner_state._main_frame_event.clear()
         return make_video_frame(frame, pts, time_base)
 
 
 class PreviewVideoTrack(HWAccelVideoTrack):
+    """Opt #7: same run_in_executor pattern as MainVideoTrack."""
     kind = "video"
 
     async def recv(self):
@@ -150,8 +186,10 @@ class PreviewVideoTrack(HWAccelVideoTrack):
             raise ConnectionError("Preview finished")
 
         pts, time_base = await self.next_timestamp()
-        while not scanner_state._preview_frame_event.wait(timeout=0.01):
-            await asyncio.sleep(0.001)
+        # Opt #7: suspend until frame arrives
+        await asyncio.get_event_loop().run_in_executor(
+            None, scanner_state._preview_frame_event.wait
+        )
         frame = scanner_state.get_rframe()
         scanner_state._preview_frame_event.clear()
         return make_video_frame(frame, pts, time_base)
@@ -161,23 +199,19 @@ class AdminVideoTrack(HWAccelVideoTrack):
     """
     Streams the top-down camera (index 2) with staging ROI overlays.
 
+    Opt #7: run_in_executor replaces the busy-poll on top_camera._frame_event.
     Reads from top_camera which owns the camera capture thread.
     ROI rectangles are already drawn on the frames — no client-side
     drawing needed.
-
-    top_camera starts lazily on first DVW or admin op; this track will
-    block briefly (~1 frame) if called before the first frame arrives,
-    then stream normally thereafter.
     """
     kind = "video"
 
     async def recv(self):
         pts, time_base = await self.next_timestamp()
-
-        # Wait for the next frame from the top camera buffer
-        while not top_camera.wait_for_frame(timeout=0.01):
-            await asyncio.sleep(0.001)
-
+        # Opt #7: suspend until the top camera posts a new frame
+        await asyncio.get_event_loop().run_in_executor(
+            None, lambda: top_camera.wait_for_frame(timeout=1.0)
+        )
         frame = top_camera.get_frame()
         top_camera.clear_frame_event()
         return make_video_frame(frame, pts, time_base)
@@ -216,7 +250,12 @@ async def _handle_offer(offer_sdp, offer_type, mode):
 
     await pc.setRemoteDescription(RTCSessionDescription(sdp=offer_sdp, type=offer_type))
     answer = await pc.createAnswer()
-    modified_sdp = modify_sdp_bitrate(answer.sdp, max_bitrate_kbps=_WRC.MAX_BITRATE_KBPS)
+
+    # Opt #23: use the per-mode bitrate cap instead of a single global value.
+    bitrate_kbps = _BITRATE_BY_MODE.get(mode, _WRC.MAX_BITRATE_KBPS)
+    modified_sdp = modify_sdp_bitrate(answer.sdp, max_bitrate_kbps=bitrate_kbps)
+    logger.debug(f"WebRTC offer mode={mode!r} bitrate={bitrate_kbps} kbps")
+
     answer_with_bitrate = RTCSessionDescription(sdp=modified_sdp, type=answer.type)
     await pc.setLocalDescription(answer_with_bitrate)
 

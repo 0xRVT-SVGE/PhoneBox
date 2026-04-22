@@ -29,7 +29,7 @@ Sections
   AdminConfig           Admin resolution session timeouts and limits
   QRConfig              QR scan timeouts
   EmbeddingConfig       Face-embedding worker pool size
-  WebRTCConfig          WebRTC bitrate cap and offer timeout
+  WebRTCConfig          WebRTC bitrate caps and offer timeout
   CalibrationConfig     Camera warm-up frames used by calibration tools
   RollingBufferConfig   Rolling evidence buffer sizes and fps
   EvidenceConfig        Evidence recording fps, codec, paths
@@ -359,8 +359,14 @@ class EmbeddingConfig:
 # ============================================================
 
 class WebRTCConfig:
-    MAX_BITRATE_KBPS = 100
-    OFFER_TIMEOUT    = 10
+    # Opt #23: per-mode bitrate caps.
+    # Admin top-cam needs 800 kbps for QR code readability.
+    # Front-cam (main/preview) needs 300 kbps for face recognition detail.
+    # MAX_BITRATE_KBPS is the hard fallback for any unrecognised mode.
+    ADMIN_BITRATE_KBPS = 800   # top-down camera — QR codes must be sharp
+    MAIN_BITRATE_KBPS  = 300   # front camera — face recognition quality
+    MAX_BITRATE_KBPS   = 300   # fallback (same as main)
+    OFFER_TIMEOUT      = 10
 
 
 # ============================================================
