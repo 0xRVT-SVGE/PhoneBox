@@ -721,8 +721,12 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
 
   Widget _buildCamera() {
     return _videoConnected && _renderer.srcObject != null
-        ? RTCVideoView(_renderer,
-            objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain)
+        ? RepaintBoundary(
+           child: RTCVideoView(
+             _renderer,
+             objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain,
+           ),
+         )
         : Container(
             color: Colors.black,
             child: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [

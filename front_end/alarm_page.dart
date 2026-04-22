@@ -39,21 +39,14 @@ class _AlarmPageState extends State<AlarmPage>
   bool _disposed = false;
   bool _resolutionInProgress = false;
 
-  // Pending auto-pop timer. Kept as a field so it can be cancelled if the
-  // alarm re-triggers before the delay expires (alarm fires per-slot so it can
-  // briefly clear then re-fire within ~200 ms — without this the page would
-  // dismiss itself before the admin has a chance to authenticate).
   Timer? _autoPop;
 
-  // Pre-connect future — capped at 6 s via .timeout().
-  // If pre-connect fails or times out, AdminResolutionPage starts its own
-  // connection (inheritedPeerConnection = null, which it already handles).
   Future<void>? _preConnectFuture;
 
   late AnimationController _pulseCtrl;
   late Animation<double> _pulseAnim;
 
-  // ── Display helpers ───────────────────────────────────
+  // ── Display helpers ───────────────────────────────────────
 
   static String _slotLabel(dynamic lid, {dynamic x, dynamic y}) {
     final slot = (lid as num).toInt() + 1;
@@ -68,7 +61,7 @@ class _AlarmPageState extends State<AlarmPage>
     return s;
   }
 
-  // ── Lifecycle ─────────────────────────────────────────
+  // ── Lifecycle ─────────────────────────────────────────────
 
   @override
   void initState() {
@@ -83,9 +76,6 @@ class _AlarmPageState extends State<AlarmPage>
       CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut),
     );
 
-    // Start admin video pre-connect using only 1 attempt (not 5) so it
-    // fails fast. The whole chain is also capped at 6 s so _onAuthSuccess
-    // is never blocked indefinitely waiting for a slow/unavailable server.
     _preConnectFuture = _adminRenderer
         .initialize()
         .then((_) => _startAdminVideo())
@@ -109,7 +99,7 @@ class _AlarmPageState extends State<AlarmPage>
     super.dispose();
   }
 
-  // ── Admin camera ──────────────────────────────────────
+  // ── Admin camera ──────────────────────────────────────────
 
   Future<void> _startAdminVideo() async {
     if (_disposed) return;
@@ -146,8 +136,6 @@ class _AlarmPageState extends State<AlarmPage>
       final offer = await _adminPc!.createOffer(
           {'offerToReceiveVideo': true, 'offerToReceiveAudio': false});
       await _adminPc!.setLocalDescription(offer);
-      // Single attempt only — no retries. If the server isn't ready the 6 s
-      // timeout on _preConnectFuture will fire and we proceed without the PC.
       final sdp = await ApiService.sendOffer(offer.sdp!, mode: 'admin',
           maxRetries: 1);
       if (sdp != null && !_disposed) {
@@ -169,14 +157,12 @@ class _AlarmPageState extends State<AlarmPage>
     return pc;
   }
 
-  // ── Socket ────────────────────────────────────────────
+  // ── Socket ────────────────────────────────────────────────
 
   void _connectSocket() {
     _socketService.connect(
       onAlarmUpdated: (data) {
         if (!mounted) return;
-        // The alarm re-fired (new or updated mismatch) — cancel any pending
-        // auto-pop that was scheduled when the alarm briefly cleared.
         _autoPop?.cancel();
         _autoPop = null;
         setState(() {
@@ -189,8 +175,6 @@ class _AlarmPageState extends State<AlarmPage>
         setState(() => _cleared = true);
         _maybeAutoPop();
       },
-      // onAlarmStatus fires when we call requestAlarmStatus() below.
-      // If alarm already cleared before this page opened, pop immediately.
       onAlarmStatus: (data) {
         if (!mounted) return;
         if (data["active"] != true) {
@@ -208,15 +192,9 @@ class _AlarmPageState extends State<AlarmPage>
         }
       },
     );
-    // Request current alarm status so we self-dismiss if the alarm was already
-    // cleared before this page was pushed (common after a page refresh).
     _socketService.requestAlarmStatus();
   }
 
-  // Auto-pop only when the admin hasn't started engaging with the auth flow.
-  // Uses a stored Timer so it can be cancelled if the alarm re-fires before
-  // the delay expires — without this, a brief alarm clear followed by a
-  // re-trigger would dismiss the page while the admin is still authenticating.
   void _maybeAutoPop({Duration delay = const Duration(milliseconds: 800)}) {
     final adminEngaged = _resolutionInProgress ||
         _loading ||
@@ -230,7 +208,7 @@ class _AlarmPageState extends State<AlarmPage>
     }
   }
 
-  // ── Auth ──────────────────────────────────────────────
+  // ── Auth ──────────────────────────────────────────────────
 
   void _submitPassword() {
     final pw = _passwordController.text.trim();
@@ -244,7 +222,6 @@ class _AlarmPageState extends State<AlarmPage>
 
   void _onAuthSuccess() {
     setState(() => _authenticated = true);
-    // _preConnectFuture is already capped at 6 s — this never blocks long.
     (_preConnectFuture ?? Future.value()).then((_) {
       if (mounted) _openResolution();
     });
@@ -259,8 +236,6 @@ class _AlarmPageState extends State<AlarmPage>
         builder: (_) => AdminResolutionPage(
           password: _passwordController.text.trim(),
           mismatches: List.from(_mismatches),
-          // May be null if pre-connect timed out — AdminResolutionPage
-          // handles null via _startVideo() fallback in _initVideo().
           inheritedPeerConnection: existingPc,
         ),
       ),
@@ -270,27 +245,19 @@ class _AlarmPageState extends State<AlarmPage>
     if (!mounted) return;
 
     if (resolved == true) {
-      // Session completed cleanly — dismiss the alarm page too.
       Navigator.of(context).pop();
       return;
     }
 
     if (resolved == false) {
-      // Session was opened on the server but the admin abandoned it
-      // (e.g. closed the page mid-resolution). Restart the alarm sound
-      // so a subsequent admin knows resolution is still needed.
       _socketService.unsilenceAlarm();
     }
-    // resolved == null means the session never opened (wrong password,
-    // server error before open, session_already_active, etc.).
-    // In that case we intentionally do NOT unsilence — the alarm is already
-    // silenced and no resolution was attempted, so there is nothing to revert.
 
     setState(() => _authenticated = false);
     if (_cleared && mounted) Navigator.of(context).pop();
   }
 
-  // ── Build ─────────────────────────────────────────────
+  // ── Build ─────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -310,7 +277,7 @@ class _AlarmPageState extends State<AlarmPage>
     );
   }
 
-  // ── Camera panel ──────────────────────────────────────
+  // ── Camera panel (Opt #30: RepaintBoundary isolates 30fps repaints) ──────────
 
   Widget _buildCameraPanel() {
     final bool showAdmin = _authenticated;
@@ -322,11 +289,16 @@ class _AlarmPageState extends State<AlarmPage>
     return Stack(
       fit: StackFit.expand,
       children: [
+        // Opt #30: RepaintBoundary — video updates at ~30 fps; without this the
+        // entire Scaffold subtree rebuilds on every frame even when nothing else
+        // changed. RepaintBoundary confines repaints to the video widget only.
         connected && renderer.srcObject != null
             ? RepaintBoundary(
-                child: RTCVideoView(renderer,
-                  objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain))
-
+                child: RTCVideoView(
+                  renderer,
+                  objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain,
+                ),
+              )
             : Container(
                 color: Colors.black,
                 child: Center(
@@ -347,7 +319,7 @@ class _AlarmPageState extends State<AlarmPage>
           bottom: 10, left: 12,
           child: _camBadge(camIcon, camLabel),
         ),
-        // Animated REC badge — scoped so only this widget rebuilds on pulse
+        // Animated REC badge
         Positioned(
           bottom: 10, right: 12,
           child: AnimatedBuilder(
@@ -381,7 +353,7 @@ class _AlarmPageState extends State<AlarmPage>
         ]),
       );
 
-  // ── Cleared ───────────────────────────────────────────
+  // ── Cleared ───────────────────────────────────────────────
 
   Widget _buildClearedView() => Container(
     padding: const EdgeInsets.symmetric(vertical: 32),
@@ -409,7 +381,7 @@ class _AlarmPageState extends State<AlarmPage>
     ),
   );
 
-  // ── Alarm content ─────────────────────────────────────
+  // ── Alarm content ─────────────────────────────────────────
 
   Widget _buildAlarmContent() => SingleChildScrollView(
     padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
@@ -436,8 +408,6 @@ class _AlarmPageState extends State<AlarmPage>
           color: const Color(0xFFE5484D).withOpacity(0.2), width: 1),
     ),
     child: Row(children: [
-      // Only this icon pulses — scope AnimatedBuilder so the text/count
-      // widgets are not rebuilt on every animation tick.
       AnimatedBuilder(
         animation: _pulseAnim,
         builder: (_, __) => Opacity(

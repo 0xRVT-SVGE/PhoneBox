@@ -98,6 +98,7 @@ MOTION_DILATE        = _MC.DILATE
 MOTION_MIN_AREA      = _MC.MIN_AREA
 MOTION_IOU_MERGE     = _MC.IOU_MERGE
 CSRT_REINIT_INTERVAL = _MC.CSRT_REINIT_INTERVAL
+CSRT_MOTION_GATE_N   = _MC.CSRT_MOTION_GATE_N
 
 LK_MAX_POINTS   = _LK.MAX_POINTS
 LK_MIN_POINTS   = _LK.MIN_POINTS
@@ -555,8 +556,9 @@ class PhoneTracker:
                          csrt_ok=False
                      else:
                          reinit_count+=1
-                         # Opt #13: only merge motion every N frames when CSRT is healthy
-                         if prev_gray is not None and frame_count % CSRT_REINIT_INTERVAL == 0:
+                         # Opt #13: motion-bbox merge every CSRT_MOTION_GATE_N (=5) frames.
+                         # More frequent than CSRT reinit (=12) for responsive correction.
+                         if prev_gray is not None and frame_count % CSRT_MOTION_GATE_N == 0:
                              pb=cv2.GaussianBlur(prev_gray,(MOTION_BLUR_K,)*2,0)
                              cb=cv2.GaussianBlur(curr_gray,(MOTION_BLUR_K,)*2,0)
                              mo=_motion_bbox(pb,cb)
@@ -566,11 +568,11 @@ class PhoneTracker:
                 # NOTE: reusing CSRT_REINIT_INTERVAL (=12) as the gate keeps it one constant.
                 # If you want a separate knob, add CSRT_MOTION_GATE_N to MotionConfig (Patch A)
                 # and use that variable instead.
-                        if reinit_count>=CSRT_REINIT_INTERVAL:
+                         if reinit_count>=CSRT_REINIT_INTERVAL:
                             # ── compat helper ──
                             csrt=_make_csrt_tracker(); csrt.init(frame,(bx,by,bw,bh))
                             reinit_count=0
-                else:
+                 else:
                     csrt_ok=False
 
             if not csrt_ok:

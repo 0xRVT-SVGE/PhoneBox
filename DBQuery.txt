@@ -183,8 +183,11 @@ BEGIN
     IF NEW.lid IS NULL THEN
         SELECT l.lid INTO NEW.lid
         FROM locations l
-        LEFT JOIN phone_storage ps ON l.lid = ps.lid AND ps.retrieved_at IS NULL
-        WHERE ps.lid IS NULL
+        WHERE NOT EXISTS (
+            SELECT 1 FROM phone_storage ps
+            WHERE ps.lid = l.lid
+              AND ps.retrieved_at IS NULL
+        )
         ORDER BY l.lid
         LIMIT 1;
 

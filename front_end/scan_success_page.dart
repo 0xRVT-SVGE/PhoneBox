@@ -551,9 +551,13 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
                     borderRadius: const BorderRadius.vertical(
                         top: Radius.circular(16)),
                     child: _topConnected && _topRenderer.srcObject != null
-                        ? RTCVideoView(_topRenderer,
-                            objectFit: RTCVideoViewObjectFit
-                                .RTCVideoViewObjectFitContain)
+                           ? RepaintBoundary(
+                               child: RTCVideoView(
+                                 _topRenderer,
+                                 objectFit: RTCVideoViewObjectFit
+                                     .RTCVideoViewObjectFitContain,
+                               ),
+                             )
                         : Container(
                             color: Colors.black,
                             child: Center(

@@ -16,7 +16,9 @@ Two buffers, two feed strategies:
 
     top_rolling_buffer (TopRollingBuffer)
         Camera: top-down camera (camera 2)
-        Feed:   thread-based feeder reading from top_camera buffer
+        Feed:   Opt #19: EVENT-BASED feeder — blocks on top_camera._frame_event
+                then throttles to target fps via a timestamp gate.
+                No more unconditional time.sleep() spinning.
         Saved:  prepended to admin evidence clips (pre-pickup footage)
 
 Memory estimate (JPEG quality 70, 30s buffer):
@@ -39,7 +41,6 @@ from back_end.config import RollingBufferConfig as _RBC, EvidenceConfig as _EC
 
 logger = logging.getLogger(__name__)
 
-# Edit back_end/config.py → RollingBufferConfig / EvidenceConfig to change these.
 BUFFER_DURATION_S = _RBC.BUFFER_DURATION_S
 JPEG_QUALITY      = _RBC.JPEG_QUALITY
 TOP_FPS           = _RBC.TOP_FPS_ACTIVE
@@ -212,26 +213,27 @@ class FaceRollingBuffer:
         return round(len(frames) / duration, 1) if duration > 0 else 30.0
 
 
-# ── Top camera buffer (thread-based) ─────────────────────────────────────────
+# ── Top camera buffer (thread-based, event-driven) ───────────────────────────
 
 class TopRollingBuffer:
     """
     Rolling buffer for the top-down camera (camera 2).
 
-    Samples at TOP_FPS_IDLE (5 fps) by default for power efficiency.
-    Switches to TOP_FPS (20 fps) when any DVW or admin operation is active.
+    Opt #19: Feed loop is EVENT-BASED — blocks on top_camera.wait_for_frame()
+    instead of unconditionally sleeping for the frame interval.  A timestamp
+    gate then enforces the target fps so we never record faster than needed.
+
+    This removes ~5-20 ms of pointless sleep overhead per second when the
+    camera is running at full speed, and is more responsive to actual frames.
 
     Call set_active(True)  when an operation starts.
     Call set_active(False) when it ends.
-
-    The actual frame rate is only a buffer sampling rate — the top_camera
-    capture thread and the WebRTC stream always run at full hardware fps.
     """
 
     def __init__(self):
         self._buffer  = RollingBuffer()
         self._running = False
-        self._active  = False   # True = operation in progress → full fps
+        self._active  = False
         self._thread: Optional[threading.Thread] = None
 
     def set_active(self, active: bool):
@@ -265,22 +267,40 @@ class TopRollingBuffer:
         logger.info("[TopRollingBuffer] Stopped")
 
     def _feed_loop(self):
+        """
+        Opt #19: event-driven feed — wake on top_camera frame event,
+        then enforce target fps via a timestamp gate.
+
+        Old approach: record t0, wait_for_frame(0.1), sleep(interval - elapsed)
+          → always paid a full sleep even when frames arrive on time.
+
+        New approach: block on wait_for_frame(0.1), skip if within interval,
+          push and update last_push timestamp.
+          → zero CPU between frames; no extra sleep calls.
+        """
         from back_end.slot_monitor.camera.top_camera import top_camera
+        last_push = 0.0
+
         while self._running:
-            t0       = time.time()
             fps      = TOP_FPS if self._active else TOP_FPS_IDLE
             interval = 1.0 / fps
 
-            got = top_camera.wait_for_frame(timeout=0.1)
-            if got:
-                frame = top_camera.get_frame()
-                top_camera.clear_frame_event()
-                if frame is not None:
-                    self._buffer.push(frame)
+            # Block until the top camera produces a new frame (or timeout).
+            # Timeout of 0.1 s means _running is re-checked at least every 100 ms.
+            if not top_camera.wait_for_frame(timeout=0.1):
+                continue
 
-            sleep = interval - (time.time() - t0)
-            if sleep > 0:
-                time.sleep(sleep)
+            # Timestamp gate: discard frames that arrive faster than target fps.
+            now = time.time()
+            if now - last_push < interval:
+                top_camera.clear_frame_event()
+                continue
+
+            frame = top_camera.get_frame()
+            top_camera.clear_frame_event()
+            if frame is not None:
+                self._buffer.push(frame)
+                last_push = now
 
     def snapshot(self) -> List[_Frame]:
         return self._buffer.snapshot()
@@ -320,4 +340,4 @@ class TopRollingBuffer:
 # ── Global singletons ─────────────────────────────────────────────────────────
 
 face_rolling_buffer = FaceRollingBuffer()   # push-based, no thread
-top_rolling_buffer  = TopRollingBuffer()    # thread-based, starts with top_camera
+top_rolling_buffer  = TopRollingBuffer()    # event-based thread, starts with top_camera
