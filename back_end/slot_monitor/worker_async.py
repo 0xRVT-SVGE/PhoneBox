@@ -4,24 +4,40 @@
 """
 Async event-driven monitoring workers with DVW support.
 
-False-positive suppression
-──────────────────────────
-During any DVW (deposit/withdraw/verify) or admin resolution operation the
-operator's hand and phone move over the box, causing transient embedding
-changes on non-target slots.  Without suppression those slots fire alarms
-after their grace period (≤3 s) while the operator is still handling a
-legitimate action.
+Opt #10 — Concurrent slot embedding via ThreadPoolExecutor
+──────────────────────────────────────────────────────────
+Previously every slot's embedding was computed serially inside a for-loop:
+    for slot in self.slots:
+        await self._process_slot(slot, frame)   # one at a time
 
-Fix: _any_operation_active() checks op_ctx and admin_ctx before forwarding
-a trigger_alarm event to AlarmController.  Slot state (mismatch flag, grace
-timer, distances history) is untouched — a real concurrent theft will
-re-alarm naturally once the operation ends and restore_slot() resets state.
+This wastes wall-clock time: slot.update() calls compute_embedding() which
+calls cv2.calcHist, cv2.dct, np.linalg.norm — all heavy C extensions that
+RELEASE the GIL while running.
+
+Fix applied here:
+  1. Each AsyncMonitorWorker owns a ThreadPoolExecutor (max_workers = min(4, len(slots)))
+  2. Inside _process_slot, slot.update() is offloaded via run_in_executor so
+     the C-extension work runs in a real OS thread without holding the GIL.
+  3. _process_frame now fires all slot tasks concurrently with asyncio.gather,
+     so all slots in the worker compute their embeddings in parallel.
+
+Thread safety: each slot object is owned exclusively by one worker, so there
+are no cross-slot data races. The event-loop-sensitive follow-up code (alarm
+trigger, DB writes) still runs on the single asyncio event loop thread.
+
+False-positive suppression (unchanged)
+──────────────────────────────────────
+During any DVW or admin resolution operation the operator's hand and phone
+move over the box, causing transient embedding changes on non-target slots.
+_any_operation_active() checks op_ctx and admin_ctx before forwarding a
+trigger_alarm event to AlarmController.
 """
 
 import asyncio
 import logging
 import time
 import numpy as np
+from concurrent.futures import ThreadPoolExecutor
 from typing import List, Dict, Optional
 from dataclasses import dataclass
 
@@ -31,7 +47,6 @@ from back_end.slot_monitor.alarm_controller import AlarmController
 logger = logging.getLogger(__name__)
 
 # ── Lazy singletons for operation-active checks ──────────────────────────────
-# Imported once on first use to avoid circular-import issues at module load.
 _op_ctx    = None
 _admin_ctx = None
 
@@ -64,7 +79,7 @@ class WorkerMetrics:
     total_distance: float = 0.0
     total_processing_time: float = 0.0
     alarms_triggered: int = 0
-    alarms_suppressed: int = 0   # new: tracks false-positive suppression count
+    alarms_suppressed: int = 0
     baselines_adapted: int = 0
     errors: int = 0
 
@@ -79,17 +94,12 @@ class WorkerMetrics:
 
 class AsyncMonitorWorker:
     """
-    Async worker with DVW support.
+    Async worker with DVW support and concurrent slot embedding (Opt #10).
 
     Slot control:
         pause_slot(lid)                  — suspend monitoring during a DVW operation
         resume_slot(lid)                 — lift pause after SUCCESSFUL operation
-                                           (slot state already correct, baseline already captured)
         restore_slot(lid, is_occupied)   — lift pause after FAILED/TIMED-OUT operation
-                                           (resets is_occupied + mismatch + grace timer;
-                                            distances_history is intentionally preserved so
-                                            the alarm system can re-trigger naturally if the
-                                            physical state warrants it)
     """
 
     def __init__(
@@ -119,13 +129,24 @@ class AsyncMonitorWorker:
 
         self._subscriber_id = f"worker-{worker_id}"
 
-        # lid → True means monitoring is suspended for that slot
         self._paused_slots: Dict[int, bool] = {}
-
-        # O(1) lid → Slot lookup
         self._slot_map: Dict[int, Slot] = {s.lid: s for s in slots}
 
-        logger.info(f"AsyncWorker {worker_id} initialized: slots={[s.lid for s in slots]}")
+        # Opt #10: ThreadPoolExecutor for concurrent embedding computation.
+        # numpy/OpenCV release the GIL during C-extension calls, so threads
+        # genuinely run in parallel for the compute-heavy parts.
+        # Cap at 4 threads to avoid excessive context-switching overhead.
+        _n_threads = min(4, max(1, len(slots)))
+        self._embed_executor = ThreadPoolExecutor(
+            max_workers=_n_threads,
+            thread_name_prefix=f"SlotEmbed-W{worker_id}",
+        )
+
+        logger.info(
+            f"AsyncWorker {worker_id} initialized: "
+            f"slots={[s.lid for s in slots]} "
+            f"embed_threads={_n_threads}"
+        )
 
     # --------------------------------------------------------
     # DVW SLOT CONTROL
@@ -136,14 +157,12 @@ class AsyncMonitorWorker:
         logger.info(f"Worker {self.worker_id}: slot {lid} paused")
 
     def resume_slot(self, lid: int):
-        """Lift pause after a SUCCESSFUL operation."""
         self._paused_slots.pop(lid, None)
         logger.info(f"Worker {self.worker_id}: slot {lid} resumed")
 
     def restore_slot(self, lid: int, is_occupied: bool):
         """
         Lift pause after a FAILED or TIMED-OUT operation.
-
         Resets is_occupied, mismatch, and grace timer.
         Preserves distances_history so alarm can re-trigger naturally.
         """
@@ -172,13 +191,6 @@ class AsyncMonitorWorker:
 
     @staticmethod
     def _any_operation_active() -> bool:
-        """
-        Return True if any DVW or admin-resolution operation is currently in
-        progress anywhere in the system.
-
-        Called only on the rare path where trigger_alarm=True (once per grace-
-        period expiry), so the lazy singleton lookup cost is negligible.
-        """
         try:
             ctx = _get_op_ctx()
             if ctx is not None and ctx.get_all_operations():
@@ -219,6 +231,9 @@ class AsyncMonitorWorker:
             except asyncio.CancelledError:
                 pass
 
+        # Opt #10: shut down the thread pool cleanly
+        self._embed_executor.shutdown(wait=False)
+
         logger.info(f"AsyncWorker {self.worker_id} stopped")
 
     # --------------------------------------------------------
@@ -244,13 +259,24 @@ class AsyncMonitorWorker:
             self.metrics.errors += 1
 
     async def _process_frame(self, frame: np.ndarray):
+        """
+        Opt #10: run all slot tasks concurrently with asyncio.gather.
+
+        Each _process_slot offloads slot.update() to the ThreadPoolExecutor,
+        so all slots compute their embeddings in parallel OS threads.
+        The event loop is free between awaits — no blocking.
+        """
         start_time = time.perf_counter()
 
-        for slot in self.slots:
-            try:
-                await self._process_slot(slot, frame)
-            except Exception as e:
-                logger.error(f"Worker {self.worker_id} failed slot {slot.lid}: {e}")
+        tasks = [
+            self._process_slot(slot, frame)
+            for slot in self.slots
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for r in results:
+            if isinstance(r, Exception):
+                logger.error(f"Worker {self.worker_id} slot error: {r}")
                 self.metrics.errors += 1
 
         elapsed = time.perf_counter() - start_time
@@ -261,40 +287,40 @@ class AsyncMonitorWorker:
         """
         Process a single slot.
 
-        Skips processing if slot is paused (DVW operation in progress).
+        Opt #10: slot.update() is offloaded to the ThreadPoolExecutor so the
+        CPU-bound embedding computation runs in a real OS thread. Since
+        numpy/OpenCV release the GIL, multiple slots run truly in parallel.
 
         False-positive suppression: if a NEW alarm trigger would fire while
-        any DVW/admin operation is active elsewhere in the system, the trigger
-        is suppressed.  The slot's mismatch state is preserved — a real theft
-        concurrent with an operation re-alarms once the operation ends and
-        restore_slot() resets state.
+        any DVW/admin operation is active, the trigger is suppressed.
         """
         if self.is_slot_paused(slot.lid):
             return
 
-        result = slot.update(
-            frame=frame,
-            mismatch_threshold=self.mismatch_threshold,
-            recalc_threshold=self.recalc_threshold,
-            grace_period=self.grace_period,
+        loop = asyncio.get_event_loop()
+
+        # Opt #10: run the CPU-bound embedding in a thread, not the event loop
+        result = await loop.run_in_executor(
+            self._embed_executor,
+            slot.update,
+            frame,
+            self.mismatch_threshold,
+            self.recalc_threshold,
+            self.grace_period,
         )
 
         self.metrics.total_distance += result["distance"]
 
-        # Fast path: most frames are normal — skip DB and op-check entirely.
+        # Fast path: most frames are normal
         if not (result["trigger_alarm"] or result["stop_alarm"] or result["needs_recalc"]):
             return
 
-        # ── False-positive suppression ────────────────────────────────────────
-        # A student's hand moving over the box causes transient embedding
-        # changes on non-target (especially empty) slots.  Suppress new alarm
-        # triggers while any operation is in flight.  stop_alarm and
-        # needs_recalc are intentionally NOT suppressed.
+        # False-positive suppression
         if result["trigger_alarm"] and self._any_operation_active():
             self.metrics.alarms_suppressed += 1
             logger.debug(
-                f"Worker {self.worker_id}: alarm suppressed (operation active) LID={slot.lid} "
-                f"dist={result['distance']:.4f}"
+                f"Worker {self.worker_id}: alarm suppressed (operation active) "
+                f"LID={slot.lid} dist={result['distance']:.4f}"
             )
             return
 
@@ -349,9 +375,7 @@ class AsyncMonitorWorker:
 class WorkerPool:
     """
     Manages a pool of AsyncMonitorWorker instances.
-
-    All slot control calls (pause / resume / restore) route through here.
-    WorkerPool finds the owning worker by lid and delegates.
+    All slot control calls route through here.
     """
 
     def __init__(
