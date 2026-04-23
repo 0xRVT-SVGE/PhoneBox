@@ -4,16 +4,23 @@
 """
 Unified database interface for slot monitoring.
 
-Opt #36 — pgvector integration
---------------------------------
-save_baseline() now writes to BOTH the legacy `embedding` BYTEA column
-and the new `embedding_vec` VECTOR(96) column when the migration has
-been applied.  Reading (fetch_all_baselines) stays on bytea — the slot
-monitor's runtime behaviour is completely unchanged.
+Opt #25 — LISTEN/NOTIFY
+------------------------
+AsyncSlotMonitorDB holds one dedicated asyncpg connection that LISTENs
+on 'phonebox_storage_change'.  When PostgreSQL fires the trigger
+(notify_storage_change in DBQuery.sql), _on_storage_notify() invalidates
+the in-process pid→lid cache immediately — no polling.
 
-Backward compatibility: if the `embedding_vec` column does not yet
-exist (migration not run), the code detects this once at startup and
-silently falls back to bytea-only writes.  Nothing breaks either way.
+Graceful fallback: if the LISTEN connection fails (trigger not yet in DB,
+network issue) the pool operates normally and manual invalidation still works.
+
+Opt #36 — pgvector dual-write
+------------------------------
+save_baseline() writes BOTH the legacy `embedding` BYTEA column and
+`embedding_vec vector(96)`.  Reads always use BYTEA (unchanged runtime).
+
+Backward compat: if the vector column does not exist (migration not run),
+a try/except falls back to BYTEA-only writes automatically.
 """
 
 import asyncio
@@ -40,24 +47,21 @@ def embedding_from_bytes(data: bytes) -> np.ndarray:
     return np.frombuffer(data, dtype=np.float32)
 
 
-def _embedding_to_pg_vector_str(emb: np.ndarray) -> str:
-    """
-    Format embedding as a pgvector literal string: '[0.1,0.2,...]'
-    Works with both psycopg2 (%s::vector cast) and asyncpg ($n::vector cast).
-    """
-    return '[' + ','.join(f'{float(x):.8g}' for x in emb) + ']'
+def _vec_str(emb: np.ndarray) -> str:
+    """Format numpy array as pgvector literal: '[0.1,0.2,...]'"""
+    return '[' + ','.join(f'{float(v):.8g}' for v in emb) + ']'
 
 
 # ============================================================
-# SYNC DATABASE INTERFACE (Legacy/Calibration)
+# SYNC DATABASE INTERFACE  (psycopg2, used by calibration tools
+#                           and SlotOperations)
 # ============================================================
 
-# Opt #36: lazy check — set to True/False after first call, None = unchecked.
+# Opt #36: lazy one-time check for embedding_vec column
 _PGVECTOR_COL_EXISTS: Optional[bool] = None
 
 
 def _check_pgvector_column_sync() -> bool:
-    """Return True if embedding_vec column exists in slot_baselines."""
     global _PGVECTOR_COL_EXISTS
     if _PGVECTOR_COL_EXISTS is not None:
         return _PGVECTOR_COL_EXISTS
@@ -93,10 +97,8 @@ class SlotMonitorDB:
         try:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT lid, pid
-                    FROM phone_storage
-                    WHERE retrieved_at IS NULL
-                    ORDER BY lid;
+                    SELECT lid, pid FROM phone_storage
+                    WHERE retrieved_at IS NULL ORDER BY lid;
                 """)
                 rows = cur.fetchall()
                 logger.info(f"Fetched {len(rows)} occupied slots from DB")
@@ -109,21 +111,16 @@ class SlotMonitorDB:
 
     @staticmethod
     def fetch_all_baselines() -> Dict[int, np.ndarray]:
-        """
-        Read baselines from the legacy bytea column.
-        Reading is intentionally unchanged — slot monitor runtime is unaffected.
-        """
         conn = get_conn()
         try:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT lid, embedding
-                    FROM slot_baselines
+                    SELECT lid, embedding FROM slot_baselines
                     WHERE embedding IS NOT NULL
                       AND embedding != '\\x00'::bytea
                     ORDER BY lid;
                 """)
-                rows      = cur.fetchall()
+                rows = cur.fetchall()
                 baselines = {}
                 for lid, emb_bytes in rows:
                     if emb_bytes:
@@ -140,31 +137,40 @@ class SlotMonitorDB:
     def save_baseline(lid: int, embedding: np.ndarray):
         """
         Persist a slot baseline.
-
-        Opt #36: writes to both `embedding` (bytea) and `embedding_vec`
-        (vector) when the migration has been applied.  Falls back silently
-        to bytea-only if the column does not exist.
+        Opt #36: writes to both BYTEA and vector(96) when migration applied.
+        Falls back to BYTEA-only silently.
         """
         conn = get_conn()
         try:
-            emb_bytes  = embedding_to_bytes(embedding)
+            emb_bytes = embedding_to_bytes(embedding)
             use_vector = _check_pgvector_column_sync()
 
             with conn.cursor() as cur:
                 if use_vector:
-                    vec_str = _embedding_to_pg_vector_str(embedding)
-                    cur.execute("""
-                        INSERT INTO slot_baselines (lid, embedding, embedding_vec, calibrated_at)
-                        VALUES (%s, %s, %s::vector, NOW())
-                        ON CONFLICT (lid) DO UPDATE SET
-                            embedding     = EXCLUDED.embedding,
-                            embedding_vec = EXCLUDED.embedding_vec,
-                            calibrated_at = NOW()
-                    """, (lid, emb_bytes, vec_str))
+                    try:
+                        cur.execute("""
+                            INSERT INTO slot_baselines
+                                (lid, embedding, embedding_vec, calibrated_at)
+                            VALUES (%s, %s, %s::vector(96), NOW())
+                            ON CONFLICT (lid) DO UPDATE SET
+                                embedding     = EXCLUDED.embedding,
+                                embedding_vec = EXCLUDED.embedding_vec,
+                                calibrated_at = NOW()
+                        """, (lid, emb_bytes, _vec_str(embedding)))
+                    except Exception:
+                        conn.rollback()
+                        # Column exists in schema but type cast failed — fall back
+                        cur.execute("""
+                            INSERT INTO slot_baselines (lid, embedding, calibrated_at)
+                            VALUES (%s, %s, NOW())
+                            ON CONFLICT (lid) DO UPDATE SET
+                                embedding     = EXCLUDED.embedding,
+                                calibrated_at = NOW()
+                        """, (lid, emb_bytes))
                 else:
                     cur.execute("""
-                        INSERT INTO slot_baselines (lid, embedding)
-                        VALUES (%s, %s)
+                        INSERT INTO slot_baselines (lid, embedding, calibrated_at)
+                        VALUES (%s, %s, NOW())
                         ON CONFLICT (lid) DO UPDATE SET
                             embedding     = EXCLUDED.embedding,
                             calibrated_at = NOW()
@@ -236,7 +242,7 @@ class SlotMonitorDB:
                 )
                 return cur.fetchone()[0]
         except Exception as e:
-            logger.error(f"Failed to check PID existence for {pid}: {e}")
+            logger.error(f"Failed to check PID existence: {e}")
             return False
         finally:
             put_conn(conn)
@@ -263,13 +269,11 @@ class SlotMonitorDB:
         try:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT l.lid
-                    FROM locations l
+                    SELECT l.lid FROM locations l
                     LEFT JOIN phone_storage ps
                            ON l.lid = ps.lid AND ps.retrieved_at IS NULL
                     WHERE ps.pid IS NULL
-                    ORDER BY l.lid
-                    LIMIT 1;
+                    ORDER BY l.lid LIMIT 1;
                 """)
                 row = cur.fetchone()
                 return row[0] if row else None
@@ -331,7 +335,7 @@ class SlotMonitorDB:
 
 
 # ============================================================
-# ASYNC DATABASE INTERFACE (Real-time Monitoring)
+# ASYNC DATABASE INTERFACE  (asyncpg, used by HeadlessSlotMonitor)
 # ============================================================
 
 _CACHE_MISS = object()
@@ -340,18 +344,21 @@ _CACHE_MISS = object()
 class AsyncSlotMonitorDB:
     """
     Async database interface for slot monitoring.
-    Uses asyncpg connection pool for high-performance real-time operations.
+
+    Opt #25: dedicated asyncpg LISTEN/NOTIFY connection invalidates the
+             pid→lid cache the moment PostgreSQL fires the trigger.
+    Opt #36: save_baseline writes both BYTEA and vector(96).
     """
 
     def __init__(
-            self,
-            host:         str = _DC.ASYNC_HOST,
-            port:         int = _DC.ASYNC_PORT,
-            database:     str = _DC.ASYNC_DATABASE,
-            user:         str = Secrets.DB_USER,
-            password:     str = Secrets.DB_PASSWORD,
-            min_pool_size: int = _DC.ASYNC_POOL_MIN,
-            max_pool_size: int = _DC.ASYNC_POOL_MAX,
+        self,
+        host:          str = _DC.ASYNC_HOST,
+        port:          int = _DC.ASYNC_PORT,
+        database:      str = _DC.ASYNC_DATABASE,
+        user:          str = Secrets.DB_USER,
+        password:      str = Secrets.DB_PASSWORD,
+        min_pool_size: int = _DC.ASYNC_POOL_MIN,
+        max_pool_size: int = _DC.ASYNC_POOL_MAX,
     ):
         self.host          = host
         self.port          = port
@@ -368,6 +375,11 @@ class AsyncSlotMonitorDB:
         # Opt #36: detected once in connect()
         self._pgvector_ready: bool = False
 
+        # Opt #25: dedicated connection for LISTEN/NOTIFY
+        self._listen_conn: Optional[asyncpg.Connection] = None
+
+    # ── Lifecycle ─────────────────────────────────────────────────────────────
+
     async def connect(self):
         if self._pool is not None:
             logger.warning("Connection pool already exists")
@@ -383,34 +395,31 @@ class AsyncSlotMonitorDB:
             max_size        = self.max_pool_size,
             command_timeout = _DC.ASYNC_CMD_TIMEOUT,
         )
-
         logger.info(
             f"AsyncPG pool created: {self.min_pool_size}-{self.max_pool_size} "
             f"connections to {self.host}:{self.port}/{self.database}"
         )
 
-        # Opt #36: detect vector column once, log result
+        # Opt #36: detect vector column once
         self._pgvector_ready = await self._detect_pgvector()
         logger.info(
             f"[AsyncDB] pgvector embedding_vec: "
             f"{'available' if self._pgvector_ready else 'not migrated — bytea-only writes'}"
         )
 
-    async def _detect_pgvector(self) -> bool:
-        """Return True if the embedding_vec column exists in slot_baselines."""
-        try:
-            row = await self._pool.fetchrow("""
-                SELECT 1 FROM information_schema.columns
-                WHERE  table_name  = 'slot_baselines'
-                AND    column_name = 'embedding_vec'
-                LIMIT  1
-            """)
-            return row is not None
-        except Exception as exc:
-            logger.warning(f"[AsyncDB] pgvector detection failed: {exc}")
-            return False
+        # Opt #25: start LISTEN/NOTIFY listener
+        await self._setup_notify_listener()
 
     async def close(self):
+        # Opt #25: close listener before pool
+        if self._listen_conn:
+            try:
+                await self._listen_conn.close()
+                logger.info("[AsyncDB] LISTEN/NOTIFY connection closed")
+            except Exception:
+                pass
+            self._listen_conn = None
+
         if self._pool:
             await self._pool.close()
             logger.info("AsyncPG pool closed")
@@ -419,42 +428,104 @@ class AsyncSlotMonitorDB:
         if self._pool is None:
             raise RuntimeError("Database not connected. Call connect() first.")
 
-    # ── Baseline operations ───────────────────────────────
+    # ── Opt #25: LISTEN/NOTIFY ────────────────────────────────────────────────
+
+    async def _setup_notify_listener(self) -> None:
+        """
+        Open a dedicated asyncpg connection and register a LISTEN callback.
+
+        A separate connection is required because asyncpg pool connections
+        cannot hold persistent channel registrations.
+
+        Graceful: if setup fails the pool continues normally.
+        """
+        try:
+            self._listen_conn = await asyncpg.connect(
+                host=self.host, port=self.port,
+                database=self.database,
+                user=self.user, password=self.password,
+            )
+            await self._listen_conn.add_listener(
+                'phonebox_storage_change',
+                self._on_storage_notify,
+            )
+            logger.info(
+                "[AsyncDB] Opt #25: LISTEN active on 'phonebox_storage_change' — "
+                "pid cache auto-invalidates on DB changes"
+            )
+        except Exception as exc:
+            logger.warning(
+                f"[AsyncDB] Opt #25: LISTEN setup failed ({exc}) "
+                "— manual invalidation fallback active"
+            )
+            self._listen_conn = None
+
+    def _on_storage_notify(self, conn, pid, channel, payload: str) -> None:
+        """
+        Callback from asyncpg when PostgreSQL sends NOTIFY.
+        Runs in the asyncpg event-loop thread; dict.pop is GIL-safe.
+        """
+        try:
+            lid = int(payload)
+            self.invalidate_pid_cache_sync(lid)
+            logger.debug(f"[AsyncDB] Opt #25: cache invalidated via NOTIFY LID={lid}")
+        except (ValueError, TypeError):
+            self.invalidate_pid_cache_sync()   # full clear on bad payload
+            logger.warning(
+                f"[AsyncDB] Opt #25: unexpected NOTIFY payload {payload!r} — "
+                "full cache cleared"
+            )
+
+    # ── Opt #36: pgvector detection ───────────────────────────────────────────
+
+    async def _detect_pgvector(self) -> bool:
+        try:
+            row = await self._pool.fetchrow("""
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'slot_baselines'
+                  AND column_name = 'embedding_vec'
+                LIMIT 1
+            """)
+            return row is not None
+        except Exception as exc:
+            logger.warning(f"[AsyncDB] pgvector detection failed: {exc}")
+            return False
+
+    # ── Baseline operations ───────────────────────────────────────────────────
 
     async def save_baseline(self, lid: int, embedding: np.ndarray):
-        """
-        Persist a slot baseline.
-
-        Opt #36: writes to both `embedding` (bytea) and `embedding_vec`
-        (vector) when the migration has been applied.
-        """
+        """Opt #36: write BYTEA + vector(96) with graceful BYTEA fallback."""
         self._require_pool()
         emb_bytes = embedding_to_bytes(embedding)
 
         if self._pgvector_ready:
-            vec_str = _embedding_to_pg_vector_str(embedding)
-            await self._pool.execute(
-                """
-                INSERT INTO slot_baselines (lid, embedding, embedding_vec, calibrated_at)
-                VALUES ($1, $2, $3::vector, NOW())
-                ON CONFLICT (lid) DO UPDATE SET
-                    embedding     = EXCLUDED.embedding,
-                    embedding_vec = EXCLUDED.embedding_vec,
-                    calibrated_at = EXCLUDED.calibrated_at
-                """,
-                lid, emb_bytes, vec_str,
-            )
-        else:
-            await self._pool.execute(
-                """
-                INSERT INTO slot_baselines (lid, embedding, calibrated_at)
-                VALUES ($1, $2, NOW())
-                ON CONFLICT (lid) DO UPDATE SET
-                    embedding     = EXCLUDED.embedding,
-                    calibrated_at = EXCLUDED.calibrated_at
-                """,
-                lid, emb_bytes,
-            )
+            try:
+                await self._pool.execute(
+                    """
+                    INSERT INTO slot_baselines
+                        (lid, embedding, embedding_vec, calibrated_at)
+                    VALUES ($1, $2, $3::vector(96), NOW())
+                    ON CONFLICT (lid) DO UPDATE SET
+                        embedding     = EXCLUDED.embedding,
+                        embedding_vec = EXCLUDED.embedding_vec,
+                        calibrated_at = EXCLUDED.calibrated_at
+                    """,
+                    lid, emb_bytes, _vec_str(embedding),
+                )
+                return
+            except Exception:
+                pass   # fall through to BYTEA-only
+
+        await self._pool.execute(
+            """
+            INSERT INTO slot_baselines (lid, embedding, calibrated_at)
+            VALUES ($1, $2, NOW())
+            ON CONFLICT (lid) DO UPDATE SET
+                embedding     = EXCLUDED.embedding,
+                calibrated_at = EXCLUDED.calibrated_at
+            """,
+            lid, emb_bytes,
+        )
 
     async def fetch_baseline(self, lid: int) -> Optional[np.ndarray]:
         self._require_pool()
@@ -464,10 +535,6 @@ class AsyncSlotMonitorDB:
         return embedding_from_bytes(row["embedding"]) if row else None
 
     async def fetch_all_baselines(self) -> Dict[int, np.ndarray]:
-        """
-        Read baselines from the legacy bytea column.
-        Reading is intentionally unchanged — slot monitor runtime is unaffected.
-        """
         self._require_pool()
         rows = await self._pool.fetch(
             """
@@ -490,53 +557,54 @@ class AsyncSlotMonitorDB:
         )
 
     async def save_baselines_batch(self, baselines: Dict[int, np.ndarray]):
-        """
-        Batch-save multiple baselines in a single transaction.
-
-        Opt #36: includes embedding_vec when the column is available.
-        """
+        """Opt #36: batch write BYTEA + vector(96) with graceful fallback."""
         self._require_pool()
         if not baselines:
             return
 
+        data_vec = [
+            (lid, embedding_to_bytes(emb), _vec_str(emb))
+            for lid, emb in baselines.items()
+        ]
+        data_bytes = [(lid, b) for lid, b, _ in data_vec]
+
         async with self._pool.acquire() as conn:
             async with conn.transaction():
                 if self._pgvector_ready:
-                    data = [
-                        (lid, embedding_to_bytes(emb),
-                         _embedding_to_pg_vector_str(emb))
-                        for lid, emb in baselines.items()
-                    ]
-                    await conn.executemany(
-                        """
-                        INSERT INTO slot_baselines
-                            (lid, embedding, embedding_vec, calibrated_at)
-                        VALUES ($1, $2, $3::vector, NOW())
-                        ON CONFLICT (lid) DO UPDATE SET
-                            embedding     = EXCLUDED.embedding,
-                            embedding_vec = EXCLUDED.embedding_vec,
-                            calibrated_at = EXCLUDED.calibrated_at
-                        """,
-                        data,
-                    )
-                else:
-                    data = [
-                        (lid, embedding_to_bytes(emb))
-                        for lid, emb in baselines.items()
-                    ]
-                    await conn.executemany(
-                        """
-                        INSERT INTO slot_baselines (lid, embedding, calibrated_at)
-                        VALUES ($1, $2, NOW())
-                        ON CONFLICT (lid) DO UPDATE SET
-                            embedding     = EXCLUDED.embedding,
-                            calibrated_at = EXCLUDED.calibrated_at
-                        """,
-                        data,
-                    )
-        logger.info(f"Saved {len(baselines)} baselines in batch (async, vector={self._pgvector_ready})")
+                    try:
+                        await conn.executemany(
+                            """
+                            INSERT INTO slot_baselines
+                                (lid, embedding, embedding_vec, calibrated_at)
+                            VALUES ($1, $2, $3::vector(96), NOW())
+                            ON CONFLICT (lid) DO UPDATE SET
+                                embedding     = EXCLUDED.embedding,
+                                embedding_vec = EXCLUDED.embedding_vec,
+                                calibrated_at = EXCLUDED.calibrated_at
+                            """,
+                            data_vec,
+                        )
+                        logger.info(
+                            f"Saved {len(baselines)} baselines batch "
+                            f"(async, vector=True)"
+                        )
+                        return
+                    except Exception:
+                        pass   # fall through
 
-    # ── Occupancy queries ─────────────────────────────────
+                await conn.executemany(
+                    """
+                    INSERT INTO slot_baselines (lid, embedding, calibrated_at)
+                    VALUES ($1, $2, NOW())
+                    ON CONFLICT (lid) DO UPDATE SET
+                        embedding     = EXCLUDED.embedding,
+                        calibrated_at = EXCLUDED.calibrated_at
+                    """,
+                    data_bytes,
+                )
+        logger.info(f"Saved {len(baselines)} baselines batch (async, vector=False)")
+
+    # ── Occupancy queries ─────────────────────────────────────────────────────
 
     async def get_num_lid(self) -> int:
         self._require_pool()
@@ -563,10 +631,7 @@ class AsyncSlotMonitorDB:
     async def fetch_occupied_slots(self) -> List[Tuple[int, str]]:
         self._require_pool()
         rows = await self._pool.fetch(
-            """
-            SELECT lid, pid FROM phone_storage
-            WHERE retrieved_at IS NULL ORDER BY lid
-            """
+            "SELECT lid, pid FROM phone_storage WHERE retrieved_at IS NULL ORDER BY lid"
         )
         result = [(row["lid"], row["pid"]) for row in rows]
         logger.info(f"Fetched {len(result)} occupied slots from DB (async)")
@@ -583,10 +648,7 @@ class AsyncSlotMonitorDB:
             if cached is not _CACHE_MISS:
                 return cached
             row = await self._pool.fetchrow(
-                """
-                SELECT pid FROM phone_storage
-                WHERE lid = $1 AND retrieved_at IS NULL
-                """,
+                "SELECT pid FROM phone_storage WHERE lid=$1 AND retrieved_at IS NULL",
                 lid,
             )
             value = row["pid"] if row else None
@@ -596,10 +658,7 @@ class AsyncSlotMonitorDB:
     async def get_lid_for_pid(self, pid: str) -> Optional[int]:
         self._require_pool()
         row = await self._pool.fetchrow(
-            """
-            SELECT lid FROM phone_storage
-            WHERE pid = $1 AND retrieved_at IS NULL LIMIT 1
-            """,
+            "SELECT lid FROM phone_storage WHERE pid=$1 AND retrieved_at IS NULL LIMIT 1",
             pid,
         )
         return row["lid"] if row else None
@@ -607,10 +666,7 @@ class AsyncSlotMonitorDB:
     async def is_slot_occupied(self, lid: int) -> bool:
         self._require_pool()
         return await self._pool.fetchval(
-            """
-            SELECT EXISTS(SELECT 1 FROM phone_storage
-                          WHERE lid = $1 AND retrieved_at IS NULL)
-            """,
+            "SELECT EXISTS(SELECT 1 FROM phone_storage WHERE lid=$1 AND retrieved_at IS NULL)",
             lid,
         )
 
@@ -618,10 +674,7 @@ class AsyncSlotMonitorDB:
         self._require_pool()
         try:
             await self._pool.execute(
-                """
-                UPDATE phone_storage SET lid = $1
-                WHERE pid = $2 AND retrieved_at IS NULL
-                """,
+                "UPDATE phone_storage SET lid=$1 WHERE pid=$2 AND retrieved_at IS NULL",
                 new_lid, pid,
             )
             await self._invalidate_cache(new_lid)
@@ -630,9 +683,10 @@ class AsyncSlotMonitorDB:
             logger.error(f"Failed to update storage LID for PID={pid}: {e}")
             return False
 
-    # ── Cache management ──────────────────────────────────
+    # ── Cache management ──────────────────────────────────────────────────────
 
     def invalidate_pid_cache_sync(self, lid: Optional[int] = None):
+        """Thread-safe (CPython GIL). Called from _on_storage_notify callback."""
         if lid is not None:
             self._pid_cache.pop(lid, None)
         else:
@@ -645,7 +699,7 @@ class AsyncSlotMonitorDB:
             else:
                 self._pid_cache.clear()
 
-    # ── Health check ──────────────────────────────────────
+    # ── Health check ──────────────────────────────────────────────────────────
 
     async def is_healthy(self) -> bool:
         if self._pool is None:
@@ -654,7 +708,7 @@ class AsyncSlotMonitorDB:
             await self._pool.fetchval("SELECT 1")
             return True
         except Exception as e:
-            logger.error(f"Database connection test failed: {e}")
+            logger.error(f"Database health check failed: {e}")
             return False
 
 
