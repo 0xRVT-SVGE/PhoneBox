@@ -1,23 +1,41 @@
+-- ============================================================
+-- PhoneBox — Complete Database Schema
+-- Includes: Opt #35 partial indexes, Opt #36 pgvector + pg_trgm,
+--           Opt #25 LISTEN/NOTIFY, evidence tables, all helpers
+-- Run order: top to bottom, once against an empty PhoneBoxDB.
+-- ============================================================
+
+-- ============================
+-- EXTENSIONS
+-- ============================
+-- Opt #36a: pgvector — ANN cosine search on slot_baselines.embedding_vec
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- Opt #36b: pg_trgm — fast ILIKE '%query%' on student names
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+
 -- ============================
 -- STUDENTS TABLE
 -- ============================
 CREATE TABLE students (
-    sid CHAR(5) PRIMARY KEY
-        CHECK (sid ~ '^E[0-9]{4}$' AND char_length(sid) = 5),
-    last_name VARCHAR(40) NOT NULL,
-    first_name VARCHAR(80) NOT NULL,
-    embed FLOAT8[] NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    modified_at TIMESTAMPTZ DEFAULT NOW()
+    sid         CHAR(5)       PRIMARY KEY
+                              CHECK (sid ~ '^E[0-9]{4}$' AND char_length(sid) = 5),
+    last_name   VARCHAR(40)   NOT NULL,
+    first_name  VARCHAR(80)   NOT NULL,
+    embed       FLOAT8[]      NOT NULL,
+    created_at  TIMESTAMPTZ   DEFAULT NOW(),
+    modified_at TIMESTAMPTZ   DEFAULT NOW()
 );
+
 
 -- ============================
 -- LOCATIONS TABLE (STATIC GRID)
 -- ============================
 CREATE TABLE locations (
-    lid SERIAL PRIMARY KEY,
-    x SMALLINT NOT NULL CHECK (x BETWEEN 1 AND 500),
-    y SMALLINT NOT NULL CHECK (y BETWEEN 1 AND 500),
+    lid  SERIAL    PRIMARY KEY,
+    x    SMALLINT  NOT NULL CHECK (x BETWEEN 1 AND 500),
+    y    SMALLINT  NOT NULL CHECK (y BETWEEN 1 AND 500),
     UNIQUE (x, y)
 );
 
@@ -25,108 +43,187 @@ CREATE TABLE locations (
 -- INSERT INTO locations (x, y)
 -- SELECT x, y FROM generate_series(1, 10) x, generate_series(1, 10) y;
 
+
 -- ============================
 -- PHONES TABLE
 -- ============================
 CREATE TABLE phones (
-    pid UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    sid CHAR(5) NOT NULL
-        REFERENCES students(sid)
-        ON UPDATE CASCADE
-        ON DELETE CASCADE,
-    model VARCHAR(50) NOT NULL,
-    imei VARCHAR(20) UNIQUE NOT NULL,
-    cond VARCHAR(30)
-        CHECK (cond IN ('New', 'Good', 'Fair', 'Damaged', 'Broken') OR cond IS NULL),
-    admin_note TEXT,
-    stud_note TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    modified_at TIMESTAMPTZ DEFAULT NOW()
+    pid         UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
+    sid         CHAR(5)       NOT NULL
+                              REFERENCES students(sid)
+                              ON UPDATE CASCADE ON DELETE CASCADE,
+    model       VARCHAR(50)   NOT NULL,
+    imei        VARCHAR(20)   UNIQUE NOT NULL,
+    cond        VARCHAR(30)
+                              CHECK (cond IN ('New','Good','Fair','Damaged','Broken')
+                                     OR cond IS NULL),
+    admin_note  TEXT,
+    stud_note   TEXT,
+    created_at  TIMESTAMPTZ   DEFAULT NOW(),
+    modified_at TIMESTAMPTZ   DEFAULT NOW()
 );
 
--- Indexes
-CREATE INDEX idx_phones_sid ON phones(sid);
-CREATE INDEX idx_phones_imei ON phones(imei);
 
 -- ============================
 -- PHONE STORAGE (JUNCTION TABLE)
 -- ============================
 CREATE TABLE phone_storage (
-    id SERIAL PRIMARY KEY,
-    pid UUID NOT NULL
-        REFERENCES phones(pid)
-        ON DELETE CASCADE,
-    lid INT NOT NULL
-        REFERENCES locations(lid)
-        ON DELETE CASCADE,
-    stored_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+    id           SERIAL       PRIMARY KEY,
+    pid          UUID         NOT NULL
+                              REFERENCES phones(pid) ON DELETE CASCADE,
+    lid          INT          NOT NULL
+                              REFERENCES locations(lid) ON DELETE CASCADE,
+    stored_at    TIMESTAMPTZ  DEFAULT NOW() NOT NULL,
     retrieved_at TIMESTAMPTZ,
-
-    -- Constraint: retrieved_at must be after stored_at
-    CONSTRAINT check_retrieval_time CHECK (
-        retrieved_at IS NULL OR retrieved_at > stored_at
-    )
+    CONSTRAINT check_retrieval_time
+        CHECK (retrieved_at IS NULL OR retrieved_at > stored_at)
 );
 
--- CRITICAL: Only one active storage per phone
-CREATE UNIQUE INDEX uniq_active_phone_storage
-ON phone_storage(pid)
-WHERE retrieved_at IS NULL;
-
--- CRITICAL: Only one phone per location at a time
-CREATE UNIQUE INDEX uniq_active_location
-ON phone_storage(lid)
-WHERE retrieved_at IS NULL;
-
--- Performance indexes
-CREATE INDEX idx_phone_storage_pid ON phone_storage(pid);
-CREATE INDEX idx_phone_storage_lid ON phone_storage(lid);
-CREATE INDEX idx_phone_storage_active ON phone_storage(pid, lid) WHERE retrieved_at IS NULL;
-CREATE INDEX idx_phone_storage_retrieved ON phone_storage(retrieved_at) WHERE retrieved_at IS NOT NULL;
 
 -- ============================
 -- PHONE OPERATION LOGS (1 MONTH RETENTION)
 -- ============================
 CREATE TABLE phone_operations (
-    id SERIAL PRIMARY KEY,
-    pid UUID NOT NULL
-        REFERENCES phones(pid)
-        ON DELETE CASCADE,
-    operation VARCHAR(20) NOT NULL
-        CHECK (operation IN ('INSERT', 'UPDATE', 'DELETE')),
-    old_data JSONB,
-    new_data JSONB,
-    timestamp TIMESTAMPTZ DEFAULT NOW() NOT NULL
+    id        SERIAL       PRIMARY KEY,
+    pid       UUID         NOT NULL
+                           REFERENCES phones(pid) ON DELETE CASCADE,
+    operation VARCHAR(20)  NOT NULL
+                           CHECK (operation IN ('INSERT','UPDATE','DELETE')),
+    old_data  JSONB,
+    new_data  JSONB,
+    timestamp TIMESTAMPTZ  DEFAULT NOW() NOT NULL
 );
 
-CREATE INDEX idx_phone_operations_pid_ts ON phone_operations(pid, timestamp DESC);
-CREATE INDEX idx_phone_operations_ts ON phone_operations(timestamp DESC);
 
 -- ============================
--- SLOT MONITORING - BASELINES ONLY
+-- SLOT MONITORING — BASELINES
+-- Opt #36: includes native vector(96) column alongside legacy BYTEA
 -- ============================
-
--- Baseline embeddings for each location (runtime only, no state tracking)
 CREATE TABLE slot_baselines (
-    lid INT PRIMARY KEY
-        REFERENCES locations(lid)
-        ON DELETE CASCADE,
-    embedding BYTEA NOT NULL,
+    lid           INT         PRIMARY KEY
+                              REFERENCES locations(lid) ON DELETE CASCADE,
+    -- Legacy BYTEA column — still written by Python; used for reads.
+    -- Kept for backward compatibility / rollback safety.
+    embedding     BYTEA       NOT NULL,
+    -- Opt #36: pgvector column — written alongside BYTEA when migration is run.
+    -- NULL until first baseline save after migration.
+    embedding_vec vector(96),
     calibrated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
 );
+
+
+-- ============================
+-- EVIDENCE TABLES
+-- ============================
+CREATE TABLE evidence_sessions (
+    id         SERIAL        PRIMARY KEY,
+    session_id VARCHAR(8)    NOT NULL UNIQUE,
+    opened_at  TIMESTAMP     NOT NULL,
+    closed_at  TIMESTAMP,
+    -- 'clean'      → all mismatches resolved, no flagged events
+    -- 'flagged'    → no_qr_found / declare_missing / warnings at close
+    -- 'force_closed' → session timed out or force-closed
+    outcome    VARCHAR(20),
+    warnings   JSONB,
+    kept       BOOLEAN       NOT NULL DEFAULT FALSE
+);
+
+CREATE TABLE evidence_items (
+    id          SERIAL        PRIMARY KEY,
+    session_id  VARCHAR(8)    NOT NULL
+                              REFERENCES evidence_sessions(session_id)
+                              ON DELETE CASCADE,
+    captured_at TIMESTAMP     NOT NULL DEFAULT NOW(),
+    -- Values: 'session_start','remove_phone','qr_scanned','no_qr_found',
+    --         'stage_phone','unstage_phone','place_phone',
+    --         'declare_missing','needs_deposit','session_close','video_clip'
+    event_type  VARCHAR(50)   NOT NULL,
+    lid         INTEGER,
+    pid         VARCHAR(50),
+    photo_path  VARCHAR(500),
+    metadata    JSONB
+);
+
+
+-- ============================
+-- INDEXES
+-- ============================
+
+-- ── phones ───────────────────────────────────────────────
+CREATE INDEX idx_phones_sid  ON phones(sid);
+CREATE INDEX idx_phones_imei ON phones(imei);
+
+-- ── phone_storage — critical partial indexes (Opt #35) ───
+-- Only one active storage per phone (prevents double-deposit)
+CREATE UNIQUE INDEX uniq_active_phone_storage
+    ON phone_storage(pid)
+    WHERE retrieved_at IS NULL;
+
+-- Only one phone per location at a time
+CREATE UNIQUE INDEX uniq_active_location
+    ON phone_storage(lid)
+    WHERE retrieved_at IS NULL;
+
+-- General access patterns
+CREATE INDEX idx_phone_storage_pid      ON phone_storage(pid);
+CREATE INDEX idx_phone_storage_lid      ON phone_storage(lid);
+CREATE INDEX idx_phone_storage_active
+    ON phone_storage(pid, lid)
+    WHERE retrieved_at IS NULL;
+CREATE INDEX idx_phone_storage_retrieved
+    ON phone_storage(retrieved_at)
+    WHERE retrieved_at IS NOT NULL;
+
+-- Opt #36c: activity-report date-range query (stored_at OR retrieved_at filter)
+CREATE INDEX idx_phone_storage_stored_at
+    ON phone_storage(stored_at);
+
+-- ── phone_operations ─────────────────────────────────────
+CREATE INDEX idx_phone_operations_pid_ts
+    ON phone_operations(pid, timestamp DESC);
+CREATE INDEX idx_phone_operations_ts
+    ON phone_operations(timestamp DESC);
+
+-- ── students — Opt #36b trigram indexes ──────────────────
+-- Turns WHERE first_name ILIKE '%query%' from seq-scan to fast GIN lookup
+CREATE INDEX idx_students_fname_trgm
+    ON students USING gin(first_name gin_trgm_ops);
+CREATE INDEX idx_students_lname_trgm
+    ON students USING gin(last_name gin_trgm_ops);
+
+-- ── slot_baselines — Opt #36a HNSW ANN index ─────────────
+-- <=> cosine distance operator; m=16 ef_construction=64 good defaults
+-- for 96-dim embeddings. Only used when embedding_vec IS NOT NULL.
+CREATE INDEX idx_slot_baselines_hnsw
+    ON slot_baselines
+    USING hnsw (embedding_vec vector_cosine_ops)
+    WITH (m = 16, ef_construction = 64);
+
+-- ── evidence ─────────────────────────────────────────────
+CREATE INDEX idx_evidence_sessions_kept
+    ON evidence_sessions(kept)
+    WHERE kept = TRUE;
+
+CREATE INDEX idx_evidence_items_session
+    ON evidence_items(session_id);
+CREATE INDEX idx_evidence_items_event
+    ON evidence_items(event_type);
+
 
 -- ============================
 -- FUNCTIONS
 -- ============================
 
+-- Auto-update modified_at on UPDATE
 CREATE OR REPLACE FUNCTION update_modified_column()
 RETURNS TRIGGER AS $$
 BEGIN
-   NEW.modified_at = NOW();
-   RETURN NEW;
+    NEW.modified_at = NOW();
+    RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
+-- Ensure phones always have a UUID pid
 CREATE OR REPLACE FUNCTION phones_defaults()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -137,23 +234,24 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- Audit log: record every phones INSERT/UPDATE/DELETE
 CREATE OR REPLACE FUNCTION log_phone_operation()
 RETURNS TRIGGER AS $$
 DECLARE
-    op_type VARCHAR(20);
+    op_type  VARCHAR(20);
     old_json JSONB;
     new_json JSONB;
 BEGIN
     IF TG_OP = 'INSERT' THEN
-        op_type := 'INSERT';
+        op_type  := 'INSERT';
         old_json := NULL;
         new_json := to_jsonb(NEW);
     ELSIF TG_OP = 'UPDATE' THEN
-        op_type := 'UPDATE';
+        op_type  := 'UPDATE';
         old_json := to_jsonb(OLD);
         new_json := to_jsonb(NEW);
     ELSIF TG_OP = 'DELETE' THEN
-        op_type := 'DELETE';
+        op_type  := 'DELETE';
         old_json := to_jsonb(OLD);
         new_json := NULL;
     END IF;
@@ -175,96 +273,111 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Auto-assign empty lid if not provided
+-- Auto-assign first empty lid if lid is NULL on phone_storage INSERT
 CREATE OR REPLACE FUNCTION auto_assign_location()
 RETURNS TRIGGER AS $$
 BEGIN
-    -- If lid is NULL, find first available empty location
     IF NEW.lid IS NULL THEN
         SELECT l.lid INTO NEW.lid
         FROM locations l
         WHERE NOT EXISTS (
             SELECT 1 FROM phone_storage ps
-            WHERE ps.lid = l.lid
-              AND ps.retrieved_at IS NULL
+            WHERE ps.lid = l.lid AND ps.retrieved_at IS NULL
         )
         ORDER BY l.lid
         LIMIT 1;
 
-        -- If no empty location found, raise error
         IF NEW.lid IS NULL THEN
             RAISE EXCEPTION 'No empty locations available for phone storage';
         END IF;
     END IF;
-
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
+-- Opt #25: LISTEN/NOTIFY — called by trigger on phone_storage change.
+-- Python AsyncSlotMonitorDB listens on 'phonebox_storage_change' and
+-- invalidates its in-process pid cache whenever the payload lid changes.
+CREATE OR REPLACE FUNCTION notify_storage_change()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        PERFORM pg_notify('phonebox_storage_change', OLD.lid::text);
+    ELSE
+        PERFORM pg_notify('phonebox_storage_change', NEW.lid::text);
+    END IF;
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Cleanup: delete log/storage rows older than 1 month
 CREATE OR REPLACE FUNCTION cleanup_old_logs()
-RETURNS TABLE(
-    deleted_phone_ops INT,
-    deleted_storage INT
-) AS $$
+RETURNS TABLE(deleted_phone_ops INT, deleted_storage INT) AS $$
 DECLARE
     d_phone_ops INT;
-    d_storage INT;
+    d_storage   INT;
 BEGIN
-    -- Delete phone operations older than 1 month
     DELETE FROM phone_operations
     WHERE timestamp < NOW() - INTERVAL '1 month';
     GET DIAGNOSTICS d_phone_ops = ROW_COUNT;
 
-    -- Delete phone storage records older than 1 month (already retrieved)
     DELETE FROM phone_storage
     WHERE retrieved_at IS NOT NULL
       AND retrieved_at < NOW() - INTERVAL '1 month';
     GET DIAGNOSTICS d_storage = ROW_COUNT;
 
     deleted_phone_ops := d_phone_ops;
-    deleted_storage := d_storage;
-
+    deleted_storage   := d_storage;
     RETURN NEXT;
 
-    RAISE NOTICE 'Cleanup complete: % phone ops, % storage records deleted',
+    RAISE NOTICE 'Cleanup: % phone ops, % storage records deleted',
         d_phone_ops, d_storage;
 END;
 $$ LANGUAGE plpgsql;
+
 
 -- ============================
 -- TRIGGERS
 -- ============================
 
+-- phones: set default UUID before insert
 CREATE TRIGGER phones_before_insert_defaults
-BEFORE INSERT ON phones
-FOR EACH ROW
-EXECUTE FUNCTION phones_defaults();
+    BEFORE INSERT ON phones
+    FOR EACH ROW EXECUTE FUNCTION phones_defaults();
 
+-- phones: keep modified_at current
 CREATE TRIGGER phones_before_update
-BEFORE UPDATE ON phones
-FOR EACH ROW
-EXECUTE FUNCTION update_modified_column();
+    BEFORE UPDATE ON phones
+    FOR EACH ROW EXECUTE FUNCTION update_modified_column();
 
+-- phones: write audit log
 CREATE TRIGGER phones_after_all_operations
-AFTER INSERT OR UPDATE OR DELETE ON phones
-FOR EACH ROW
-EXECUTE FUNCTION log_phone_operation();
+    AFTER INSERT OR UPDATE OR DELETE ON phones
+    FOR EACH ROW EXECUTE FUNCTION log_phone_operation();
 
+-- students: keep modified_at current
 CREATE TRIGGER students_before_update
-BEFORE UPDATE ON students
-FOR EACH ROW
-EXECUTE FUNCTION update_modified_column();
+    BEFORE UPDATE ON students
+    FOR EACH ROW EXECUTE FUNCTION update_modified_column();
 
--- Auto-assign location trigger
+-- phone_storage: auto-assign empty lid when lid IS NULL on insert
 CREATE TRIGGER phone_storage_before_insert_auto_lid
-BEFORE INSERT ON phone_storage
-FOR EACH ROW
-EXECUTE FUNCTION auto_assign_location();
+    BEFORE INSERT ON phone_storage
+    FOR EACH ROW EXECUTE FUNCTION auto_assign_location();
+
+-- Opt #25: phone_storage: broadcast change via LISTEN/NOTIFY
+-- AFTER trigger, STATEMENT level → one notification per DML regardless
+-- of rows affected (avoids flooding on bulk ops).
+CREATE TRIGGER phone_storage_notify_change
+    AFTER INSERT OR UPDATE OR DELETE ON phone_storage
+    FOR EACH ROW EXECUTE FUNCTION notify_storage_change();
+
 
 -- ============================
 -- VIEWS
 -- ============================
 
+-- All phones currently in storage with full context
 CREATE OR REPLACE VIEW v_active_phone_storage AS
 SELECT
     ps.id,
@@ -280,33 +393,36 @@ SELECT
     st.first_name,
     st.last_name
 FROM phone_storage ps
-JOIN phones p ON ps.pid = p.pid
+JOIN phones   p  ON ps.pid = p.pid
 JOIN locations l ON ps.lid = l.lid
-JOIN students st ON p.sid = st.sid
+JOIN students st ON p.sid  = st.sid
 WHERE ps.retrieved_at IS NULL;
 
+-- All locations with no active deposit
 CREATE OR REPLACE VIEW v_empty_locations AS
-SELECT
-    l.lid,
-    l.x,
-    l.y
+SELECT l.lid, l.x, l.y
 FROM locations l
 LEFT JOIN phone_storage ps ON l.lid = ps.lid AND ps.retrieved_at IS NULL
 WHERE ps.lid IS NULL;
+
 
 -- ============================
 -- HELPER FUNCTIONS
 -- ============================
 
-CREATE OR REPLACE FUNCTION get_phone_storage_history(phone_pid UUID, months_back INT DEFAULT 1)
+-- Storage history for a single phone (last N months)
+CREATE OR REPLACE FUNCTION get_phone_storage_history(
+    phone_pid   UUID,
+    months_back INT DEFAULT 1
+)
 RETURNS TABLE(
-    storage_id INT,
-    lid INT,
-    x SMALLINT,
-    y SMALLINT,
-    stored_at TIMESTAMPTZ,
+    storage_id   INT,
+    lid          INT,
+    x            SMALLINT,
+    y            SMALLINT,
+    stored_at    TIMESTAMPTZ,
     retrieved_at TIMESTAMPTZ,
-    duration INTERVAL
+    duration     INTERVAL
 ) AS $$
 BEGIN
     RETURN QUERY
@@ -317,7 +433,7 @@ BEGIN
         l.y,
         ps.stored_at,
         ps.retrieved_at,
-        COALESCE(ps.retrieved_at, NOW()) - ps.stored_at as duration
+        COALESCE(ps.retrieved_at, NOW()) - ps.stored_at AS duration
     FROM phone_storage ps
     JOIN locations l ON ps.lid = l.lid
     WHERE ps.pid = phone_pid
@@ -326,14 +442,18 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE OR REPLACE FUNCTION get_location_usage_history(location_lid INT, months_back INT DEFAULT 1)
+-- Usage history for a single location (last N months)
+CREATE OR REPLACE FUNCTION get_location_usage_history(
+    location_lid INT,
+    months_back  INT DEFAULT 1
+)
 RETURNS TABLE(
-    phone_pid UUID,
-    imei VARCHAR,
-    student_sid CHAR,
-    stored_at TIMESTAMPTZ,
+    phone_pid    UUID,
+    imei         VARCHAR,
+    student_sid  CHAR,
+    stored_at    TIMESTAMPTZ,
     retrieved_at TIMESTAMPTZ,
-    duration INTERVAL
+    duration     INTERVAL
 ) AS $$
 BEGIN
     RETURN QUERY
@@ -343,7 +463,7 @@ BEGIN
         p.sid,
         ps.stored_at,
         ps.retrieved_at,
-        COALESCE(ps.retrieved_at, NOW()) - ps.stored_at as duration
+        COALESCE(ps.retrieved_at, NOW()) - ps.stored_at AS duration
     FROM phone_storage ps
     JOIN phones p ON ps.pid = p.pid
     WHERE ps.lid = location_lid
@@ -352,18 +472,12 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- Return first N available (empty) locations
 CREATE OR REPLACE FUNCTION get_available_locations(limit_count INT DEFAULT 10)
-RETURNS TABLE(
-    lid INT,
-    x SMALLINT,
-    y SMALLINT
-) AS $$
+RETURNS TABLE(lid INT, x SMALLINT, y SMALLINT) AS $$
 BEGIN
     RETURN QUERY
-    SELECT
-        l.lid,
-        l.x,
-        l.y
+    SELECT l.lid, l.x, l.y
     FROM locations l
     LEFT JOIN phone_storage ps ON l.lid = ps.lid AND ps.retrieved_at IS NULL
     WHERE ps.lid IS NULL
@@ -372,184 +486,57 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+
 -- ============================
 -- COMMENTS
 -- ============================
 
-COMMENT ON TABLE phones IS 'Student phones (not tied to locations)';
-COMMENT ON TABLE locations IS 'Static storage grid';
-COMMENT ON TABLE phone_storage IS 'Junction table tracking which phone is in which location (1 month retention after retrieval). LID auto-assigned if NULL.';
-COMMENT ON TABLE phone_operations IS 'Audit log of phone operations (1 month retention)';
-COMMENT ON TABLE slot_baselines IS 'Visual baseline embeddings for each storage slot (runtime state tracking in application only)';
+COMMENT ON TABLE phones
+    IS 'Student phones (not tied to a storage location)';
+COMMENT ON TABLE locations
+    IS 'Static storage grid — one row per physical slot';
+COMMENT ON TABLE phone_storage
+    IS 'Which phone is in which slot (1 month retention after retrieval). '
+       'lid auto-assigned to first empty slot if NULL on insert.';
+COMMENT ON TABLE phone_operations
+    IS 'Audit log of phone INSERT/UPDATE/DELETE (1 month retention)';
+COMMENT ON TABLE slot_baselines
+    IS 'Visual baseline embeddings per slot. '
+       'embedding: raw BYTEA (always written). '
+       'embedding_vec: pgvector vector(96) (written when Opt #36 migration applied).';
+COMMENT ON TABLE evidence_sessions
+    IS 'One row per admin resolution session.';
+COMMENT ON TABLE evidence_items
+    IS 'One row per captured event (photo / video clip) within a session.';
 
-COMMENT ON COLUMN phone_storage.retrieved_at IS 'NULL = currently stored, NOT NULL = retrieved';
-COMMENT ON COLUMN phone_storage.lid IS 'Location ID - auto-assigned to first empty slot if NULL on insert';
+COMMENT ON COLUMN phone_storage.retrieved_at
+    IS 'NULL = phone currently stored; NOT NULL = retrieved';
+COMMENT ON COLUMN phone_storage.lid
+    IS 'Auto-assigned to first empty slot if NULL on INSERT';
+COMMENT ON COLUMN slot_baselines.embedding_vec
+    IS 'Opt #36 pgvector column. NULL until first baseline save after migration. '
+       'HNSW cosine index (idx_slot_baselines_hnsw) enables ANN lookups.';
 
-COMMENT ON INDEX uniq_active_phone_storage IS 'Prevents depositing same phone twice without retrieval';
-COMMENT ON INDEX uniq_active_location IS 'Prevents putting two phones in same location';
+COMMENT ON INDEX uniq_active_phone_storage
+    IS 'Opt #35: prevents depositing same phone twice without retrieval';
+COMMENT ON INDEX uniq_active_location
+    IS 'Opt #35: prevents two phones in the same slot simultaneously';
+COMMENT ON INDEX idx_students_fname_trgm
+    IS 'Opt #36b: GIN trigram index — speeds up ILIKE name search';
+COMMENT ON INDEX idx_slot_baselines_hnsw
+    IS 'Opt #36a: HNSW ANN index for cosine similarity on 96-dim slot embeddings';
+COMMENT ON TRIGGER phone_storage_notify_change ON phone_storage
+    IS 'Opt #25: broadcasts lid via pg_notify so Python cache invalidates immediately';
 
-COMMENT ON FUNCTION auto_assign_location() IS 'Auto-assigns first available empty location if lid is NULL on phone_storage insert';
 
-
-
-
-//additions to fix and merge with the whole thing
-
--- ============================================================
--- FILE: back_end/Database/migrations/004_evidence_tables.sql
--- ============================================================
--- Evidence tables for admin resolution session proof.
+-- ============================
+-- SCHEDULED CLEANUP (optional)
+-- ============================
+-- Run cleanup_old_logs() weekly via pg_cron or a cron job:
 --
--- evidence_sessions: one row per admin session
--- evidence_items:    one row per captured event (photo + metadata)
+--   SELECT cron.schedule('weekly-phonebox-cleanup',
+--       '0 2 * * 0',   -- 02:00 every Sunday
+--       $$SELECT cleanup_old_logs()$$
+--   );
 --
--- Deletion policy (enforced in application, not DB):
---   kept=FALSE rows are deleted on clean session close.
---   kept=TRUE  rows are permanent — no application code deletes them.
--- ============================================================
-
-CREATE TABLE IF NOT EXISTS evidence_sessions (
-    id          SERIAL          PRIMARY KEY,
-    session_id  VARCHAR(8)      NOT NULL UNIQUE,
-    opened_at   TIMESTAMP       NOT NULL,
-    closed_at   TIMESTAMP,
-
-    -- 'clean'    → all mismatches resolved, no flagged events, no warnings
-    -- 'flagged'  → no_qr_found or declare_missing occurred, or warnings at close
-    -- 'incomplete' → session never formally closed (crash / timeout)
-    outcome     VARCHAR(20),
-
-    warnings    JSONB,          -- list of warning strings from session close
-    kept        BOOLEAN         NOT NULL DEFAULT FALSE
-);
-
-CREATE INDEX IF NOT EXISTS idx_evidence_sessions_kept
-    ON evidence_sessions (kept)
-    WHERE kept = TRUE;
-
--- ──────────────────────────────────────────────────────────────────────────────
-
-CREATE TABLE IF NOT EXISTS evidence_items (
-    id          SERIAL          PRIMARY KEY,
-    session_id  VARCHAR(8)      NOT NULL
-                                REFERENCES evidence_sessions (session_id)
-                                ON DELETE CASCADE,
-    captured_at TIMESTAMP       NOT NULL DEFAULT NOW(),
-
-    -- Event that triggered this capture.
-    -- Values: 'session_start', 'remove_phone', 'qr_scanned', 'no_qr_found',
-    --         'stage_phone', 'unstage_phone', 'place_phone',
-    --         'declare_missing', 'needs_deposit', 'session_close'
-    event_type  VARCHAR(50)     NOT NULL,
-
-    lid         INTEGER,        -- slot involved (NULL if not applicable)
-    pid         VARCHAR(50),    -- phone PID (NULL if not yet identified)
-    photo_path  VARCHAR(500),   -- absolute or relative path to JPEG file
-                                -- NULL if camera capture failed
-    metadata    JSONB           -- event-specific data (expected_lid, blocking_pid, etc.)
-);
-
-CREATE INDEX IF NOT EXISTS idx_evidence_items_session
-    ON evidence_items (session_id);
-
-CREATE INDEX IF NOT EXISTS idx_evidence_items_event
-    ON evidence_items (event_type);
-
-
-
-
-
--- ============================================================
--- FILE: back_end/Database/migrations/pgvector_migration.sql
--- Opt #36 — pgvector for slot_baselines
--- ============================================================
--- Run ONCE as the database owner.  Safe to re-run (idempotent).
---
--- Prerequisites:
---   Ubuntu/Debian: sudo apt install postgresql-16-pgvector
---   (adjust version number to match your PostgreSQL install)
---
--- EMBEDDING_DIM = 96  (HIST_BINS=32 + DCT_SIZE²=64, slot_embed.py)
--- ============================================================
-
-BEGIN;
-
--- 1. Enable extension ─────────────────────────────────────────
-CREATE EXTENSION IF NOT EXISTS vector;
-
--- 2. Add column (no-op if already exists) ─────────────────────
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE  table_name  = 'slot_baselines'
-        AND    column_name = 'embedding_vec'
-    ) THEN
-        ALTER TABLE slot_baselines ADD COLUMN embedding_vec vector(96);
-        RAISE NOTICE 'Added embedding_vec column';
-    ELSE
-        RAISE NOTICE 'embedding_vec column already exists — skipping';
-    END IF;
-END $$;
-
--- 3. Migrate existing bytea rows → vector ─────────────────────
--- The bytea column stores 96 little-endian IEEE-754 float32 values.
--- We decode each 4-byte group, cast to float4, collect into an array,
--- then cast to vector(96).
-DO $$
-DECLARE
-    r        RECORD;
-    vec_arr  float4[];
-    i        int;
-    b0 int; b1 int; b2 int; b3 int;
-    bits int;
-BEGIN
-    FOR r IN
-        SELECT lid, embedding
-        FROM   slot_baselines
-        WHERE  embedding     IS NOT NULL
-        AND    embedding     != '\x'::bytea
-        AND    embedding_vec IS NULL
-    LOOP
-        vec_arr := ARRAY[]::float4[];
-        FOR i IN 0..95 LOOP
-            b0 := get_byte(r.embedding, i * 4);
-            b1 := get_byte(r.embedding, i * 4 + 1);
-            b2 := get_byte(r.embedding, i * 4 + 2);
-            b3 := get_byte(r.embedding, i * 4 + 3);
-            -- reassemble little-endian 32-bit pattern
-            bits := b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
-            vec_arr := array_append(vec_arr, bits::bit(32)::float4);
-        END LOOP;
-
-        UPDATE slot_baselines
-        SET    embedding_vec = vec_arr::vector(96)
-        WHERE  lid = r.lid;
-    END LOOP;
-
-    RAISE NOTICE 'Migrated % row(s)', (
-        SELECT COUNT(*) FROM slot_baselines WHERE embedding_vec IS NOT NULL
-    );
-END $$;
-
--- 4. HNSW index for approximate nearest-neighbour cosine search ─
---    m=16  ef_construction=64 are good defaults for 96-dim vectors.
-CREATE INDEX IF NOT EXISTS idx_slot_baselines_hnsw
-    ON slot_baselines
-    USING hnsw (embedding_vec vector_cosine_ops)
-    WITH (m = 16, ef_construction = 64);
-
-COMMIT;
-
--- ── Verify ──────────────────────────────────────────────────
--- SELECT lid,
---        octet_length(embedding)   AS bytea_bytes,
---        vector_dims(embedding_vec) AS vec_dims
--- FROM   slot_baselines
--- LIMIT  5;
-
--- ── Rollback ────────────────────────────────────────────────
--- BEGIN;
--- DROP   INDEX  IF EXISTS idx_slot_baselines_hnsw;
--- ALTER  TABLE  slot_baselines DROP COLUMN IF EXISTS embedding_vec;
--- COMMIT;
+-- Or from a shell: psql -d PhoneBoxDB -c "SELECT cleanup_old_logs();"
