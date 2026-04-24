@@ -1,0 +1,18 @@
+# grafana_provisioning/datasources/prometheus.yml
+# Auto-provisions Prometheus as the default datasource in Grafana.
+# Place this file at: grafana_provisioning/datasources/prometheus.yml
+# (alongside docker-compose.yml)
+#
+# Grafana loads this on startup — no manual UI step needed.
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: "5s"

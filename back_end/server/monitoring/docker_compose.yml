@@ -1,0 +1,90 @@
+# docker-compose.yml
+# Opt #41 — Prometheus + Grafana monitoring stack for PhoneBox.
+#
+# Usage:
+#   docker compose up -d
+#
+# Prometheus UI : http://localhost:9090
+# Grafana UI    : http://localhost:3000   (admin / admin on first login)
+#
+# In Grafana:
+#   1. Configuration → Data Sources → Add data source → Prometheus
+#   2. URL: http://prometheus:9090   (Docker internal DNS)
+#   3. Save & Test
+#   4. Create → Dashboard → Add panel → write PromQL queries (see below)
+#
+# Useful PromQL queries
+# ─────────────────────
+#   Alarm rate (fires/min):
+#     rate(phonebox_alarms_triggered_total[1m]) * 60
+#
+#   Active mismatches:
+#     phonebox_active_mismatches
+#
+#   Per-worker avg embedding distance:
+#     phonebox_avg_embedding_distance
+#
+#   Frame throughput (frames/sec across all workers):
+#     sum(rate(phonebox_frames_processed_total[30s]))
+#
+#   DVW operations in flight:
+#     phonebox_dvw_operations_active
+#
+#   Encoder queue depth:
+#     phonebox_encoder_queue_depth
+#
+#   Encoder clip drop rate (drops/min):
+#     rate(phonebox_encoder_dropped_total[1m]) * 60
+#
+#   Scrape latency (p99):
+#     histogram_quantile(0.99, rate(phonebox_metrics_scrape_duration_seconds_bucket[5m]))
+#
+# Linux note
+# ──────────
+# host.docker.internal is not available on Linux by default.
+# Add the following to the prometheus service below:
+#   extra_hosts:
+#     - "host.docker.internal:host-gateway"
+
+version: "3.9"
+
+services:
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: phonebox_prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"
+    # Uncomment on Linux:
+    # extra_hosts:
+    #   - "host.docker.internal:host-gateway"
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: phonebox_grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      # Auto-provision the Prometheus datasource so you don't need the UI step.
+      - GF_DATASOURCES_DEFAULT_URL=http://prometheus:9090
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana_provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+
+volumes:
+  prometheus_data:
+  grafana_data:

@@ -1,0 +1,19 @@
+# prometheus.yml
+# Place this file in the same directory as docker-compose.yml.
+# Prometheus scrapes PhoneBox every 5 seconds.
+#
+# host.docker.internal resolves to the Docker host on macOS/Windows.
+# On Linux replace with the host's LAN IP (e.g. 192.168.1.10:5000)
+# or add --add-host=host.docker.internal:host-gateway to the
+# prometheus container in docker-compose.yml.
+
+global:
+  scrape_interval:     5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: phonebox
+    static_configs:
+      - targets:
+          - host.docker.internal:5000
+    metrics_path: /metrics

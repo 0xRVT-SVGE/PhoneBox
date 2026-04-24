@@ -1,4 +1,25 @@
+import 'dart:async';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
+
+// ============================================================
+// Opt #28 — Typed SocketIO event bus
+// ============================================================
+// Each server event is a broadcast StreamController.
+// Widgets subscribe in initState() and cancel in dispose().
+//
+// Old pattern (callback hell, re-registration on every navigation):
+//   _socket.connect(onScanStatus: (d) {...}, onDepositResult: (d) {...}, ...)
+//
+// New pattern (clean stream subscriptions):
+//   _subs.add(_socket.onScanStatus.listen(_handleScan));
+//   _subs.add(_socket.onDepositResult.listen(_handleDeposit));
+//   // in dispose():
+//   for (final s in _subs) s.cancel();
+//
+// connect() is idempotent — safe to call from multiple widgets.
+// clearDvwCallbacks() / clearAdminCallbacks() are kept as no-ops for
+// backward-compat during any partial migration.
+// ============================================================
 
 class SocketService {
   static final SocketService _instance = SocketService._internal();
@@ -9,121 +30,105 @@ class SocketService {
   bool isConnected   = false;
   bool _isConnecting = false;
 
-  // ── Scan ──────────────────────────────────────────────
-  Function(dynamic)? _onScanStatus;
+  // ── Typed broadcast streams ───────────────────────────────────────────────
+  // Broadcast: multiple widgets can subscribe simultaneously.
+  // Each StreamController is permanent for the lifetime of the singleton —
+  // do NOT close them; widgets cancel their own subscriptions instead.
 
-  // ── DVW operations ────────────────────────────────────
-  Function(dynamic)? _onDepositWaiting;
-  Function(dynamic)? _onDepositResult;
-  Function(dynamic)? _onWithdrawWaiting;
-  Function(dynamic)? _onWithdrawResult;
-  Function(dynamic)? _onVerifyWaiting;
-  Function(dynamic)? _onVerifyResult;
-  Function(dynamic)? _onOperationError;
-  Function(dynamic)? _onOperationCancelled;
+  // Scan
+  final _scanStatus             = StreamController<Map<String, dynamic>>.broadcast();
 
-  // ── Phone tracking ────────────────────────────────────
-  Function(dynamic)? _onTrackingStarted;
-  Function(dynamic)? _onTrackingUpdate;
-  Function(dynamic)? _onTrackingFailed;
+  // DVW operations
+  final _depositWaiting         = StreamController<Map<String, dynamic>>.broadcast();
+  final _depositResult          = StreamController<Map<String, dynamic>>.broadcast();
+  final _withdrawWaiting        = StreamController<Map<String, dynamic>>.broadcast();
+  final _withdrawResult         = StreamController<Map<String, dynamic>>.broadcast();
+  final _verifyWaiting          = StreamController<Map<String, dynamic>>.broadcast();
+  final _verifyResult           = StreamController<Map<String, dynamic>>.broadcast();
+  final _operationError         = StreamController<Map<String, dynamic>>.broadcast();
+  final _operationCancelled     = StreamController<Map<String, dynamic>>.broadcast();
 
-  // ── Alarm ─────────────────────────────────────────────
-  Function(dynamic)? _onAlarmTriggered;
-  Function(dynamic)? _onAlarmUpdated;
-  Function(dynamic)? _onAlarmCleared;
-  Function(dynamic)? _onAlarmAcknowledgeResult;
-  Function(dynamic)? _onAlarmStatus;
+  // Phone tracking
+  final _trackingStarted        = StreamController<Map<String, dynamic>>.broadcast();
+  final _trackingUpdate         = StreamController<Map<String, dynamic>>.broadcast();
+  final _trackingFailed         = StreamController<Map<String, dynamic>>.broadcast();
 
-  // ── Admin resolution session ──────────────────────────
-  Function(dynamic)? _onAdminSessionOpened;
-  Function(dynamic)? _onAdminSessionError;
-  Function(dynamic)? _onAdminRemoveOk;
-  Function(dynamic)? _onAdminQrResult;
-  Function(dynamic)? _onAdminNoQrResult;
-  Function(dynamic)? _onAdminStageOk;
-  Function(dynamic)? _onAdminUnstageOk;
-  Function(dynamic)? _onAdminAutoStaged;
-  Function(dynamic)? _onAdminPlaceResult;
-  Function(dynamic)? _onAdminMissingResult;
-  Function(dynamic)? _onAdminSessionClosed;
-  Function(dynamic)? _onAdminOperationError;
-  Function(dynamic)? _onAdminStepCancelled;   // ← new
+  // Alarm
+  final _alarmTriggered         = StreamController<Map<String, dynamic>>.broadcast();
+  final _alarmUpdated           = StreamController<Map<String, dynamic>>.broadcast();
+  final _alarmCleared           = StreamController<Map<String, dynamic>>.broadcast();
+  final _alarmAcknowledgeResult = StreamController<Map<String, dynamic>>.broadcast();
+  final _alarmStatus            = StreamController<Map<String, dynamic>>.broadcast();
 
-  // ── Connect / callback registration ───────────────────
+  // Admin resolution session
+  final _adminSessionOpened     = StreamController<Map<String, dynamic>>.broadcast();
+  final _adminSessionError      = StreamController<Map<String, dynamic>>.broadcast();
+  final _adminRemoveOk          = StreamController<Map<String, dynamic>>.broadcast();
+  final _adminQrResult          = StreamController<Map<String, dynamic>>.broadcast();
+  final _adminNoQrResult        = StreamController<Map<String, dynamic>>.broadcast();
+  final _adminStageOk           = StreamController<Map<String, dynamic>>.broadcast();
+  final _adminUnstageOk         = StreamController<Map<String, dynamic>>.broadcast();
+  final _adminAutoStaged        = StreamController<Map<String, dynamic>>.broadcast();
+  final _adminPlaceResult       = StreamController<Map<String, dynamic>>.broadcast();
+  final _adminMissingResult     = StreamController<Map<String, dynamic>>.broadcast();
+  final _adminSessionClosed     = StreamController<Map<String, dynamic>>.broadcast();
+  final _adminOperationError    = StreamController<Map<String, dynamic>>.broadcast();
+  final _adminStepCancelled     = StreamController<Map<String, dynamic>>.broadcast();
 
-  void connect({
-    Function(dynamic)? onScanStatus,
-    Function(dynamic)? onDepositWaiting,
-    Function(dynamic)? onDepositResult,
-    Function(dynamic)? onWithdrawWaiting,
-    Function(dynamic)? onWithdrawResult,
-    Function(dynamic)? onVerifyWaiting,
-    Function(dynamic)? onVerifyResult,
-    Function(dynamic)? onOperationError,
-    Function(dynamic)? onOperationCancelled,
-    Function(dynamic)? onTrackingStarted,
-    Function(dynamic)? onTrackingUpdate,
-    Function(dynamic)? onTrackingFailed,
-    Function(dynamic)? onAlarmTriggered,
-    Function(dynamic)? onAlarmUpdated,
-    Function(dynamic)? onAlarmCleared,
-    Function(dynamic)? onAlarmAcknowledgeResult,
-    Function(dynamic)? onAlarmStatus,
-    Function(dynamic)? onAdminSessionOpened,
-    Function(dynamic)? onAdminSessionError,
-    Function(dynamic)? onAdminRemoveOk,
-    Function(dynamic)? onAdminQrResult,
-    Function(dynamic)? onAdminNoQrResult,
-    Function(dynamic)? onAdminStageOk,
-    Function(dynamic)? onAdminUnstageOk,
-    Function(dynamic)? onAdminAutoStaged,
-    Function(dynamic)? onAdminPlaceResult,
-    Function(dynamic)? onAdminMissingResult,
-    Function(dynamic)? onAdminSessionClosed,
-    Function(dynamic)? onAdminOperationError,
-    Function(dynamic)? onAdminStepCancelled,   // ← new
-  }) {
-    _updateCallbacks(
-      onScanStatus:             onScanStatus,
-      onDepositWaiting:         onDepositWaiting,
-      onDepositResult:          onDepositResult,
-      onWithdrawWaiting:        onWithdrawWaiting,
-      onWithdrawResult:         onWithdrawResult,
-      onVerifyWaiting:          onVerifyWaiting,
-      onVerifyResult:           onVerifyResult,
-      onOperationError:         onOperationError,
-      onOperationCancelled:     onOperationCancelled,
-      onTrackingStarted:        onTrackingStarted,
-      onTrackingUpdate:         onTrackingUpdate,
-      onTrackingFailed:         onTrackingFailed,
-      onAlarmTriggered:         onAlarmTriggered,
-      onAlarmUpdated:           onAlarmUpdated,
-      onAlarmCleared:           onAlarmCleared,
-      onAlarmAcknowledgeResult: onAlarmAcknowledgeResult,
-      onAlarmStatus:            onAlarmStatus,
-      onAdminSessionOpened:     onAdminSessionOpened,
-      onAdminSessionError:      onAdminSessionError,
-      onAdminRemoveOk:          onAdminRemoveOk,
-      onAdminQrResult:          onAdminQrResult,
-      onAdminNoQrResult:        onAdminNoQrResult,
-      onAdminStageOk:           onAdminStageOk,
-      onAdminUnstageOk:         onAdminUnstageOk,
-      onAdminAutoStaged:        onAdminAutoStaged,
-      onAdminPlaceResult:       onAdminPlaceResult,
-      onAdminMissingResult:     onAdminMissingResult,
-      onAdminSessionClosed:     onAdminSessionClosed,
-      onAdminOperationError:    onAdminOperationError,
-      onAdminStepCancelled:     onAdminStepCancelled,
-    );
+  // ── Public stream getters ─────────────────────────────────────────────────
 
+  // Scan
+  Stream<Map<String, dynamic>> get onScanStatus             => _scanStatus.stream;
+
+  // DVW
+  Stream<Map<String, dynamic>> get onDepositWaiting         => _depositWaiting.stream;
+  Stream<Map<String, dynamic>> get onDepositResult          => _depositResult.stream;
+  Stream<Map<String, dynamic>> get onWithdrawWaiting        => _withdrawWaiting.stream;
+  Stream<Map<String, dynamic>> get onWithdrawResult         => _withdrawResult.stream;
+  Stream<Map<String, dynamic>> get onVerifyWaiting          => _verifyWaiting.stream;
+  Stream<Map<String, dynamic>> get onVerifyResult           => _verifyResult.stream;
+  Stream<Map<String, dynamic>> get onOperationError         => _operationError.stream;
+  Stream<Map<String, dynamic>> get onOperationCancelled     => _operationCancelled.stream;
+
+  // Tracking
+  Stream<Map<String, dynamic>> get onTrackingStarted        => _trackingStarted.stream;
+  Stream<Map<String, dynamic>> get onTrackingUpdate         => _trackingUpdate.stream;
+  Stream<Map<String, dynamic>> get onTrackingFailed         => _trackingFailed.stream;
+
+  // Alarm
+  Stream<Map<String, dynamic>> get onAlarmTriggered         => _alarmTriggered.stream;
+  Stream<Map<String, dynamic>> get onAlarmUpdated           => _alarmUpdated.stream;
+  Stream<Map<String, dynamic>> get onAlarmCleared           => _alarmCleared.stream;
+  Stream<Map<String, dynamic>> get onAlarmAcknowledgeResult => _alarmAcknowledgeResult.stream;
+  Stream<Map<String, dynamic>> get onAlarmStatus            => _alarmStatus.stream;
+
+  // Admin
+  Stream<Map<String, dynamic>> get onAdminSessionOpened     => _adminSessionOpened.stream;
+  Stream<Map<String, dynamic>> get onAdminSessionError      => _adminSessionError.stream;
+  Stream<Map<String, dynamic>> get onAdminRemoveOk          => _adminRemoveOk.stream;
+  Stream<Map<String, dynamic>> get onAdminQrResult          => _adminQrResult.stream;
+  Stream<Map<String, dynamic>> get onAdminNoQrResult        => _adminNoQrResult.stream;
+  Stream<Map<String, dynamic>> get onAdminStageOk           => _adminStageOk.stream;
+  Stream<Map<String, dynamic>> get onAdminUnstageOk         => _adminUnstageOk.stream;
+  Stream<Map<String, dynamic>> get onAdminAutoStaged        => _adminAutoStaged.stream;
+  Stream<Map<String, dynamic>> get onAdminPlaceResult       => _adminPlaceResult.stream;
+  Stream<Map<String, dynamic>> get onAdminMissingResult     => _adminMissingResult.stream;
+  Stream<Map<String, dynamic>> get onAdminSessionClosed     => _adminSessionClosed.stream;
+  Stream<Map<String, dynamic>> get onAdminOperationError    => _adminOperationError.stream;
+  Stream<Map<String, dynamic>> get onAdminStepCancelled     => _adminStepCancelled.stream;
+
+  // ── Connection ────────────────────────────────────────────────────────────
+
+  /// Connect to the server. Idempotent — safe to call from any widget.
+  void connect() {
     if (isConnected || _isConnecting) return;
     _isConnecting = true;
 
     socket = IO.io(
-      "http://localhost:5000",
+      'http://localhost:5000',
       <String, dynamic>{
-        "transports": ["websocket"],
-        "autoConnect": true,
+        'transports': ['websocket'],
+        'autoConnect': true,
       },
     );
 
@@ -142,195 +147,113 @@ class SocketService {
     _registerListeners();
   }
 
-  void _updateCallbacks({
-    Function(dynamic)? onScanStatus,
-    Function(dynamic)? onDepositWaiting,
-    Function(dynamic)? onDepositResult,
-    Function(dynamic)? onWithdrawWaiting,
-    Function(dynamic)? onWithdrawResult,
-    Function(dynamic)? onVerifyWaiting,
-    Function(dynamic)? onVerifyResult,
-    Function(dynamic)? onOperationError,
-    Function(dynamic)? onOperationCancelled,
-    Function(dynamic)? onTrackingStarted,
-    Function(dynamic)? onTrackingUpdate,
-    Function(dynamic)? onTrackingFailed,
-    Function(dynamic)? onAlarmTriggered,
-    Function(dynamic)? onAlarmUpdated,
-    Function(dynamic)? onAlarmCleared,
-    Function(dynamic)? onAlarmAcknowledgeResult,
-    Function(dynamic)? onAlarmStatus,
-    Function(dynamic)? onAdminSessionOpened,
-    Function(dynamic)? onAdminSessionError,
-    Function(dynamic)? onAdminRemoveOk,
-    Function(dynamic)? onAdminQrResult,
-    Function(dynamic)? onAdminNoQrResult,
-    Function(dynamic)? onAdminStageOk,
-    Function(dynamic)? onAdminUnstageOk,
-    Function(dynamic)? onAdminAutoStaged,
-    Function(dynamic)? onAdminPlaceResult,
-    Function(dynamic)? onAdminMissingResult,
-    Function(dynamic)? onAdminSessionClosed,
-    Function(dynamic)? onAdminOperationError,
-    Function(dynamic)? onAdminStepCancelled,
-  }) {
-    if (onScanStatus             != null) _onScanStatus             = onScanStatus;
-    if (onDepositWaiting         != null) _onDepositWaiting         = onDepositWaiting;
-    if (onDepositResult          != null) _onDepositResult          = onDepositResult;
-    if (onWithdrawWaiting        != null) _onWithdrawWaiting        = onWithdrawWaiting;
-    if (onWithdrawResult         != null) _onWithdrawResult         = onWithdrawResult;
-    if (onVerifyWaiting          != null) _onVerifyWaiting          = onVerifyWaiting;
-    if (onVerifyResult           != null) _onVerifyResult           = onVerifyResult;
-    if (onOperationError         != null) _onOperationError         = onOperationError;
-    if (onOperationCancelled     != null) _onOperationCancelled     = onOperationCancelled;
-    if (onTrackingStarted        != null) _onTrackingStarted        = onTrackingStarted;
-    if (onTrackingUpdate         != null) _onTrackingUpdate         = onTrackingUpdate;
-    if (onTrackingFailed         != null) _onTrackingFailed         = onTrackingFailed;
-    if (onAlarmTriggered         != null) _onAlarmTriggered         = onAlarmTriggered;
-    if (onAlarmUpdated           != null) _onAlarmUpdated           = onAlarmUpdated;
-    if (onAlarmCleared           != null) _onAlarmCleared           = onAlarmCleared;
-    if (onAlarmAcknowledgeResult != null) _onAlarmAcknowledgeResult = onAlarmAcknowledgeResult;
-    if (onAlarmStatus            != null) _onAlarmStatus            = onAlarmStatus;
-    if (onAdminSessionOpened     != null) _onAdminSessionOpened     = onAdminSessionOpened;
-    if (onAdminSessionError      != null) _onAdminSessionError      = onAdminSessionError;
-    if (onAdminRemoveOk          != null) _onAdminRemoveOk          = onAdminRemoveOk;
-    if (onAdminQrResult          != null) _onAdminQrResult          = onAdminQrResult;
-    if (onAdminNoQrResult        != null) _onAdminNoQrResult        = onAdminNoQrResult;
-    if (onAdminStageOk           != null) _onAdminStageOk           = onAdminStageOk;
-    if (onAdminUnstageOk         != null) _onAdminUnstageOk         = onAdminUnstageOk;
-    if (onAdminAutoStaged        != null) _onAdminAutoStaged        = onAdminAutoStaged;
-    if (onAdminPlaceResult       != null) _onAdminPlaceResult       = onAdminPlaceResult;
-    if (onAdminMissingResult     != null) _onAdminMissingResult     = onAdminMissingResult;
-    if (onAdminSessionClosed     != null) _onAdminSessionClosed     = onAdminSessionClosed;
-    if (onAdminOperationError    != null) _onAdminOperationError    = onAdminOperationError;
-    if (onAdminStepCancelled     != null) _onAdminStepCancelled     = onAdminStepCancelled;
+  // ── Type-safe data coercion ───────────────────────────────────────────────
+  // socket_io_client delivers events as dynamic; coerce to typed Map.
+
+  static Map<String, dynamic> _m(dynamic d) {
+    if (d is Map<String, dynamic>) return d;
+    if (d is Map) return Map<String, dynamic>.from(d);
+    return <String, dynamic>{};
   }
+
+  // ── Socket event → stream dispatch ───────────────────────────────────────
+  // All server events are dispatched through broadcast streams.
+  // No callback storage — widgets manage their own subscriptions.
 
   void _registerListeners() {
     if (socket == null) return;
 
-    socket!.on("scan_status",              (d) => _onScanStatus?.call(d));
-    socket!.on("deposit_waiting_for_qr",   (d) => _onDepositWaiting?.call(d));
-    socket!.on("deposit_result",           (d) => _onDepositResult?.call(d));
-    socket!.on("withdraw_waiting_for_action", (d) => _onWithdrawWaiting?.call(d));
-    socket!.on("withdraw_result",          (d) => _onWithdrawResult?.call(d));
-    socket!.on("verify_waiting_for_action",(d) => _onVerifyWaiting?.call(d));
-    socket!.on("verify_result",            (d) => _onVerifyResult?.call(d));
-    socket!.on("operation_error",          (d) => _onOperationError?.call(d));
-    socket!.on("operation_cancelled",      (d) => _onOperationCancelled?.call(d));
+    // Scan
+    socket!.on('scan_status',               (d) => _scanStatus.add(_m(d)));
 
-    socket!.on("tracking_started",         (d) => _onTrackingStarted?.call(d));
-    socket!.on("tracking_update",          (d) => _onTrackingUpdate?.call(d));
-    socket!.on("tracking_failed",          (d) => _onTrackingFailed?.call(d));
+    // DVW operations
+    socket!.on('deposit_waiting_for_qr',      (d) => _depositWaiting.add(_m(d)));
+    socket!.on('deposit_result',              (d) => _depositResult.add(_m(d)));
+    socket!.on('withdraw_waiting_for_action', (d) => _withdrawWaiting.add(_m(d)));
+    socket!.on('withdraw_result',             (d) => _withdrawResult.add(_m(d)));
+    socket!.on('verify_waiting_for_action',   (d) => _verifyWaiting.add(_m(d)));
+    socket!.on('verify_result',               (d) => _verifyResult.add(_m(d)));
+    socket!.on('operation_error',             (d) => _operationError.add(_m(d)));
+    socket!.on('operation_cancelled',         (d) => _operationCancelled.add(_m(d)));
 
-    socket!.on("alarm_triggered",          (d) => _onAlarmTriggered?.call(d));
-    socket!.on("alarm_updated",            (d) => _onAlarmUpdated?.call(d));
-    socket!.on("alarm_cleared",            (d) => _onAlarmCleared?.call(d));
-    socket!.on("alarm_acknowledge_result", (d) => _onAlarmAcknowledgeResult?.call(d));
-    socket!.on("alarm_status",             (d) => _onAlarmStatus?.call(d));
+    // Phone tracking
+    socket!.on('tracking_started', (d) => _trackingStarted.add(_m(d)));
+    socket!.on('tracking_update',  (d) => _trackingUpdate.add(_m(d)));
+    socket!.on('tracking_failed',  (d) => _trackingFailed.add(_m(d)));
 
-    socket!.on("admin_session_opened",     (d) => _onAdminSessionOpened?.call(d));
-    socket!.on("admin_session_error",      (d) => _onAdminSessionError?.call(d));
-    socket!.on("admin_remove_ok",          (d) => _onAdminRemoveOk?.call(d));
-    socket!.on("admin_qr_result",          (d) => _onAdminQrResult?.call(d));
-    socket!.on("admin_no_qr_result",       (d) => _onAdminNoQrResult?.call(d));
-    socket!.on("admin_stage_ok",           (d) => _onAdminStageOk?.call(d));
-    socket!.on("admin_unstage_ok",         (d) => _onAdminUnstageOk?.call(d));
-    socket!.on("admin_auto_staged",        (d) => _onAdminAutoStaged?.call(d));
-    socket!.on("admin_place_result",       (d) => _onAdminPlaceResult?.call(d));
-    socket!.on("admin_missing_result",     (d) => _onAdminMissingResult?.call(d));
-    socket!.on("admin_session_closed",     (d) => _onAdminSessionClosed?.call(d));
-    socket!.on("admin_operation_error",    (d) => _onAdminOperationError?.call(d));
-    socket!.on("admin_step_cancelled",     (d) => _onAdminStepCancelled?.call(d));   // ← new
+    // Alarm
+    socket!.on('alarm_triggered',          (d) => _alarmTriggered.add(_m(d)));
+    socket!.on('alarm_updated',            (d) => _alarmUpdated.add(_m(d)));
+    socket!.on('alarm_cleared',            (d) => _alarmCleared.add(_m(d)));
+    socket!.on('alarm_acknowledge_result', (d) => _alarmAcknowledgeResult.add(_m(d)));
+    socket!.on('alarm_status',             (d) => _alarmStatus.add(_m(d)));
+
+    // Admin resolution
+    socket!.on('admin_session_opened',  (d) => _adminSessionOpened.add(_m(d)));
+    socket!.on('admin_session_error',   (d) => _adminSessionError.add(_m(d)));
+    socket!.on('admin_remove_ok',       (d) => _adminRemoveOk.add(_m(d)));
+    socket!.on('admin_qr_result',       (d) => _adminQrResult.add(_m(d)));
+    socket!.on('admin_no_qr_result',    (d) => _adminNoQrResult.add(_m(d)));
+    socket!.on('admin_stage_ok',        (d) => _adminStageOk.add(_m(d)));
+    socket!.on('admin_unstage_ok',      (d) => _adminUnstageOk.add(_m(d)));
+    socket!.on('admin_auto_staged',     (d) => _adminAutoStaged.add(_m(d)));
+    socket!.on('admin_place_result',    (d) => _adminPlaceResult.add(_m(d)));
+    socket!.on('admin_missing_result',  (d) => _adminMissingResult.add(_m(d)));
+    socket!.on('admin_session_closed',  (d) => _adminSessionClosed.add(_m(d)));
+    socket!.on('admin_operation_error', (d) => _adminOperationError.add(_m(d)));
+    socket!.on('admin_step_cancelled',  (d) => _adminStepCancelled.add(_m(d)));
   }
 
-  // ── Scan ──────────────────────────────────────────────
+  // ── Scan ──────────────────────────────────────────────────────────────────
 
-  void toggleScan()    => _emit("toggle_scan", {"toggle": true});
-  void requestStatus() => _emit("get_status", {});
+  void toggleScan()    => _emit('toggle_scan', {'toggle': true});
+  void requestStatus() => _emit('get_status', {});
 
-  // ── DVW ───────────────────────────────────────────────
+  // ── DVW ───────────────────────────────────────────────────────────────────
 
-  void deposit(String pid)  => _emit("deposit",   {"pid": pid});
-  void withdraw(String pid) => _emit("withdraw",  {"pid": pid});
-  void qrScanned()          => _emit("qr_scanned", {});
+  void deposit(String pid)  => _emit('deposit',  {'pid': pid});
+  void withdraw(String pid) => _emit('withdraw', {'pid': pid});
+  void qrScanned()          => _emit('qr_scanned', {});
+  void cancelOperation()    => _emit('cancel_operation', {});
 
-  void cancelOperation() => _emit("cancel_operation", {});
+  void verify({required String pid, required int originalLid}) =>
+      _emit('verify', {'pid': pid, 'original_lid': originalLid});
 
-  void verify({
-    required String pid,
-    required int originalLid,
-  }) => _emit("verify", {"pid": pid, "original_lid": originalLid});
-
-  // ── Alarm ─────────────────────────────────────────────
+  // ── Alarm ─────────────────────────────────────────────────────────────────
 
   void acknowledgeAlarm(String password) =>
-      _emit("alarm_acknowledge", {"password": password});
+      _emit('alarm_acknowledge', {'password': password});
+  void unsilenceAlarm()     => _emit('alarm_unsilence', {});
+  void requestAlarmStatus() => _emit('get_alarm_status', {});
 
-  void unsilenceAlarm()    => _emit("alarm_unsilence", {});
-  void requestAlarmStatus() => _emit("get_alarm_status", {});
-
-  // ── Admin resolution session ──────────────────────────
+  // ── Admin resolution ──────────────────────────────────────────────────────
 
   void adminSessionStart(String password) =>
-      _emit("admin_session_start", {"password": password});
-
+      _emit('admin_session_start', {'password': password});
   void adminRemovePhone(int fromLid) =>
-      _emit("admin_remove_phone", {"from_lid": fromLid});
-
-  void adminQrScanned()  => _emit("admin_qr_scanned", {});
-  void adminNoQrFound()  => _emit("admin_no_qr_found", {});
-  void adminStagePhone() => _emit("admin_stage_phone", {});
-
+      _emit('admin_remove_phone', {'from_lid': fromLid});
+  void adminQrScanned()  => _emit('admin_qr_scanned', {});
+  void adminNoQrFound()  => _emit('admin_no_qr_found', {});
+  void adminStagePhone() => _emit('admin_stage_phone', {});
   void adminUnstagePhone(String pid) =>
-      _emit("admin_unstage_phone", {"pid": pid});
-
+      _emit('admin_unstage_phone', {'pid': pid});
   void adminPlacePhone(int toLid) =>
-      _emit("admin_place_phone", {"to_lid": toLid});
-
+      _emit('admin_place_phone', {'to_lid': toLid});
   void adminDeclareMissing(String pid) =>
-      _emit("admin_declare_missing", {"pid": pid});
-
-  void adminSessionClose() => _emit("admin_session_close", {});
-
+      _emit('admin_declare_missing', {'pid': pid});
+  void adminSessionClose() => _emit('admin_session_close', {});
   void adminForceClose({bool safe = true}) =>
-      _emit("admin_force_close_session", {"safe": safe});
+      _emit('admin_force_close_session', {'safe': safe});
+  void adminCancelStep() => _emit('admin_cancel_step', {});
 
-  /// Cancel the current admin step (QR scan or placement tracker) without
-  /// closing the session.  Called when "Handle a different phone first" is pressed.
-  void adminCancelStep() => _emit("admin_cancel_step", {});
+  // ── Backward-compat stubs ─────────────────────────────────────────────────
+  // Widgets now own their subscriptions and cancel them in dispose().
+  // These are kept so any remaining old call-sites compile without errors.
+  // @deprecated — remove once all call-sites have been migrated to streams.
+  void clearDvwCallbacks()   {}
+  void clearAdminCallbacks() {}
 
-  // ── Cleanup ───────────────────────────────────────────
-
-  void clearDvwCallbacks() {
-    _onDepositWaiting    = null;
-    _onDepositResult     = null;
-    _onWithdrawWaiting   = null;
-    _onWithdrawResult    = null;
-    _onVerifyWaiting     = null;
-    _onVerifyResult      = null;
-    _onOperationError    = null;
-    _onOperationCancelled = null;
-    _onTrackingStarted   = null;
-    _onTrackingUpdate    = null;
-    _onTrackingFailed    = null;
-  }
-
-  void clearAdminCallbacks() {
-    _onAdminSessionOpened  = null;
-    _onAdminSessionError   = null;
-    _onAdminRemoveOk       = null;
-    _onAdminQrResult       = null;
-    _onAdminNoQrResult     = null;
-    _onAdminStageOk        = null;
-    _onAdminUnstageOk      = null;
-    _onAdminAutoStaged     = null;
-    _onAdminPlaceResult    = null;
-    _onAdminMissingResult  = null;
-    _onAdminSessionClosed  = null;
-    _onAdminOperationError = null;
-    _onAdminStepCancelled  = null;
-  }
+  // ── Teardown ──────────────────────────────────────────────────────────────
 
   void disconnect() {
     socket?.disconnect();
@@ -338,17 +261,9 @@ class SocketService {
     socket        = null;
     isConnected   = false;
     _isConnecting = false;
-    _onScanStatus = null;
-    clearDvwCallbacks();
-    clearAdminCallbacks();
-    _onAlarmTriggered         = null;
-    _onAlarmUpdated           = null;
-    _onAlarmCleared           = null;
-    _onAlarmAcknowledgeResult = null;
-    _onAlarmStatus            = null;
   }
 
-  // ── Internal ──────────────────────────────────────────
+  // ── Internal ──────────────────────────────────────────────────────────────
 
   void _emit(String event, Map<String, dynamic> data) {
     if (!isConnected || socket == null) return;

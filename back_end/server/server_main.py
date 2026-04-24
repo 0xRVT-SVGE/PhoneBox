@@ -36,6 +36,7 @@ from back_end.server.app import (
     create_app, get_slot_monitor, get_slot_operations, set_monitor_components
 )
 from back_end.server.webrtc_handler import webrtc_bp
+from back_end.server.metrics import register_metrics_endpoint
 # from back_end.camera_manager import cam_mgr
 from back_end.slot_monitor.admin.admin_ops_handler import register_admin_handlers
 from back_end.slot_monitor.camera.top_camera import top_camera
@@ -60,6 +61,7 @@ _stop_event = threading.Event()
 
 app, socketio = create_app(stop_event=_stop_event)
 app.register_blueprint(webrtc_bp, url_prefix="/webrtc")
+register_metrics_endpoint(app, get_slot_monitor)
 scanner_state.set_socketio(socketio)
 
 #logger.info(f"Camera indices: {cam_mgr.all_indices()}")
