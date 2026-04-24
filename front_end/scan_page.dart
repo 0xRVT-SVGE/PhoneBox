@@ -257,7 +257,7 @@ class _ScanPageState extends State<ScanPage> {
     }
     if (!mounted) return;
     Navigator.push(context,
-        MaterialPageRoute(builder: (_) => const AdminMenu()));
+        MaterialPageRoute(builder: (_) => const AdminMenuPage())); // ← FIXED
   }
 
   @override
