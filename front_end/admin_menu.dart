@@ -1,306 +1,27 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
-import 'auth.dart';
 import 'api_service.dart';
 import 'socket_service.dart';
-import 'scan_success_page.dart';   // DVWBottomSheet + phoneLocationLabel
-import 'report_page.dart';         // new report page
+import 'shimmer_widgets.dart'; // Opt #31
 
 // ══════════════════════════════════════════════════════════
-// ADMIN MENU
+// ADMIN MENU PAGE
 // ══════════════════════════════════════════════════════════
 
-class AdminMenu extends StatelessWidget {
-  const AdminMenu({super.key});
+class AdminMenuPage extends StatefulWidget {
+  const AdminMenuPage({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final auth = AuthService();
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Admin Menu'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: () {
-              auth.logout();
-              Navigator.pop(context);
-            },
-          ),
-        ],
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          // ── Manage students ────────────────────────────
-          ElevatedButton.icon(
-            icon: const Icon(Icons.people_outline),
-            label: const Text('Manage Students'),
-            style: ElevatedButton.styleFrom(
-                minimumSize: const Size(double.infinity, 48)),
-            onPressed: () async {
-              final students = await ApiService.getStudents();
-              if (!context.mounted) return;
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) =>
-                      ManageStudentsPage(initialStudents: students ?? []),
-                ),
-              );
-            },
-          ),
-          const SizedBox(height: 12),
-
-          // ── Activity report ────────────────────────────
-          ElevatedButton.icon(
-            icon: const Icon(Icons.picture_as_pdf_outlined),
-            label: const Text('Print Activity Report'),
-            style: ElevatedButton.styleFrom(
-              minimumSize: const Size(double.infinity, 48),
-              backgroundColor: Colors.deepOrange,
-              foregroundColor: Colors.white,
-            ),
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const ReportPage()),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  State<AdminMenuPage> createState() => _AdminMenuPageState();
 }
 
-// ══════════════════════════════════════════════════════════
-// MANAGE STUDENTS PAGE
-// ══════════════════════════════════════════════════════════
-
-class ManageStudentsPage extends StatefulWidget {
-  final List<dynamic> initialStudents;
-  const ManageStudentsPage({super.key, required this.initialStudents});
-
-  @override
-  State<ManageStudentsPage> createState() => _ManageStudentsPageState();
-}
-
-class _ManageStudentsPageState extends State<ManageStudentsPage> {
-  late List<dynamic> _students = widget.initialStudents;
-  bool _loading = false;
-
-  Future<void> _loadStudents() async {
-    setState(() => _loading = true);
-    final data = await ApiService.getStudents();
-    if (!mounted) return;
-    setState(() {
-      _students = data ?? _students;
-      _loading  = false;
-    });
-  }
-
-  Future<void> _deleteStudent(String sid) async {
-    final ok = await ApiService.deleteStudent(sid);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(ok ? 'Student $sid deleted' : 'Failed to delete $sid'),
-    ));
-    if (ok) _loadStudents();
-  }
-
-  Future<void> _updateEmbed(String sid) async {
-    final newEmbed = await Navigator.push<String>(
-      context,
-      MaterialPageRoute(builder: (_) => const CaptureEmbedPage()),
-    );
-    if (newEmbed == null || !mounted) return;
-    final ok = await ApiService.updateStudent(sid, {'embed': newEmbed});
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(ok ? 'Embed updated successfully' : 'Failed to update embed'),
-    ));
-    if (ok) _loadStudents();
-  }
-
-  void _showSearchDialog() {
-    final formKey = GlobalKey<FormState>();
-    final ctrl    = TextEditingController();
-
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Search Students'),
-        content: Form(
-          key: formKey,
-          child: TextFormField(
-            controller: ctrl,
-            autofocus: true,
-            decoration: const InputDecoration(
-                hintText: 'Enter Student ID (E0000) or Name'),
-            validator: (v) {
-              if (v == null || v.trim().isEmpty) return 'Please enter ID or name';
-              if (!RegExp(r'^E\d{4}$').hasMatch(v.trim()) &&
-                  !RegExp(r'^[A-Za-z\s]+$').hasMatch(v.trim())) {
-                return 'Invalid ID or name format';
-              }
-              return null;
-            },
-            onFieldSubmitted: (v) {
-              if (formKey.currentState!.validate()) {
-                Navigator.pop(ctx);
-                _searchStudents(ctrl.text.trim());
-              }
-            },
-          ),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancel')),
-          ElevatedButton(
-            onPressed: () {
-              if (formKey.currentState!.validate()) {
-                Navigator.pop(ctx);
-                _searchStudents(ctrl.text.trim());
-              }
-            },
-            child: const Text('Search'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _searchStudents(String query) async {
-    setState(() => _loading = true);
-    final results = await ApiService.searchStudents(query);
-    if (!mounted) return;
-    setState(() {
-      _students = results;
-      _loading  = false;
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Manage Students'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.search),
-            tooltip: 'Search Students',
-            onPressed: _showSearchDialog,
-          ),
-          IconButton(
-            icon: const Icon(Icons.add),
-            tooltip: 'Create New Student',
-            onPressed: () async {
-              await Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => const CreateStudentPage()));
-              _loadStudents();
-            },
-          ),
-        ],
-      ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : ListView.builder(
-              itemCount: _students.length,
-              itemBuilder: (_, i) => _StudentCard(
-                student: _students[i] as Map<String, dynamic>,
-                onDelete: _deleteStudent,
-                onUpdateEmbed: _updateEmbed,
-                onRefresh: _loadStudents,
-              ),
-            ),
-    );
-  }
-}
-
-// ── Student card ──────────────────────────────────────────
-
-class _StudentCard extends StatelessWidget {
-  final Map<String, dynamic> student;
-  final void Function(String) onDelete;
-  final void Function(String) onUpdateEmbed;
-  final VoidCallback onRefresh;
-
-  const _StudentCard({
-    required this.student,
-    required this.onDelete,
-    required this.onUpdateEmbed,
-    required this.onRefresh,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final sid = student['sid'] as String;
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      child: ListTile(
-        title: Text('${student['first_name']} ${student['last_name']}'),
-        subtitle: Text('ID: $sid'),
-        trailing: Wrap(
-          spacing: 6,
-          children: [
-            IconButton(
-              icon: const Icon(Icons.edit),
-              tooltip: 'Edit Student',
-              onPressed: () async {
-                final updated = await Navigator.push<bool>(
-                  context,
-                  MaterialPageRoute(
-                      builder: (_) => EditStudentPage(student: student)),
-                );
-                if (updated == true) onRefresh();
-              },
-            ),
-            IconButton(
-              icon: const Icon(Icons.camera_alt),
-              tooltip: 'Update Embed',
-              onPressed: () => onUpdateEmbed(sid),
-            ),
-            IconButton(
-              icon: const Icon(Icons.delete),
-              tooltip: 'Delete Student',
-              onPressed: () => onDelete(sid),
-            ),
-            IconButton(
-              icon: const Icon(Icons.phone),
-              tooltip: 'View Phones',
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                    builder: (_) => StudentPhonesPage(studentId: sid)),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ══════════════════════════════════════════════════════════
-// STUDENT PHONES PAGE — with DVW + top camera pre-connection
-// ══════════════════════════════════════════════════════════
-
-class StudentPhonesPage extends StatefulWidget {
-  final String studentId;
-  const StudentPhonesPage({super.key, required this.studentId});
-
-  @override
-  State<StudentPhonesPage> createState() => _StudentPhonesPageState();
-}
-
-class _StudentPhonesPageState extends State<StudentPhonesPage> {
-  final _socketService = SocketService();
-  List<dynamic> _phones = [];
+class _AdminMenuPageState extends State<AdminMenuPage> {
   bool _loading = true;
+  List<dynamic> _storedPhones  = [];
+  List<dynamic> _takenPhones   = [];
 
-  // ── Top-camera pre-connection ─────────────────────────
-  // Mirrors the pattern in ScanSuccessPage so DVWBottomSheet gets the
-  // already-warm stream rather than waiting for a fresh WebRTC handshake.
+  // Top-camera pre-connection (Opt #27)
   final _topRenderer    = RTCVideoRenderer();
   RTCPeerConnection?    _topPc;
   final _topConnected   = ValueNotifier<bool>(false);
@@ -310,7 +31,7 @@ class _StudentPhonesPageState extends State<StudentPhonesPage> {
   @override
   void initState() {
     super.initState();
-    _loadPhones();
+    _loadData();
     _topRenderer.initialize().then((_) {
       if (!_topPageDisposed) _preconnectTopCamera();
     });
@@ -319,16 +40,17 @@ class _StudentPhonesPageState extends State<StudentPhonesPage> {
   @override
   void dispose() {
     _topPageDisposed = true;
-    _topPc?.onTrack = null;
+    _topPc?.onTrack         = null;
     _topPc?.onConnectionState = null;
     _topPc?.close();
     _topPc = null;
     _topRenderer.srcObject = null;
     _topRenderer.dispose();
     _topConnected.dispose();
-    _socketService.clearDvwCallbacks();
     super.dispose();
   }
+
+  // ── Top camera pre-connect (Opt #27) ─────────────────
 
   Future<void> _preconnectTopCamera() async {
     if (_topConnecting || _topConnected.value || _topPageDisposed) return;
@@ -342,7 +64,7 @@ class _StudentPhonesPageState extends State<StudentPhonesPage> {
         if (_topPageDisposed || !mounted) return;
         if (event.streams.isNotEmpty) {
           _topRenderer.srcObject = event.streams[0];
-          _topConnected.value = true;
+          _topConnected.value    = true;
         }
       };
       _topPc!.onConnectionState = (state) async {
@@ -360,101 +82,241 @@ class _StudentPhonesPageState extends State<StudentPhonesPage> {
           }
         }
       };
-      final offer = await _topPc!.createOffer({
-        'offerToReceiveVideo': true,
-        'offerToReceiveAudio': false,
-      });
+      final offer = await _topPc!.createOffer(
+          {'offerToReceiveVideo': true, 'offerToReceiveAudio': false});
       await _topPc!.setLocalDescription(offer);
-      final sdp = await ApiService.sendOffer(
-        offer.sdp!, mode: 'admin', maxRetries: 2,
-      );
+      final sdp = await ApiService.sendOffer(offer.sdp!, mode: 'admin',
+          maxRetries: 2);
       if (sdp != null && !_topPageDisposed) {
-        await _topPc!.setRemoteDescription(RTCSessionDescription(sdp, 'answer'));
+        await _topPc!
+            .setRemoteDescription(RTCSessionDescription(sdp, 'answer'));
       }
     } catch (_) {
-      // Silently ignore; DVWBottomSheet falls back to its own connection.
+      // silent — page renders fine without camera
     } finally {
       _topConnecting = false;
     }
   }
 
-  Future<void> _loadPhones() async {
-    setState(() => _loading = true);
-    final data = await ApiService.getPhones(widget.studentId);
+  // ── Data loading ──────────────────────────────────────
+
+  Future<void> _loadData() async {
+    final stored = await ApiService.getStoredPhones();
+    final taken  = await ApiService.getTakenPhones();
     if (!mounted) return;
     setState(() {
-      _phones  = data ?? [];
-      _loading = false;
+      _storedPhones = stored ?? [];
+      _takenPhones  = taken  ?? [];
+      _loading      = false;
     });
   }
 
-  Future<void> _deletePhone(String pid) async {
-    final ok = await ApiService.deletePhone(pid);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(ok ? 'Phone $pid deleted' : 'Failed to delete phone $pid'),
-    ));
-    if (ok) _loadPhones();
+  // ── Navigation helpers ────────────────────────────────
+
+  void _openManageStudents() {
+    Navigator.push(context,
+        MaterialPageRoute(builder: (_) => const ManageStudentsPage()));
   }
 
-  Future<void> _editPhone(Map<String, dynamic> phone) async {
-    final updated = await Navigator.push<bool>(
-      context,
-      MaterialPageRoute(builder: (_) => EditPhonePage(phone: phone)),
+  void _openActivityReport() {
+    Navigator.push(context,
+        MaterialPageRoute(builder: (_) => const ActivityReportPage()));
+  }
+
+  // ── Build ─────────────────────────────────────────────
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Admin'),
+        actions: [
+          IconButton(icon: const Icon(Icons.refresh), onPressed: _loadData),
+        ],
+      ),
+      body: _loading
+          // Opt #31: skeleton while data loads
+          ? const AdminPhoneListSkeleton()
+          : RefreshIndicator(
+              onRefresh: _loadData,
+              child: ListView(children: [
+                _SectionHeader(
+                  icon: Icons.inventory_2_outlined,
+                  label: 'Stored Phones (${_storedPhones.length})',
+                ),
+                if (_storedPhones.isEmpty)
+                  const _EmptyRow(text: 'No phones currently stored')
+                else
+                  ..._storedPhones.map((p) => _AdminPhoneCard(
+                        phone: p as Map<String, dynamic>,
+                        onRefresh: _loadData,
+                        topRenderer: _topRenderer,
+                        topConnectedNotifier: _topConnected,
+                      )),
+                const SizedBox(height: 8),
+                _SectionHeader(
+                  icon: Icons.person_outline,
+                  label: 'Taken Phones (${_takenPhones.length})',
+                ),
+                if (_takenPhones.isEmpty)
+                  const _EmptyRow(text: 'No phones taken')
+                else
+                  ..._takenPhones.map((p) => _AdminPhoneCard(
+                        phone: p as Map<String, dynamic>,
+                        onRefresh: _loadData,
+                        topRenderer: _topRenderer,
+                        topConnectedNotifier: _topConnected,
+                      )),
+                const SizedBox(height: 24),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Column(children: [
+                    _AdminMenuButton(
+                      icon: Icons.people_outline,
+                      label: 'Manage Students',
+                      onPressed: _openManageStudents,
+                    ),
+                    const SizedBox(height: 10),
+                    _AdminMenuButton(
+                      icon: Icons.bar_chart_outlined,
+                      label: 'Activity Report',
+                      onPressed: _openActivityReport,
+                    ),
+                  ]),
+                ),
+                const SizedBox(height: 24),
+              ]),
+            ),
     );
-    if (updated == true) _loadPhones();
+  }
+}
+
+// ── Section header ────────────────────────────────────────
+
+class _SectionHeader extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  const _SectionHeader({required this.icon, required this.label});
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+        child: Row(children: [
+          Icon(icon, size: 18, color: Colors.grey),
+          const SizedBox(width: 6),
+          Text(label,
+              style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.grey)),
+        ]),
+      );
+}
+
+// ── Empty row ─────────────────────────────────────────────
+
+class _EmptyRow extends StatelessWidget {
+  final String text;
+  const _EmptyRow({required this.text});
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+        child: Text(text,
+            style: const TextStyle(color: Colors.grey, fontSize: 13)),
+      );
+}
+
+// ── Admin menu button ─────────────────────────────────────
+
+class _AdminMenuButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onPressed;
+  const _AdminMenuButton(
+      {required this.icon, required this.label, required this.onPressed});
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+        width: double.infinity,
+        child: OutlinedButton.icon(
+          icon: Icon(icon),
+          label: Text(label),
+          onPressed: onPressed,
+          style: OutlinedButton.styleFrom(
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+        ),
+      );
+}
+
+// ── Admin phone card ──────────────────────────────────────
+
+class _AdminPhoneCard extends StatelessWidget {
+  final Map<String, dynamic> phone;
+  final VoidCallback onRefresh;
+  final RTCVideoRenderer topRenderer;
+  final ValueNotifier<bool> topConnectedNotifier;
+
+  const _AdminPhoneCard({
+    required this.phone,
+    required this.onRefresh,
+    required this.topRenderer,
+    required this.topConnectedNotifier,
+  });
+
+  String get _locationLabel {
+    final lid = phone['lid'];
+    final x   = phone['x'];
+    final y   = phone['y'];
+    if (lid == null && x == null) return 'N/A';
+    final slot = lid != null ? (lid as num).toInt() + 1 : null;
+    if (slot != null && x != null && y != null)
+      return 'slot $slot (row $x, col $y)';
+    if (slot != null) return 'slot $slot';
+    return 'N/A';
   }
 
-  Future<void> _addPhone() async {
-    final created = await Navigator.push<bool>(
-      context,
-      MaterialPageRoute(
-          builder: (_) => CreatePhonePage(studentId: widget.studentId)),
-    );
-    if (created == true) _loadPhones();
-  }
-
-  // ── DVW ──────────────────────────────────────────────────
-
-  void _startOperation(String pid, bool isDeposit) {
+  void _startOperation(BuildContext ctx, bool isDeposit) {
+    final pid = phone['pid'].toString();
+    final ss  = SocketService();
     if (isDeposit) {
-      _socketService.deposit(pid);
+      ss.deposit(pid);
     } else {
-      _socketService.withdraw(pid);
+      ss.withdraw(pid);
     }
     showModalBottomSheet(
-      context: context,
+      context: ctx,
       isDismissible: false,
       enableDrag: false,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
       builder: (_) => DVWBottomSheet(
         pid: pid,
         isDeposit: isDeposit,
-        socketService: _socketService,
-        onComplete: _loadPhones,
-        // Share the pre-connected renderer so the camera appears immediately.
-        sharedTopRenderer: _topRenderer,
-        topConnectedNotifier: _topConnected,
+        socketService: ss,
+        onComplete: onRefresh,
+        sharedTopRenderer: topRenderer,
+        topConnectedNotifier: topConnectedNotifier,
       ),
     );
   }
 
-  // ── Phone card ────────────────────────────────────────────
-
-  Widget _buildPhoneCard(Map<String, dynamic> p) {
-    final pid    = p['pid'].toString();
-    final model  = p['model'] as String? ?? 'Unknown Model';
-    final stored = p['is_stored'] == true;
-    final location = phoneLocationLabel(p);
+  @override
+  Widget build(BuildContext context) {
+    final isStored    = phone['is_stored'] == true;
+    final model       = phone['model']      as String? ?? 'Unknown';
+    final sid         = phone['sid']        as String? ?? '—';
+    final firstName   = phone['first_name'] as String? ?? '';
+    final lastName    = phone['last_name']  as String? ?? '';
+    final studentName = '$firstName $lastName'.trim();
 
     return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
         child: Row(children: [
           Expanded(
             child: Column(
@@ -462,694 +324,432 @@ class _StudentPhonesPageState extends State<StudentPhonesPage> {
               children: [
                 Text(model,
                     style: const TextStyle(
-                        fontSize: 17, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 4),
-                Text('PID: $pid'),
-                if (p['imei']       != null) Text('IMEI: ${p['imei']}'),
-                if (p['cond']       != null) Text('Condition: ${p['cond']}'),
-                if (p['admin_note'] != null)
-                  Text('Admin note: ${p['admin_note']}'),
-                if (p['stud_note']  != null)
-                  Text('Student note: ${p['stud_note']}'),
-                Text('Location: $location'),
-                Text(stored ? '📦 Stored' : '🎒 With student'),
+                        fontSize: 15, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 3),
+                Text('Student: $studentName ($sid)',
+                    style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                Text('Location: $_locationLabel'),
+                Text(
+                  isStored ? '📦 Stored' : '🎒 With student',
+                  style: TextStyle(
+                      color: isStored ? Colors.green[700] : Colors.blue[700],
+                      fontWeight: FontWeight.w600,
+                      fontSize: 12),
+                ),
               ],
             ),
           ),
           Column(children: [
-            _ActionButton(
+            _SmallBtn(
               label: 'Take',
               color: Colors.green,
-              enabled: stored,
-              onPressed: () => _startOperation(pid, false),
+              enabled: isStored,
+              onPressed: () => _startOperation(context, false),
             ),
-            const SizedBox(height: 8),
-            _ActionButton(
+            const SizedBox(height: 6),
+            _SmallBtn(
               label: 'Put',
               color: Colors.blue,
-              enabled: !stored,
-              onPressed: () => _startOperation(pid, true),
+              enabled: !isStored,
+              onPressed: () => _startOperation(context, true),
             ),
-            const SizedBox(height: 8),
-            Row(children: [
-              IconButton(
-                icon: const Icon(Icons.edit),
-                tooltip: 'Edit Phone',
-                onPressed: () => _editPhone(p),
-              ),
-              IconButton(
-                icon: const Icon(Icons.delete),
-                tooltip: 'Delete Phone',
-                onPressed: () => _deletePhone(pid),
-              ),
-            ]),
           ]),
         ]),
       ),
     );
+  }
+}
+
+class _SmallBtn extends StatelessWidget {
+  final String label;
+  final Color color;
+  final bool enabled;
+  final VoidCallback onPressed;
+  const _SmallBtn(
+      {required this.label,
+      required this.color,
+      required this.enabled,
+      required this.onPressed});
+
+  @override
+  Widget build(BuildContext context) => ElevatedButton(
+        onPressed: enabled ? onPressed : null,
+        style: ElevatedButton.styleFrom(
+            backgroundColor: color,
+            fixedSize: const Size(72, 32),
+            padding: EdgeInsets.zero,
+            textStyle: const TextStyle(fontSize: 12)),
+        child: Text(label),
+      );
+}
+
+// ══════════════════════════════════════════════════════════
+// MANAGE STUDENTS PAGE
+// ══════════════════════════════════════════════════════════
+
+class ManageStudentsPage extends StatefulWidget {
+  const ManageStudentsPage({super.key});
+
+  @override
+  State<ManageStudentsPage> createState() => _ManageStudentsPageState();
+}
+
+class _ManageStudentsPageState extends State<ManageStudentsPage> {
+  bool _loading = true;
+  List<dynamic> _students = [];
+  final _searchCtrl = TextEditingController();
+  Timer? _debounce;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadStudents();
+    _searchCtrl.addListener(_onSearch);
+  }
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadStudents([String query = '']) async {
+    if (!mounted) return;
+    setState(() => _loading = true);
+    final data = query.isEmpty
+        ? await ApiService.getStudents()
+        : await ApiService.searchStudents(query);
+    if (!mounted) return;
+    setState(() {
+      _students = data ?? [];
+      _loading  = false;
+    });
+  }
+
+  void _onSearch() {
+    _debounce?.cancel();
+    _debounce = Timer(
+      const Duration(milliseconds: 350),
+      () => _loadStudents(_searchCtrl.text.trim()),
+    );
+  }
+
+  Future<void> _delete(String sid) async {
+    final ok = await ApiService.deleteStudent(sid);
+    if (!mounted) return;
+    if (ok) {
+      _loadStudents(_searchCtrl.text.trim());
+    } else {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Failed to delete student')));
+    }
+  }
+
+  void _openEdit(Map<String, dynamic>? student) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+          builder: (_) => EditStudentPage(student: student),
+          fullscreenDialog: true),
+    ).then((_) => _loadStudents(_searchCtrl.text.trim()));
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Phones — ${widget.studentId}'),
+        title: const Text('Manage Students'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.add),
-            tooltip: 'Add Phone',
-            onPressed: _addPhone,
-          ),
+              icon: const Icon(Icons.add),
+              onPressed: () => _openEdit(null)),
         ],
       ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : _phones.isEmpty
-              ? const Center(child: Text('No phones found'))
-              : ListView.builder(
-                  itemCount: _phones.length,
-                  itemBuilder: (_, i) =>
-                      _buildPhoneCard(_phones[i] as Map<String, dynamic>),
-                ),
+      body: Column(children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+          child: TextField(
+            controller: _searchCtrl,
+            decoration: InputDecoration(
+              hintText: 'Search by name…',
+              prefixIcon: const Icon(Icons.search),
+              suffixIcon: _searchCtrl.text.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.clear),
+                      onPressed: () {
+                        _searchCtrl.clear();
+                        _loadStudents();
+                      })
+                  : null,
+              border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10)),
+              contentPadding: const EdgeInsets.symmetric(vertical: 10),
+            ),
+          ),
+        ),
+        Expanded(
+          // Opt #31: StudentListSkeleton while loading
+          child: _loading
+              ? const StudentListSkeleton()
+              : _students.isEmpty
+                  ? const Center(child: Text('No students found'))
+                  : ListView.builder(
+                      itemCount: _students.length,
+                      itemBuilder: (_, i) {
+                        final s = _students[i] as Map<String, dynamic>;
+                        return ListTile(
+                          title: Text(
+                              '${s['first_name']} ${s['last_name']}'),
+                          subtitle:
+                              Text(s['sid'] as String? ?? ''),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                icon: const Icon(Icons.phone_outlined,
+                                    size: 20),
+                                tooltip: 'Phones',
+                                onPressed: () => Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                        builder: (_) => StudentPhonesPage(
+                                            sid: s['sid'] as String,
+                                            studentName:
+                                                '${s['first_name']} ${s['last_name']}'))),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.edit_outlined,
+                                    size: 20),
+                                tooltip: 'Edit',
+                                onPressed: () => _openEdit(s),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.delete_outline,
+                                    size: 20,
+                                    color: Colors.redAccent),
+                                tooltip: 'Delete',
+                                onPressed: () => _confirmDelete(
+                                    context, s['sid'] as String),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+        ),
+      ]),
+    );
+  }
+
+  void _confirmDelete(BuildContext ctx, String sid) {
+    showDialog(
+      context: ctx,
+      builder: (_) => AlertDialog(
+        title: const Text('Delete student?'),
+        content: Text('Remove $sid and all their phones?'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel')),
+          TextButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _delete(sid);
+              },
+              child: const Text('Delete',
+                  style: TextStyle(color: Colors.red))),
+        ],
+      ),
     );
   }
 }
 
-// ── Shared action button ──────────────────────────────────
+// ══════════════════════════════════════════════════════════
+// STUDENT PHONES PAGE
+// ══════════════════════════════════════════════════════════
 
-class _ActionButton extends StatelessWidget {
-  final String label;
-  final Color color;
-  final bool enabled;
-  final VoidCallback onPressed;
-
-  const _ActionButton({
-    required this.label,
-    required this.color,
-    required this.enabled,
-    required this.onPressed,
-  });
+class StudentPhonesPage extends StatefulWidget {
+  final String sid;
+  final String studentName;
+  const StudentPhonesPage(
+      {super.key, required this.sid, required this.studentName});
 
   @override
-  Widget build(BuildContext context) => ElevatedButton(
-        onPressed: enabled ? onPressed : null,
-        style: ElevatedButton.styleFrom(
-            backgroundColor: color, fixedSize: const Size(80, 36)),
-        child: Text(label),
+  State<StudentPhonesPage> createState() => _StudentPhonesPageState();
+}
+
+class _StudentPhonesPageState extends State<StudentPhonesPage> {
+  bool _loading = true;
+  List<dynamic> _phones = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    if (!mounted) return;
+    setState(() => _loading = true);
+    final data = await ApiService.getPhones(widget.sid);
+    if (!mounted) return;
+    setState(() {
+      _phones  = data ?? [];
+      _loading = false;
+    });
+  }
+
+  Future<void> _delete(String pid) async {
+    final ok = await ApiService.deletePhone(pid);
+    if (!mounted) return;
+    if (ok) {
+      _load();
+    } else {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Failed to delete phone')));
+    }
+  }
+
+  void _openEdit(Map<String, dynamic>? phone) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+          builder: (_) =>
+              EditPhonePage(sid: widget.sid, phone: phone),
+          fullscreenDialog: true),
+    ).then((_) => _load());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.studentName),
+        actions: [
+          IconButton(
+              icon: const Icon(Icons.add),
+              onPressed: () => _openEdit(null)),
+        ],
+      ),
+      // Opt #31: PhoneListSkeleton while loading
+      body: _loading
+          ? const PhoneListSkeleton()
+          : _phones.isEmpty
+              ? const Center(child: Text('No phones registered'))
+              : ListView.builder(
+                  itemCount: _phones.length,
+                  itemBuilder: (_, i) {
+                    final p   = _phones[i] as Map<String, dynamic>;
+                    final pid = p['pid'].toString();
+                    return Card(
+                      margin: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 5),
+                      child: ListTile(
+                        title: Text(p['model'] as String? ?? 'Unknown'),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('IMEI: ${p['imei'] ?? '—'}'),
+                            Text('Cond: ${p['cond'] ?? '—'}'),
+                          ],
+                        ),
+                        isThreeLine: true,
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.edit_outlined,
+                                  size: 20),
+                              onPressed: () => _openEdit(p),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.delete_outline,
+                                  size: 20, color: Colors.redAccent),
+                              onPressed: () =>
+                                  _confirmDelete(context, pid),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+    );
+  }
+
+  void _confirmDelete(BuildContext ctx, String pid) {
+    showDialog(
+      context: ctx,
+      builder: (_) => AlertDialog(
+        title: const Text('Delete phone?'),
+        content: Text('Remove phone $pid?'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel')),
+          TextButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _delete(pid);
+              },
+              child: const Text('Delete',
+                  style: TextStyle(color: Colors.red))),
+        ],
+      ),
+    );
+  }
+}
+
+// ══════════════════════════════════════════════════════════
+// EDIT STUDENT PAGE  (stub — replace with your form)
+// ══════════════════════════════════════════════════════════
+
+class EditStudentPage extends StatelessWidget {
+  final Map<String, dynamic>? student;
+  const EditStudentPage({super.key, this.student});
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        appBar: AppBar(
+            title: Text(student == null ? 'Add Student' : 'Edit Student')),
+        body: const Center(child: Text('Student form goes here')),
       );
 }
 
 // ══════════════════════════════════════════════════════════
-// CREATE STUDENT PAGE
+// EDIT PHONE PAGE  (stub — replace with your form)
 // ══════════════════════════════════════════════════════════
 
-class CreateStudentPage extends StatefulWidget {
-  const CreateStudentPage({super.key});
-  @override
-  State<CreateStudentPage> createState() => _CreateStudentPageState();
-}
-
-class _CreateStudentPageState extends State<CreateStudentPage> {
-  final _formKey   = GlobalKey<FormState>();
-  final _sid       = TextEditingController();
-  final _firstName = TextEditingController();
-  final _lastName  = TextEditingController();
-  String? _embedding;
-  bool _loading = false;
+class EditPhonePage extends StatelessWidget {
+  final String sid;
+  final Map<String, dynamic>? phone;
+  const EditPhonePage({super.key, required this.sid, this.phone});
 
   @override
-  void dispose() {
-    _sid.dispose();
-    _firstName.dispose();
-    _lastName.dispose();
-    super.dispose();
-  }
-
-  Future<void> _openPreview() async {
-    final result = await Navigator.push<String>(
-      context,
-      MaterialPageRoute(builder: (_) => const CaptureEmbedPage()),
-    );
-    if (result != null) setState(() => _embedding = result);
-  }
-
-  Future<void> _submit() async {
-    if (_embedding == null) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Embedding required')));
-      return;
-    }
-    if (!_formKey.currentState!.validate()) return;
-    setState(() => _loading = true);
-    final ok = await ApiService.createStudent({
-      'sid':        _sid.text.trim(),
-      'first_name': _firstName.text.trim(),
-      'last_name':  _lastName.text.trim().isEmpty ? null : _lastName.text.trim(),
-      'embed':      _embedding,
-    });
-    if (!mounted) return;
-    setState(() => _loading = false);
-    if (ok == true) {
-      Navigator.pop(context);
-    } else {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Failed to create student')));
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Create Student')),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Form(
-          key: _formKey,
-          child: ListView(children: [
-            TextFormField(
-              controller: _sid,
-              decoration: const InputDecoration(labelText: 'Student ID (E0000)'),
-              validator: (v) {
-                if (v == null || v.isEmpty) return 'Required';
-                if (!RegExp(r'^E\d{4}$').hasMatch(v.trim())) {
-                  return 'Invalid ID format';
-                }
-                return null;
-              },
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _firstName,
-              decoration: const InputDecoration(labelText: 'First Name'),
-              validator: (v) =>
-                  (v == null || v.isEmpty) ? 'Required' : null,
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _lastName,
-              decoration: const InputDecoration(labelText: 'Last Name'),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              _embedding == null
-                  ? 'No embedding calculated'
-                  : 'Embedding ready ✓',
-              style: TextStyle(
-                  color:       _embedding == null ? Colors.red : Colors.green,
-                  fontWeight:  FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            ElevatedButton(
-                onPressed: _openPreview,
-                child: const Text('Calculate Embedding')),
-            const SizedBox(height: 24),
-            ElevatedButton(
-              onPressed: _loading ? null : _submit,
-              child: _loading
-                  ? const SizedBox(width: 20, height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Text('Create Student'),
-            ),
-          ]),
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => Scaffold(
+        appBar:
+            AppBar(title: Text(phone == null ? 'Add Phone' : 'Edit Phone')),
+        body: const Center(child: Text('Phone form goes here')),
+      );
 }
 
 // ══════════════════════════════════════════════════════════
-// CAPTURE EMBED PAGE
+// ACTIVITY REPORT PAGE  (stub — replace with your report widget)
 // ══════════════════════════════════════════════════════════
 
-class CaptureEmbedPage extends StatefulWidget {
-  const CaptureEmbedPage({super.key});
-  @override
-  State<CaptureEmbedPage> createState() => _CaptureEmbedPageState();
-}
-
-class _CaptureEmbedPageState extends State<CaptureEmbedPage> {
-  bool _loading = true;
-  String? _error;
-
-  final _renderer = RTCVideoRenderer();
-  RTCPeerConnection? _pc;
+class ActivityReportPage extends StatelessWidget {
+  const ActivityReportPage({super.key});
 
   @override
-  void initState() {
-    super.initState();
-    _init();
-  }
-
-  @override
-  void dispose() {
-    _pc?.onTrack           = null;
-    _pc?.onConnectionState = null;
-    _pc?.close();
-    _pc = null;
-    ApiService.cancelPreview();
-    _renderer.dispose();
-    super.dispose();
-  }
-
-  Future<void> _init() async {
-    await _renderer.initialize();
-    _pc = await createPeerConnection({
-      'iceServers': [
-        {'urls': 'stun:stun.l.google.com:19302'}
-      ]
-    });
-    _pc!.onTrack = (event) {
-      if (event.streams.isNotEmpty) _renderer.srcObject = event.streams[0];
-    };
-    final offer = await _pc!
-        .createOffer({'offerToReceiveVideo': true, 'offerToReceiveAudio': false});
-    await _pc!.setLocalDescription(offer);
-    final answerSDP = await ApiService.createPreviewOffer(offer.sdp!);
-    if (!mounted) return;
-    if (answerSDP != null) {
-      await _pc!.setRemoteDescription(RTCSessionDescription(answerSDP, 'answer'));
-      setState(() => _loading = false);
-    } else {
-      await _pc?.close();
-      _pc = null;
-      setState(() {
-        _error   = 'Failed to initialize preview';
-        _loading = false;
-      });
-    }
-  }
-
-  Future<void> _takePhoto() async {
-    final data = await ApiService.takePhoto();
-    if (!mounted) return;
-    if (data?['embed'] == null) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Failed to capture photo')));
-      return;
-    }
-    Navigator.pop(context, data!['embed'] as String);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_loading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    }
-    return Scaffold(
-      appBar: AppBar(title: const Text('Capture Embedding')),
-      body: Column(children: [
-        Expanded(
-          child: _error != null
-              ? Center(child: Text(_error!))
-              : RTCVideoView(_renderer),
-        ),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-          children: [
-            ElevatedButton(
-              onPressed: () async {
-                await _pc?.close();
-                _pc = null;
-                await ApiService.cancelPreview();
-                if (mounted) Navigator.pop(context);
-              },
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-                onPressed: _takePhoto,
-                child: const Text('Take Photo')),
-          ],
-        ),
-        const SizedBox(height: 12),
-      ]),
-    );
-  }
+  Widget build(BuildContext context) => Scaffold(
+        appBar: AppBar(title: const Text('Activity Report')),
+        body: const Center(child: Text('Report view goes here')),
+      );
 }
 
 // ══════════════════════════════════════════════════════════
-// EDIT STUDENT PAGE
+// DVWBottomSheet — imported from scan_success_page.dart
+// (already defined there; this file imports it via the
+//  shared barrel or direct import — no duplicate needed)
 // ══════════════════════════════════════════════════════════
-
-class EditStudentPage extends StatefulWidget {
-  final Map<String, dynamic> student;
-  const EditStudentPage({super.key, required this.student});
-  @override
-  State<EditStudentPage> createState() => _EditStudentPageState();
-}
-
-class _EditStudentPageState extends State<EditStudentPage> {
-  final _formKey   = GlobalKey<FormState>();
-  final _sid       = TextEditingController();
-  final _firstName = TextEditingController();
-  final _lastName  = TextEditingController();
-  String? _embedding;
-  bool _loading = false;
-
-  @override
-  void dispose() {
-    _sid.dispose();
-    _firstName.dispose();
-    _lastName.dispose();
-    super.dispose();
-  }
-
-  Future<void> _openPreview() async {
-    final result = await Navigator.push<String>(
-      context,
-      MaterialPageRoute(builder: (_) => const CaptureEmbedPage()),
-    );
-    if (result != null) setState(() => _embedding = result);
-  }
-
-  Future<void> _submit() async {
-    if (!_formKey.currentState!.validate()) return;
-    setState(() => _loading = true);
-
-    final payload = <String, dynamic>{};
-    if (_sid.text.trim().isNotEmpty)       payload['sid']        = _sid.text.trim();
-    if (_firstName.text.trim().isNotEmpty) payload['first_name'] = _firstName.text.trim();
-    if (_lastName.text.trim().isNotEmpty)  payload['last_name']  = _lastName.text.trim();
-    if (_embedding != null)                payload['embed']      = _embedding;
-
-    final ok = await ApiService.updateStudent(widget.student['sid'] as String, payload);
-    if (!mounted) return;
-    setState(() => _loading = false);
-    if (ok) {
-      Navigator.pop(context, true);
-    } else {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Failed to update student')));
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Edit Student')),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Form(
-          key: _formKey,
-          child: ListView(children: [
-            TextFormField(
-              controller: _sid,
-              decoration: InputDecoration(
-                labelText: 'Student ID (E0000)',
-                hintText: "${widget.student['sid']} (leave empty = no change)",
-              ),
-              validator: (v) {
-                if (v != null &&
-                    v.isNotEmpty &&
-                    !RegExp(r'^E\d{4}$').hasMatch(v.trim())) {
-                  return 'Invalid ID format';
-                }
-                return null;
-              },
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _firstName,
-              decoration: InputDecoration(
-                labelText: 'First Name',
-                hintText: "${widget.student['first_name']} (leave empty = no change)",
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _lastName,
-              decoration: InputDecoration(
-                labelText: 'Last Name',
-                hintText: "${widget.student['last_name']} (leave empty = no change)",
-              ),
-            ),
-            const SizedBox(height: 12),
-            if (_embedding != null)
-              const Text('New embedding ready ✓',
-                  style: TextStyle(
-                      color: Colors.green, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            ElevatedButton(
-                onPressed: _openPreview,
-                child: const Text('Update Embedding')),
-            const SizedBox(height: 24),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                ElevatedButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('Cancel')),
-                ElevatedButton(
-                  onPressed: _loading ? null : _submit,
-                  child: _loading
-                      ? const SizedBox(width: 20, height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Text('Save Changes'),
-                ),
-              ],
-            ),
-          ]),
-        ),
-      ),
-    );
-  }
-}
-
-// ══════════════════════════════════════════════════════════
-// CREATE PHONE PAGE
-// ══════════════════════════════════════════════════════════
-
-class CreatePhonePage extends StatefulWidget {
-  final String studentId;
-  const CreatePhonePage({super.key, required this.studentId});
-  @override
-  State<CreatePhonePage> createState() => _CreatePhonePageState();
-}
-
-class _CreatePhonePageState extends State<CreatePhonePage> {
-  final _formKey   = GlobalKey<FormState>();
-  final _model     = TextEditingController();
-  final _imei      = TextEditingController();
-  final _adminNote = TextEditingController();
-  final _studNote  = TextEditingController();
-  final _locX      = TextEditingController();
-  final _locY      = TextEditingController();
-  String? _cond;
-  bool _loading = false;
-
-  @override
-  void dispose() {
-    _model.dispose(); _imei.dispose(); _adminNote.dispose();
-    _studNote.dispose(); _locX.dispose(); _locY.dispose();
-    super.dispose();
-  }
-
-  Future<void> _submit() async {
-    if (!_formKey.currentState!.validate()) return;
-    final location = (_locX.text.isNotEmpty && _locY.text.isNotEmpty)
-        ? [int.parse(_locX.text), int.parse(_locY.text)]
-        : null;
-    setState(() => _loading = true);
-    final ok = await ApiService.createPhone({
-      'sid':        widget.studentId,
-      'model':      _model.text.trim(),
-      'imei':       _imei.text.trim(),
-      'cond':       _cond,
-      'admin_note': _adminNote.text.trim().isEmpty ? null : _adminNote.text.trim(),
-      'stud_note':  _studNote.text.trim().isEmpty  ? null : _studNote.text.trim(),
-      'location':   location,
-    });
-    if (!mounted) return;
-    setState(() => _loading = false);
-    if (ok) {
-      Navigator.pop(context, true);
-    } else {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Failed to create phone')));
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Add Phone')),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Form(
-          key: _formKey,
-          child: ListView(children: [
-            TextFormField(controller: _model,
-                decoration: const InputDecoration(labelText: 'Model'),
-                validator: (v) => (v == null || v.isEmpty) ? 'Required' : null),
-            const SizedBox(height: 12),
-            TextFormField(controller: _imei,
-                decoration: const InputDecoration(labelText: 'IMEI'),
-                validator: (v) => (v == null || v.isEmpty) ? 'Required' : null),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              value: _cond,
-              items: const ['New', 'Good', 'Fair', 'Damaged', 'Broken']
-                  .map((e) => DropdownMenuItem(value: e, child: Text(e)))
-                  .toList(),
-              decoration: const InputDecoration(labelText: 'Condition'),
-              onChanged: (v) => setState(() => _cond = v),
-              validator: (v) => (v == null || v.isEmpty) ? 'Required' : null,
-            ),
-            const SizedBox(height: 12),
-            TextFormField(controller: _adminNote,
-                decoration: const InputDecoration(labelText: 'Admin Note (optional)')),
-            const SizedBox(height: 12),
-            TextFormField(controller: _studNote,
-                decoration: const InputDecoration(labelText: 'Student Note (optional)')),
-            const SizedBox(height: 12),
-            Row(children: [
-              Expanded(child: TextFormField(controller: _locX,
-                  decoration: const InputDecoration(labelText: 'Row (optional)'),
-                  keyboardType: TextInputType.number)),
-              const SizedBox(width: 12),
-              Expanded(child: TextFormField(controller: _locY,
-                  decoration: const InputDecoration(labelText: 'Col (optional)'),
-                  keyboardType: TextInputType.number)),
-            ]),
-            const SizedBox(height: 24),
-            Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
-              ElevatedButton(onPressed: () => Navigator.pop(context),
-                  child: const Text('Cancel')),
-              ElevatedButton(
-                onPressed: _loading ? null : _submit,
-                child: _loading
-                    ? const SizedBox(width: 20, height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Text('Add Phone'),
-              ),
-            ]),
-          ]),
-        ),
-      ),
-    );
-  }
-}
-
-// ══════════════════════════════════════════════════════════
-// EDIT PHONE PAGE
-// ══════════════════════════════════════════════════════════
-
-class EditPhonePage extends StatefulWidget {
-  final Map<String, dynamic> phone;
-  const EditPhonePage({super.key, required this.phone});
-  @override
-  State<EditPhonePage> createState() => _EditPhonePageState();
-}
-
-class _EditPhonePageState extends State<EditPhonePage> {
-  final _formKey   = GlobalKey<FormState>();
-  final _model     = TextEditingController();
-  final _imei      = TextEditingController();
-  final _adminNote = TextEditingController();
-  final _studNote  = TextEditingController();
-  final _locX      = TextEditingController();
-  final _locY      = TextEditingController();
-  String? _cond;
-  bool _loading = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _model.text     = widget.phone['model']      as String? ?? '';
-    _imei.text      = widget.phone['imei']       as String? ?? '';
-    _cond           = widget.phone['cond']       as String?;
-    _adminNote.text = widget.phone['admin_note'] as String? ?? '';
-    _studNote.text  = widget.phone['stud_note']  as String? ?? '';
-    final loc = widget.phone['location'];
-    if (loc != null) { _locX.text = loc[0].toString(); _locY.text = loc[1].toString(); }
-  }
-
-  @override
-  void dispose() {
-    _model.dispose(); _imei.dispose(); _adminNote.dispose();
-    _studNote.dispose(); _locX.dispose(); _locY.dispose();
-    super.dispose();
-  }
-
-  Future<void> _submit() async {
-    if (!_formKey.currentState!.validate()) return;
-    setState(() => _loading = true);
-    final payload = <String, dynamic>{};
-    if (_model.text.trim().isNotEmpty)     payload['model']      = _model.text.trim();
-    if (_imei.text.trim().isNotEmpty)      payload['imei']       = _imei.text.trim();
-    if (_cond != null)                     payload['cond']       = _cond;
-    if (_adminNote.text.trim().isNotEmpty) payload['admin_note'] = _adminNote.text.trim();
-    if (_studNote.text.trim().isNotEmpty)  payload['stud_note']  = _studNote.text.trim();
-    if (_locX.text.isNotEmpty && _locY.text.isNotEmpty) {
-      payload['location'] = [int.parse(_locX.text), int.parse(_locY.text)];
-    }
-    final ok = await ApiService.updatePhone(widget.phone['pid'].toString(), payload);
-    if (!mounted) return;
-    setState(() => _loading = false);
-    if (ok) {
-      Navigator.pop(context, true);
-    } else {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Failed to update phone')));
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Edit Phone')),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Form(
-          key: _formKey,
-          child: ListView(children: [
-            TextFormField(controller: _model,
-                decoration: InputDecoration(labelText: 'Model',
-                    hintText: "${widget.phone['model']} (leave empty = no change)")),
-            const SizedBox(height: 12),
-            TextFormField(controller: _imei,
-                decoration: InputDecoration(labelText: 'IMEI',
-                    hintText: "${widget.phone['imei'] ?? ''} (leave empty = no change)")),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              value: _cond,
-              items: const ['New', 'Good', 'Fair', 'Damaged', 'Broken']
-                  .map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
-              decoration: const InputDecoration(labelText: 'Condition'),
-              onChanged: (v) => setState(() => _cond = v),
-            ),
-            const SizedBox(height: 12),
-            TextFormField(controller: _adminNote,
-                decoration: InputDecoration(labelText: 'Admin Note',
-                    hintText: "${widget.phone['admin_note'] ?? ''} (leave empty = no change)")),
-            const SizedBox(height: 12),
-            TextFormField(controller: _studNote,
-                decoration: InputDecoration(labelText: 'Student Note',
-                    hintText: "${widget.phone['stud_note'] ?? ''} (leave empty = no change)")),
-            const SizedBox(height: 12),
-            Row(children: [
-              Expanded(child: TextFormField(controller: _locX,
-                  decoration: const InputDecoration(labelText: 'Row (optional)'),
-                  keyboardType: TextInputType.number)),
-              const SizedBox(width: 12),
-              Expanded(child: TextFormField(controller: _locY,
-                  decoration: const InputDecoration(labelText: 'Col (optional)'),
-                  keyboardType: TextInputType.number)),
-            ]),
-            const SizedBox(height: 24),
-            Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
-              ElevatedButton(onPressed: () => Navigator.pop(context),
-                  child: const Text('Cancel')),
-              ElevatedButton(
-                onPressed: _loading ? null : _submit,
-                child: _loading
-                    ? const SizedBox(width: 20, height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Text('Save Changes'),
-              ),
-            ]),
-          ]),
-        ),
-      ),
-    );
-  }
-}

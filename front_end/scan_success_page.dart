@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'socket_service.dart';
 import 'api_service.dart';
+import 'shimmer_widgets.dart'; // Opt #31
 
 // ── Shared location label helper ─────────────────────────
 String phoneLocationLabel(Map<String, dynamic> p) {
@@ -210,8 +211,9 @@ class _ScanSuccessPageState extends State<ScanSuccessPage> {
         title: Text(widget.studentName),
         leading: const BackButton(),
       ),
+      // Opt #31: PhoneListSkeleton replaces CircularProgressIndicator
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const PhoneListSkeleton()
           : _phones.isEmpty
               ? const Center(child: Text('No phones found'))
               : ListView.builder(
@@ -282,17 +284,11 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
   String? _errorText;
   bool    _qrVisible = true;
 
-  // ── Auto-close timer after success ───────────────────
   Timer? _successTimer;
   int    _successCountdown = 2;
 
-  // ── Cancel guard ──────────────────────────────────────
-  // True once the user presses Cancel so the operation_cancelled
-  // socket event does not try to pop the (already-dismissed) sheet
-  // and accidentally pop the parent page instead.
   bool _selfCancelled = false;
 
-  // ── Top-down camera ───────────────────────────────────
   late final RTCVideoRenderer _topRenderer;
   bool _ownsTopRenderer = false;
 
@@ -435,7 +431,6 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
       onWithdrawResult: (data) => _handleResult(data as Map),
       onOperationError: (data) {
         if (!mounted) return;
-        // If we already self-cancelled, ignore follow-up errors
         if (_selfCancelled) return;
         setState(() {
           _step      = DvwStep.error;
@@ -444,9 +439,6 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
         _disconnectTopCamera();
       },
       onOperationCancelled: (_) {
-        // Only pop if the USER didn't initiate the cancel themselves — if
-        // they did (_selfCancelled=true) we already popped the sheet in
-        // _onCancel() and a second pop would remove the parent page.
         if (_selfCancelled) return;
         if (mounted) Navigator.of(context).pop();
       },
@@ -541,7 +533,6 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
             ),
           ),
 
-          // ── Top-down camera ────────────────────────────
           if (showCamera)
             Expanded(
               child: Stack(
@@ -594,7 +585,6 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
               ),
             ),
 
-          // ── Card content ────────────────────────────────
           Padding(
             padding: EdgeInsets.fromLTRB(
                 24, 12, 24,
