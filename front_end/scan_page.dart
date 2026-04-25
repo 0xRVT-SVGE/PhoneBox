@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'socket_service.dart';
@@ -18,23 +19,20 @@ class _ScanPageState extends State<ScanPage> {
   final RTCVideoRenderer _remoteRenderer = RTCVideoRenderer();
   RTCPeerConnection? _peerConnection;
 
-  String webrtcStatus = "Connecting...";
-  String scanStatus = "Idle";
+  String webrtcStatus  = "Connecting...";
+  String scanStatus    = "Idle";
 
-  bool scanning = false;
-  bool manualOverride = false;
-  bool viewDisposed = false;
+  bool scanning         = false;
+  bool manualOverride   = false;
+  bool viewDisposed     = false;
   bool _webrtcConnected = false;
-
-  // True while AlarmPage is on top. Suppresses reconnect attempts so
-  // AlarmPage can safely reuse _remoteRenderer without cancelMain() being
-  // called underneath it.
-  bool _alarmPageOpen = false;
-
-  // Guards against re-entrant reconnect calls
-  bool _isReconnecting = false;
+  bool _alarmPageOpen   = false;
+  bool _isReconnecting  = false;
 
   final socketService = SocketService();
+
+  // Opt #28: typed stream subscriptions — cancelled in dispose()
+  final List<StreamSubscription> _subs = [];
 
   @override
   void initState() {
@@ -48,66 +46,65 @@ class _ScanPageState extends State<ScanPage> {
     await _startWebRTC();
   }
 
+  // Opt #28: connect() is now parameterless; events come via typed streams
   void _connectSocket() {
-    socketService.connect(
-      onScanStatus: _updateScanStatus,
-      onAlarmTriggered: _handleAlarmTriggered,
-      onAlarmCleared: _handleAlarmCleared,
-      onAlarmStatus: _handleAlarmStatus,
-    );
+    socketService.connect();
+    _subs.add(socketService.onScanStatus.listen(_updateScanStatus));
+    _subs.add(socketService.onAlarmTriggered.listen(_handleAlarmTriggered));
+    _subs.add(socketService.onAlarmCleared.listen(_handleAlarmCleared));
+    _subs.add(socketService.onAlarmStatus.listen(_handleAlarmStatus));
   }
 
-  void _handleAlarmStatus(dynamic data) {
+  void _handleAlarmStatus(Map<String, dynamic> data) {
     if (!mounted || _alarmPageOpen) return;
     if (data["active"] == true) _handleAlarmTriggered(data);
   }
 
-  void _handleAlarmTriggered(dynamic data) {
+  void _handleAlarmTriggered(Map<String, dynamic> data) {
     if (!mounted || _alarmPageOpen) return;
     _alarmPageOpen = true;
     Navigator.of(context)
         .push(MaterialPageRoute(
-      fullscreenDialog: true,
-      builder: (_) => AlarmPage(
-        initialMismatches: data["mismatches"] ?? [],
-        // Pass the live renderer — AlarmPage just reads it, never disposes it.
-        mainRenderer: _remoteRenderer,
-        isMainConnected: () => _webrtcConnected,
-      ),
-    ))
+          fullscreenDialog: true,
+          builder: (_) => AlarmPage(
+            initialMismatches: data["mismatches"] ?? [],
+            mainRenderer:      _remoteRenderer,
+            isMainConnected:   () => _webrtcConnected,
+          ),
+        ))
         .then((_) => _alarmPageOpen = false);
   }
 
-  void _handleAlarmCleared(dynamic _) {
+  void _handleAlarmCleared(Map<String, dynamic> _) {
     _alarmPageOpen = false;
   }
 
-  void _updateScanStatus(dynamic data) {
+  void _updateScanStatus(Map<String, dynamic> data) {
     if (viewDisposed || !mounted) return;
     if (manualOverride) return;
 
     final running = data["running"] ?? false;
     setState(() {
       scanning = running;
-      final auth = data["authorized"] ?? false;
-      final user = data["user"] ?? "";
-      final timeout = data["badge_timeout_exceeded"] ?? false;
-      final barcodeOk = data["barcode_verified"] ?? false;
-      final currentName = data["current_name"] ?? "Idle";
+      final auth        = data["authorized"]             ?? false;
+      final user        = data["user"]                   ?? "";
+      final timeout     = data["badge_timeout_exceeded"] ?? false;
+      final barcodeOk   = data["barcode_verified"]       ?? false;
+      final currentName = data["current_name"]           ?? "Idle";
 
       if (auth) {
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (_) =>
-                ScanSuccessPage(sid: user, studentName: currentName),
+            builder: (_) => ScanSuccessPage(sid: user, studentName: currentName),
           ),
         );
-        scanning = false;
+        scanning   = false;
         scanStatus = "Idle";
       } else if (timeout) {
         scanStatus =
-        "Timeout. Unable to Verify Badge.\nAsk for admin's help if it happened more than 2 times";
+            "Timeout. Unable to Verify Badge.\n"
+            "Ask for admin's help if it happened more than 2 times";
       } else if (barcodeOk) {
         scanStatus = "Verifying Face Match: $currentName";
       } else if (scanning) {
@@ -140,7 +137,7 @@ class _ScanPageState extends State<ScanPage> {
         if (viewDisposed || _isReconnecting) return;
         if (state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
             state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
-          // AlarmPage is showing this renderer — do not cancel or restart.
+          // AlarmPage is borrowing the renderer — don't restart underneath it
           if (_alarmPageOpen) {
             if (mounted) setState(() => _webrtcConnected = false);
             return;
@@ -148,7 +145,7 @@ class _ScanPageState extends State<ScanPage> {
           _isReconnecting = true;
           if (mounted) {
             setState(() {
-              webrtcStatus = "Reconnecting...";
+              webrtcStatus     = "Reconnecting...";
               _webrtcConnected = false;
             });
           }
@@ -186,8 +183,8 @@ class _ScanPageState extends State<ScanPage> {
     if (scanning) {
       setState(() {
         manualOverride = true;
-        scanning = false;
-        scanStatus = "Idle";
+        scanning       = false;
+        scanStatus     = "Idle";
       });
       socketService.toggleScan();
     } else {
@@ -199,11 +196,11 @@ class _ScanPageState extends State<ScanPage> {
   void _openAdminMenu() async {
     final auth = AuthService();
     if (!auth.isAdmin) {
-      final controller = TextEditingController();
+      final controller  = TextEditingController();
       bool loginSuccess = false;
 
       await showDialog(
-        context: context,
+        context:            context,
         barrierDismissible: false,
         builder: (ctx) => StatefulBuilder(
           builder: (context, setDialogState) => AlertDialog(
@@ -212,10 +209,10 @@ class _ScanPageState extends State<ScanPage> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 TextField(
-                  controller: controller,
-                  autofocus: true,
+                  controller:  controller,
+                  autofocus:   true,
                   obscureText: true,
-                  decoration: const InputDecoration(labelText: "Password"),
+                  decoration:  const InputDecoration(labelText: "Password"),
                   onSubmitted: (value) {
                     if (auth.login(value)) {
                       loginSuccess = true;
@@ -257,13 +254,15 @@ class _ScanPageState extends State<ScanPage> {
     }
     if (!mounted) return;
     Navigator.push(context,
-        MaterialPageRoute(builder: (_) => const AdminMenuPage())); // ← FIXED
+        MaterialPageRoute(builder: (_) => const AdminMenuPage())); // ← fixed #28 + naming
   }
 
   @override
   void dispose() {
     viewDisposed = true;
-    _peerConnection?.onTrack = null;
+    // Opt #28: cancel all stream subscriptions — no leaks
+    for (final s in _subs) s.cancel();
+    _peerConnection?.onTrack           = null;
     _peerConnection?.onConnectionState = null;
     _peerConnection?.close();
     _peerConnection = null;
@@ -279,7 +278,7 @@ class _ScanPageState extends State<ScanPage> {
         title: const Text("Face + Barcode Scanner"),
         actions: [
           IconButton(
-            icon: const Icon(Icons.admin_panel_settings),
+            icon:      const Icon(Icons.admin_panel_settings),
             onPressed: _openAdminMenu,
           )
         ],
@@ -308,11 +307,11 @@ class _ScanPageState extends State<ScanPage> {
             Padding(
               padding: const EdgeInsets.only(bottom: 16),
               child: ElevatedButton.icon(
-                icon: Icon(scanning ? Icons.stop : Icons.play_arrow),
+                icon:  Icon(scanning ? Icons.stop : Icons.play_arrow),
                 label: Text(scanning ? "Stop Scan" : "Start Scan"),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: scanning ? Colors.red : Colors.green,
-                  minimumSize: const Size(160, 45),
+                  minimumSize:     const Size(160, 45),
                 ),
                 onPressed: toggleScan,
               ),

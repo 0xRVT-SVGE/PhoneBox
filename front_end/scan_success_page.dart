@@ -38,10 +38,10 @@ class ScanSuccessPage extends StatefulWidget {
 
 class _ScanSuccessPageState extends State<ScanSuccessPage> {
   final _socketService = SocketService();
-  bool _loading = true;
-  List<dynamic> _phones = [];
+  bool          _loading = true;
+  List<dynamic> _phones  = [];
 
-  // ── Top-camera pre-connection ─────────────────────────
+  // ── Top-camera pre-connection (Opt #27) ──────────────────────────────────
   final _topRenderer    = RTCVideoRenderer();
   RTCPeerConnection?    _topPc;
   final _topConnected   = ValueNotifier<bool>(false);
@@ -60,14 +60,14 @@ class _ScanSuccessPageState extends State<ScanSuccessPage> {
   @override
   void dispose() {
     _topPageDisposed = true;
-    _topPc?.onTrack = null;
-    _topPc?.onConnectionState = null;
+    _topPc?.onTrack            = null;
+    _topPc?.onConnectionState  = null;
     _topPc?.close();
     _topPc = null;
     _topRenderer.srcObject = null;
     _topRenderer.dispose();
     _topConnected.dispose();
-    _socketService.clearDvwCallbacks();
+    // DVWBottomSheet manages its own subscriptions — nothing to cancel here
     super.dispose();
   }
 
@@ -83,7 +83,7 @@ class _ScanSuccessPageState extends State<ScanSuccessPage> {
         if (_topPageDisposed || !mounted) return;
         if (event.streams.isNotEmpty) {
           _topRenderer.srcObject = event.streams[0];
-          _topConnected.value = true;
+          _topConnected.value    = true;
         }
       };
       _topPc!.onConnectionState = (state) async {
@@ -135,20 +135,20 @@ class _ScanSuccessPageState extends State<ScanSuccessPage> {
       _socketService.withdraw(pid);
     }
     showModalBottomSheet(
-      context: context,
-      isDismissible: false,
-      enableDrag: false,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
+      context:             context,
+      isDismissible:       false,
+      enableDrag:          false,
+      isScrollControlled:  true,
+      backgroundColor:     Colors.transparent,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (_) => DVWBottomSheet(
-        pid: pid,
-        isDeposit: isDeposit,
-        socketService: _socketService,
-        onComplete: _loadPhones,
-        sharedTopRenderer: _topRenderer,
+        pid:                  pid,
+        isDeposit:            isDeposit,
+        socketService:        _socketService,
+        onComplete:           _loadPhones,
+        sharedTopRenderer:    _topRenderer,
         topConnectedNotifier: _topConnected,
       ),
     );
@@ -170,7 +170,8 @@ class _ScanSuccessPageState extends State<ScanSuccessPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(model,
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    style: const TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 4),
                 Text('PID: $pid',
                     style: const TextStyle(fontSize: 12, color: Colors.grey)),
@@ -186,16 +187,16 @@ class _ScanSuccessPageState extends State<ScanSuccessPage> {
           ),
           Column(children: [
             _ActionButton(
-              label: 'Take',
-              color: Colors.green,
-              enabled: isStored,
+              label:     'Take',
+              color:     Colors.green,
+              enabled:   isStored,
               onPressed: () => _startOperation(pid, false),
             ),
             const SizedBox(height: 8),
             _ActionButton(
-              label: 'Put',
-              color: Colors.blue,
-              enabled: !isStored,
+              label:     'Put',
+              color:     Colors.blue,
+              enabled:   !isStored,
               onPressed: () => _startOperation(pid, true),
             ),
           ]),
@@ -208,16 +209,16 @@ class _ScanSuccessPageState extends State<ScanSuccessPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.studentName),
+        title:   Text(widget.studentName),
         leading: const BackButton(),
       ),
-      // Opt #31: PhoneListSkeleton replaces CircularProgressIndicator
+      // Opt #31: skeleton instead of spinner
       body: _loading
           ? const PhoneListSkeleton()
           : _phones.isEmpty
               ? const Center(child: Text('No phones found'))
               : ListView.builder(
-                  itemCount: _phones.length,
+                  itemCount:   _phones.length,
                   itemBuilder: (_, i) =>
                       _buildPhoneCard(_phones[i] as Map<String, dynamic>),
                 ),
@@ -244,13 +245,14 @@ class _ActionButton extends StatelessWidget {
   Widget build(BuildContext context) => ElevatedButton(
         onPressed: enabled ? onPressed : null,
         style: ElevatedButton.styleFrom(
-            backgroundColor: color, fixedSize: const Size(80, 36)),
+            backgroundColor: color,
+            fixedSize: const Size(80, 36)),
         child: Text(label),
       );
 }
 
 // ══════════════════════════════════════════════════════════
-// DVW BOTTOM SHEET
+// DVW BOTTOM SHEET  — Opt #28: full stream migration
 // ══════════════════════════════════════════════════════════
 
 enum DvwStep { waiting, autoScanning, tracking, success, error }
@@ -261,7 +263,7 @@ class DVWBottomSheet extends StatefulWidget {
   final SocketService socketService;
   final VoidCallback onComplete;
 
-  final RTCVideoRenderer? sharedTopRenderer;
+  final RTCVideoRenderer?    sharedTopRenderer;
   final ValueNotifier<bool>? topConnectedNotifier;
 
   const DVWBottomSheet({
@@ -279,7 +281,7 @@ class DVWBottomSheet extends StatefulWidget {
 }
 
 class _DVWBottomSheetState extends State<DVWBottomSheet> {
-  DvwStep _step     = DvwStep.waiting;
+  DvwStep _step      = DvwStep.waiting;
   int?    _slot;
   String? _errorText;
   bool    _qrVisible = true;
@@ -293,23 +295,26 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
   bool _ownsTopRenderer = false;
 
   RTCPeerConnection? _topPc;
-  bool _topConnected  = false;
-  bool _topConnecting = false;
-  bool _disposed      = false;
+  bool _topConnected   = false;
+  bool _topConnecting  = false;
+  bool _disposed       = false;
   bool _isReconnecting = false;
+
+  // Opt #28: typed stream subscriptions
+  final List<StreamSubscription> _subs = [];
 
   @override
   void initState() {
     super.initState();
 
     if (widget.sharedTopRenderer != null) {
-      _topRenderer = widget.sharedTopRenderer!;
+      _topRenderer     = widget.sharedTopRenderer!;
       _ownsTopRenderer = false;
-      _topConnected = widget.topConnectedNotifier?.value
-          ?? (_topRenderer.srcObject != null);
+      _topConnected    = widget.topConnectedNotifier?.value
+                         ?? (_topRenderer.srcObject != null);
       widget.topConnectedNotifier?.addListener(_onParentConnectionChanged);
     } else {
-      _topRenderer = RTCVideoRenderer();
+      _topRenderer     = RTCVideoRenderer();
       _ownsTopRenderer = true;
       _topRenderer.initialize();
     }
@@ -327,19 +332,17 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
     _disposed = true;
     _successTimer?.cancel();
     widget.topConnectedNotifier?.removeListener(_onParentConnectionChanged);
+    // Opt #28: cancel all stream subscriptions
+    for (final s in _subs) s.cancel();
     _disconnectTopCamera();
-    if (_ownsTopRenderer) {
-      _topRenderer.dispose();
-    }
-    widget.socketService.clearDvwCallbacks();
+    if (_ownsTopRenderer) _topRenderer.dispose();
     super.dispose();
   }
 
-  // ── Top camera connection ─────────────────────────────
+  // ── Top camera ────────────────────────────────────────────────────────────
 
   Future<void> _connectTopCamera() async {
     if (!_ownsTopRenderer) return;
-
     if (_topConnecting || _topConnected || _disposed) return;
     _topConnecting = true;
     try {
@@ -352,7 +355,7 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
         if (event.streams.isNotEmpty) {
           setState(() {
             _topRenderer.srcObject = event.streams[0];
-            _topConnected = true;
+            _topConnected          = true;
           });
         }
       };
@@ -379,11 +382,10 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
   }
 
   void _disconnectTopCamera() {
-    _topPc?.onTrack = null;
-    _topPc?.onConnectionState = null;
+    _topPc?.onTrack            = null;
+    _topPc?.onConnectionState  = null;
     _topPc?.close();
     _topPc = null;
-
     if (_ownsTopRenderer) {
       _topRenderer.srcObject = null;
       _topConnected  = false;
@@ -392,7 +394,7 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
     }
   }
 
-  // ── Success auto-close ────────────────────────────────
+  // ── Success auto-close ────────────────────────────────────────────────────
 
   void _startSuccessTimer() {
     _successCountdown = 2;
@@ -407,67 +409,74 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
     });
   }
 
-  // ── Socket callbacks ──────────────────────────────────
-
+  // ── Opt #28: stream subscriptions ────────────────────────────────────────
   void _registerCallbacks() {
-    widget.socketService.connect(
-      onDepositWaiting: (data) {
-        if (!mounted) return;
-        setState(() {
-          _slot = data['slot'] as int? ?? ((data['lid'] as int? ?? 0) + 1);
-          _step = DvwStep.autoScanning;
-        });
-        _connectTopCamera();
-      },
-      onWithdrawWaiting: (data) {
-        if (!mounted) return;
-        setState(() {
-          _slot = data['slot'] as int? ?? ((data['lid'] as int? ?? 0) + 1);
-          _step = DvwStep.autoScanning;
-        });
-        _connectTopCamera();
-      },
-      onDepositResult:  (data) => _handleResult(data as Map),
-      onWithdrawResult: (data) => _handleResult(data as Map),
-      onOperationError: (data) {
-        if (!mounted) return;
-        if (_selfCancelled) return;
-        setState(() {
-          _step      = DvwStep.error;
-          _errorText = (data as Map)['message'] as String? ?? 'Unknown error';
-        });
-        _disconnectTopCamera();
-      },
-      onOperationCancelled: (_) {
-        if (_selfCancelled) return;
-        if (mounted) Navigator.of(context).pop();
-      },
-      onTrackingStarted: (_) {
-        if (!mounted) return;
-        setState(() {
-          _step      = DvwStep.tracking;
-          _qrVisible = true;
-        });
-        _connectTopCamera();
-      },
-      onTrackingUpdate: (data) {
-        if (!mounted) return;
-        final visible = (data as Map)['qr_visible'] as bool? ?? true;
-        if (visible != _qrVisible) setState(() => _qrVisible = visible);
-      },
-      onTrackingFailed: (data) {
-        if (!mounted) return;
-        if (_selfCancelled) return;
-        setState(() {
-          _step      = DvwStep.error;
-          _errorText = _trackingMsg((data as Map)['reason'] as String? ?? '');
-        });
-        _disconnectTopCamera();
-      },
-    );
+    final s = widget.socketService;
+    s.connect(); // idempotent
+
+    _subs.add(s.onDepositWaiting.listen((data) {
+      if (!mounted) return;
+      setState(() {
+        _slot = data['slot'] as int? ?? ((data['lid'] as int? ?? 0) + 1);
+        _step = DvwStep.autoScanning;
+      });
+      _connectTopCamera();
+    }));
+
+    _subs.add(s.onWithdrawWaiting.listen((data) {
+      if (!mounted) return;
+      setState(() {
+        _slot = data['slot'] as int? ?? ((data['lid'] as int? ?? 0) + 1);
+        _step = DvwStep.autoScanning;
+      });
+      _connectTopCamera();
+    }));
+
+    _subs.add(s.onDepositResult.listen(_handleResult));
+    _subs.add(s.onWithdrawResult.listen(_handleResult));
+
+    _subs.add(s.onOperationError.listen((data) {
+      if (!mounted) return;
+      if (_selfCancelled) return;
+      setState(() {
+        _step      = DvwStep.error;
+        _errorText = data['message'] as String? ?? 'Unknown error';
+      });
+      _disconnectTopCamera();
+    }));
+
+    _subs.add(s.onOperationCancelled.listen((_) {
+      if (_selfCancelled) return;
+      if (mounted) Navigator.of(context).pop();
+    }));
+
+    _subs.add(s.onTrackingStarted.listen((_) {
+      if (!mounted) return;
+      setState(() {
+        _step      = DvwStep.tracking;
+        _qrVisible = true;
+      });
+      _connectTopCamera();
+    }));
+
+    _subs.add(s.onTrackingUpdate.listen((data) {
+      if (!mounted) return;
+      final visible = data['qr_visible'] as bool? ?? true;
+      if (visible != _qrVisible) setState(() => _qrVisible = visible);
+    }));
+
+    _subs.add(s.onTrackingFailed.listen((data) {
+      if (!mounted) return;
+      if (_selfCancelled) return;
+      setState(() {
+        _step      = DvwStep.error;
+        _errorText = _trackingMsg(data['reason'] as String? ?? '');
+      });
+      _disconnectTopCamera();
+    }));
   }
 
-  void _handleResult(Map data) {
+  void _handleResult(Map<String, dynamic> data) {
     if (!mounted) return;
     _disconnectTopCamera();
     if (data['status'] == 'success') {
@@ -495,15 +504,15 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
 
   static String _trackingMsg(String reason) {
     const map = {
-      'qr_lost':       'QR code disappeared before reaching the slot. Keep it visible.',
-      'out_of_frame':  'Phone left the camera view. Move directly toward the slot.',
-      'timeout':       'Placement timed out. Please retry.',
+      'qr_lost':        'QR code disappeared before reaching the slot. Keep it visible.',
+      'out_of_frame':   'Phone left the camera view. Move directly toward the slot.',
+      'timeout':        'Placement timed out. Please retry.',
       'detect_timeout': 'Phone not detected. Make sure it enters the camera view.',
     };
     return map[reason] ?? 'Placement failed. Please retry.';
   }
 
-  // ── Build ─────────────────────────────────────────────
+  // ── Build ─────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -515,7 +524,7 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
         maxHeight: showCamera ? screenH * 0.85 : screenH * 0.55,
       ),
       decoration: const BoxDecoration(
-        color: Color(0xFF1C1C1E),
+        color:        Color(0xFF1C1C1E),
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       child: Column(
@@ -527,7 +536,7 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
               width: 36, height: 4,
               child: DecoratedBox(
                 decoration: BoxDecoration(
-                    color: Colors.white24,
+                    color:        Colors.white24,
                     borderRadius: BorderRadius.all(Radius.circular(2))),
               ),
             ),
@@ -541,14 +550,15 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
                   ClipRRect(
                     borderRadius: const BorderRadius.vertical(
                         top: Radius.circular(16)),
+                    // Opt #30: RepaintBoundary on video
                     child: _topConnected && _topRenderer.srcObject != null
-                           ? RepaintBoundary(
-                               child: RTCVideoView(
-                                 _topRenderer,
-                                 objectFit: RTCVideoViewObjectFit
-                                     .RTCVideoViewObjectFitContain,
-                               ),
-                             )
+                        ? RepaintBoundary(
+                            child: RTCVideoView(
+                              _topRenderer,
+                              objectFit: RTCVideoViewObjectFit
+                                  .RTCVideoViewObjectFitContain,
+                            ),
+                          )
                         : Container(
                             color: Colors.black,
                             child: Center(
@@ -574,7 +584,8 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
                   const Positioned(
                     bottom: 10, left: 12,
                     child: _CamBadge(
-                        label: 'TOP CAM', icon: Icons.videocam_outlined),
+                        label: 'TOP CAM',
+                        icon:  Icons.videocam_outlined),
                   ),
                   if (_step == DvwStep.tracking)
                     Positioned(
@@ -606,7 +617,9 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
           const CircularProgressIndicator(),
           const SizedBox(height: 16),
           Text(
-            widget.isDeposit ? 'Finding a free slot...' : 'Looking up your phone...',
+            widget.isDeposit
+                ? 'Finding a free slot...'
+                : 'Looking up your phone...',
             style: const TextStyle(fontSize: 16, color: Colors.white),
           ),
           const SizedBox(height: 24),
@@ -616,22 +629,25 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
       case DvwStep.autoScanning:
         final slotLabel   = 'slot ${_slot ?? '?'}';
         final instruction = widget.isDeposit
-            ? 'Hold the QR code under the top camera,\nthen carry the phone to $slotLabel.'
-            : 'Remove your phone from $slotLabel,\nthen hold its QR code under the camera.';
+            ? 'Hold the QR code under the top camera,\n'
+              'then carry the phone to $slotLabel.'
+            : 'Remove your phone from $slotLabel,\n'
+              'then hold its QR code under the camera.';
         return [
           const SizedBox(width: 36, height: 36,
               child: CircularProgressIndicator(strokeWidth: 3)),
           const SizedBox(height: 16),
           Icon(
             widget.isDeposit ? Icons.login_outlined : Icons.logout_outlined,
-            size: 40,
+            size:  40,
             color: widget.isDeposit ? Colors.blue : Colors.green,
           ),
           const SizedBox(height: 10),
           Text(instruction,
               textAlign: TextAlign.center,
               style: const TextStyle(
-                  fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                  fontSize: 16, fontWeight: FontWeight.bold,
+                  color: Colors.white)),
           const SizedBox(height: 8),
           Text('Scanning for QR code... (up to 15 s)',
               style: TextStyle(fontSize: 13, color: Colors.grey[500])),
@@ -645,9 +661,7 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
             'Move to slot ${_slot ?? '?'} — keep QR visible until placed',
             textAlign: TextAlign.center,
             style: const TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w600,
-                color: Colors.white),
+                fontSize: 15, fontWeight: FontWeight.w600, color: Colors.white),
           ),
           const SizedBox(height: 12),
           _cancelBtn(),
@@ -661,14 +675,12 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
           Text('Phone ${widget.pid} $verb successfully!',
               textAlign: TextAlign.center,
               style: const TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white)),
+                  fontSize: 17, fontWeight: FontWeight.bold, color: Colors.white)),
           const SizedBox(height: 20),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.green,
-              minimumSize: const Size(double.infinity, 48),
+              minimumSize:     const Size(double.infinity, 48),
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12)),
             ),
@@ -679,12 +691,14 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
             child: Text(
               'Continue  ($_successCountdown)',
               style: const TextStyle(
-                  fontSize: 15, fontWeight: FontWeight.w600, color: Colors.white),
+                  fontSize: 15, fontWeight: FontWeight.w600,
+                  color: Colors.white),
             ),
           ),
           const SizedBox(height: 6),
           Text(
-            'Closing automatically in $_successCountdown second${_successCountdown == 1 ? '' : 's'}',
+            'Closing automatically in $_successCountdown '
+            'second${_successCountdown == 1 ? '' : 's'}',
             style: const TextStyle(color: Colors.white38, fontSize: 12),
           ),
         ];
@@ -713,7 +727,7 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
 // ── Small camera badge ────────────────────────────────────
 
 class _CamBadge extends StatelessWidget {
-  final String label;
+  final String   label;
   final IconData icon;
   const _CamBadge({required this.label, required this.icon});
 
@@ -721,9 +735,9 @@ class _CamBadge extends StatelessWidget {
   Widget build(BuildContext context) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.55),
+          color:        Colors.black.withOpacity(0.55),
           borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: Colors.white.withOpacity(0.1)),
+          border:       Border.all(color: Colors.white.withOpacity(0.1)),
         ),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
           Icon(icon, color: Colors.white38, size: 12),
@@ -749,11 +763,11 @@ class _QrStatusOverlayBadge extends StatelessWidget {
     final label = qrVisible ? 'QR OK' : 'QR NOT VISIBLE';
     return AnimatedContainer(
       duration: const Duration(milliseconds: 300),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      padding:  const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.65),
+        color:        Colors.black.withOpacity(0.65),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withOpacity(0.5)),
+        border:       Border.all(color: color.withOpacity(0.5)),
       ),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
         Icon(icon, color: color, size: 14),
