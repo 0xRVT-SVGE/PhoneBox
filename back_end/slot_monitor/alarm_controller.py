@@ -12,6 +12,20 @@ logger = logging.getLogger(__name__)
 
 _CLIP_DEBOUNCE_S = _AC.CLIP_DEBOUNCE_S
 
+# Opt #34: FCM push — lazy import so the server starts fine even
+# if firebase-admin is not installed.
+_fcm_push = None
+
+def _get_fcm():
+    global _fcm_push
+    if _fcm_push is None:
+        try:
+            import back_end.server.fcm_push as _mod
+            _fcm_push = _mod
+        except Exception:
+            pass
+    return _fcm_push
+
 
 class AlarmController:
     """
@@ -25,6 +39,9 @@ class AlarmController:
         resolve()    → removes one mismatch; stops sound if set empties
         clear()      → admin override — clears all mismatches + stops sound
 
+    Opt #34: trigger() sends an FCM push on first alarm activation.
+             _clear_active_alarm() sends an FCM "all clear" push.
+
     Note on false positives during DVW operations:
         The worker layer (worker_async.py) suppresses trigger() calls while
         any DVW or admin session is active, so this class never needs to
@@ -35,9 +52,6 @@ class AlarmController:
         blocking monitor workers on network I/O.  A simple per-(pid,lid)
         timestamp debounce prevents the background encoder from being
         flooded when a slot re-triggers rapidly.
-
-    Clip saving:
-        Rolling-buffer clips are submitted to BackgroundEncoder (non-blocking).
     """
 
     def __init__(self):
@@ -48,9 +62,6 @@ class AlarmController:
         self._silenced         = False
         self.socketio          = None
 
-        # Debounce: track last clip-save time per (pid, lid) to avoid flooding
-        # the background encoder when a slot triggers multiple times in quick
-        # succession (e.g. during noisy lighting conditions).
         self._last_clip_time: dict[tuple[str, int], float] = {}
 
     def set_socketio(self, socketio):
@@ -79,9 +90,12 @@ class AlarmController:
         """
         Register a new mismatch and (if needed) activate the alarm.
 
+        Opt #34: sends an FCM push to admin devices on the FIRST trigger
+        that activates the alarm (first_trigger=True path only), so
+        admins get one push per alarm activation, not one per slot.
+
         All socketio emits happen OUTSIDE the lock so that the alarm lock
-        never blocks while waiting on network I/O.  This prevents monitor
-        workers from stalling each other during a burst of alarm triggers.
+        never blocks while waiting on network I/O.
         """
         pid = str(pid)
 
@@ -112,22 +126,27 @@ class AlarmController:
                     "mismatch_count": len(snapshot),
                     "mismatches":     mismatch_list,
                 })
-            # Always emit updated state so clients stay in sync
             sio.emit("alarm_updated", {
                 "mismatch_count": len(snapshot),
                 "mismatches":     mismatch_list,
             })
 
+        # Opt #34: FCM push on first activation only
+        if first_trigger and snapshot:
+            try:
+                fcm = _get_fcm()
+                if fcm is not None:
+                    fcm.send_alarm_push(
+                        mismatch_count = len(snapshot),
+                        mismatches     = snapshot,
+                    )
+            except Exception as exc:
+                logger.warning(f"[FCM] push failed (non-fatal): {exc}")
+
         self._save_alarm_clips(pid, lid)
 
     def _save_alarm_clips(self, pid: str, lid: int):
-        """
-        Submit rolling-buffer snapshots to BackgroundEncoder (non-blocking).
-
-        Debounced per (pid, lid): if a clip was already queued for this
-        slot within CLIP_DEBOUNCE_S seconds, skip to avoid flooding the
-        encoder queue during rapid repeated triggers.
-        """
+        """Submit rolling-buffer snapshots to BackgroundEncoder (debounced)."""
         key = (pid, lid)
         now = time.time()
         if now - self._last_clip_time.get(key, 0.0) < _CLIP_DEBOUNCE_S:
@@ -145,7 +164,7 @@ class AlarmController:
             logger.warning(f"[Alarm] Failed to queue alarm clips: {e}")
 
     def resolve(self, pid: str, lid: int):
-        sio = None
+        sio     = None
         cleared = False
 
         with self._lock:
@@ -156,12 +175,11 @@ class AlarmController:
                 cleared = True
             sio = self.socketio
 
-        # Emit after releasing lock
         if cleared and sio is not None:
             sio.emit("alarm_cleared", {})
 
     def stop_if_clear(self):
-        sio = None
+        sio     = None
         cleared = False
         with self._lock:
             if self.active and not self.mismatches:
@@ -172,7 +190,7 @@ class AlarmController:
             sio.emit("alarm_cleared", {})
 
     def clear(self):
-        sio = None
+        sio     = None
         cleared = False
         with self._lock:
             count = len(self.mismatches)
@@ -186,7 +204,13 @@ class AlarmController:
             sio.emit("alarm_cleared", {})
 
     def _clear_active_alarm(self):
-        """Must be called with self._lock held. Does NOT emit — caller handles that."""
+        """
+        Must be called with self._lock held. Does NOT emit — caller handles that.
+
+        Opt #34: sends FCM 'all clear' push here (outside hot lock path is
+        preferred, but this is a rare event so the brief lock hold is fine;
+        the FCM call itself is fire-and-forget via a daemon thread).
+        """
         if not self._silenced:
             self._stop_alarm_sound()
         duration               = time.time() - self._alarm_start_time if self._alarm_start_time else 0
@@ -194,7 +218,14 @@ class AlarmController:
         self._silenced         = False
         self._alarm_start_time = None
         logger.info(f"ALARM CLEARED after {duration:.1f}s")
-        # NOTE: socketio.emit("alarm_cleared") is done by the CALLER outside the lock.
+
+        # Opt #34: FCM all-clear push (daemon thread — non-blocking)
+        try:
+            fcm = _get_fcm()
+            if fcm is not None:
+                fcm.send_alarm_cleared_push()
+        except Exception as exc:
+            logger.warning(f"[FCM] cleared push failed (non-fatal): {exc}")
 
     # ── Admin auth ────────────────────────────────────────
 

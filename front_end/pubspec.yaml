@@ -37,6 +37,10 @@ dependencies:
   # Opt #31: shimmer — skeleton loaders (perceived latency improvement)
   shimmer: ^3.0.0
 
+  # Opt #34: FCM push alarms
+  firebase_core:      ^3.0.0
+  firebase_messaging: ^15.0.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
