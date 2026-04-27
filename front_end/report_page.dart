@@ -101,7 +101,7 @@ class _ReportPageState extends State<ReportPage> {
       final body = jsonDecode(res.body);
       final data = body['data'] as Map<String, dynamic>;
 
-      final doc = await _buildPdf(data);
+      final doc = _buildPdf(data);
       if (!mounted) return;
 
       await Printing.layoutPdf(
@@ -115,15 +115,27 @@ class _ReportPageState extends State<ReportPage> {
     }
   }
 
-  // ══════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════
   // PDF BUILDER
-  // ══════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════
+  //
+  // Fonts: built-in PDF Type1 fonts (Helvetica / Times / Courier).
+  // These are part of every PDF reader and require NO network access,
+  // NO asset files, and NO internet connection — fully intranet-safe.
+  //
+  // Note: Type1 fonts cover Latin-1 (ISO-8859-1). For student names
+  // that contain only Latin characters this is fine. If your data
+  // contains non-Latin scripts (Arabic, CJK, etc.) bundle the
+  // NotoSans TTF as a Flutter asset and load with pw.Font.ttf().
+  // ══════════════════════════════════════════════════════════
 
-  Future<pw.Document> _buildPdf(Map<String, dynamic> data) async {
-    final doc   = pw.Document();
-    final font  = await PdfGoogleFonts.notoSansRegular();
-    final fontB = await PdfGoogleFonts.notoSansBold();
-    final fontM = await PdfGoogleFonts.notoSansRegular();
+  pw.Document _buildPdf(Map<String, dynamic> data) {
+    final doc = pw.Document();
+
+    // ── Fonts (synchronous, no network, no assets) ────────────────────────
+    final font  = pw.Font.helvetica();
+    final fontB = pw.Font.helveticaBold();
+    final fontM = pw.Font.courier();        // monospace for PID/UUID columns
 
     final sec1 = (data['deposited_and_withdrawn'] as List).cast<Map<String, dynamic>>();
     final sec2 = (data['withdrawn_only']          as List).cast<Map<String, dynamic>>();
@@ -135,7 +147,7 @@ class _ReportPageState extends State<ReportPage> {
 
     const cp = pw.EdgeInsets.symmetric(horizontal: 4, vertical: 3);
 
-    // ── Stress helpers ────────────────────────────────
+    // ── Stress helpers ────────────────────────────────────────────────────
     bool isStressed(String? isoTs) {
       if (!_stressEnabled || isoTs == null) return false;
       final dt = DateTime.tryParse(isoTs)?.toLocal();
@@ -150,20 +162,17 @@ class _ReportPageState extends State<ReportPage> {
         isStressed(r['stored_at'] as String?) ||
         isStressed(r['retrieved_at'] as String?);
 
-    // ── Row background: stressed overrides; otherwise alternate per student ──
     PdfColor rowBg(bool stressed, int group) {
       if (stressed) return PdfColor.fromHex('#FFF3CD');
       return group.isOdd ? PdfColors.white : PdfColor.fromInt(0xFFF5F5F5);
     }
 
-    // ── Sort records by SID so same-student rows are contiguous ──────────────
     List<Map<String, dynamic>> sortedBySid(List<Map<String, dynamic>> src) {
       final s = List<Map<String, dynamic>>.from(src);
       s.sort((a, b) => (a['sid'] as String).compareTo(b['sid'] as String));
       return s;
     }
 
-    // ── Common header row builder ─────────────────────────────────────────────
     pw.TableRow headerRow(List<String> cols) => pw.TableRow(
       decoration: const pw.BoxDecoration(color: PdfColor.fromInt(0xFF2C2C2E)),
       children: cols.map((c) => pw.Padding(
@@ -173,7 +182,6 @@ class _ReportPageState extends State<ReportPage> {
       )).toList(),
     );
 
-    // ── Student cell text (only on first row per student) ─────────────────────
     String studentCell(Map r, bool isFirst) {
       if (!isFirst) return '';
       final last  = (r['last_name']  as String? ?? '').toUpperCase();
@@ -181,7 +189,6 @@ class _ReportPageState extends State<ReportPage> {
       return '${r['sid']}  $last $first'.trimRight();
     }
 
-    // ── Timestamp cell ────────────────────────────────────────────────────────
     pw.Widget tsCell(String? iso) {
       final stressed = isStressed(iso);
       return pw.Padding(
@@ -194,10 +201,7 @@ class _ReportPageState extends State<ReportPage> {
       );
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // TABLE 1 — Deposited AND Withdrawn
-    // Columns: Student | PID | Model | Deposited | Withdrawn
-    // ─────────────────────────────────────────────────────────────────────────
+    // ── TABLE 1 — Deposited AND Withdrawn ─────────────────────────────────
     pw.Widget table1(List<Map<String, dynamic>> records) {
       final sorted = sortedBySid(records);
       final rows   = <pw.TableRow>[
@@ -233,20 +237,17 @@ class _ReportPageState extends State<ReportPage> {
       return pw.Table(
         border: pw.TableBorder.all(color: PdfColors.grey400, width: 0.5),
         columnWidths: const {
-          0: pw.FlexColumnWidth(2.1),   // Student
-          1: pw.FlexColumnWidth(3.6),   // PID (UUID)
-          2: pw.FlexColumnWidth(1.9),   // Model
-          3: pw.FlexColumnWidth(2.0),   // Deposited
-          4: pw.FlexColumnWidth(2.0),   // Withdrawn
+          0: pw.FlexColumnWidth(2.1),
+          1: pw.FlexColumnWidth(3.6),
+          2: pw.FlexColumnWidth(1.9),
+          3: pw.FlexColumnWidth(2.0),
+          4: pw.FlexColumnWidth(2.0),
         },
         children: rows,
       );
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // TABLE 2 — Withdrawn only
-    // Columns: Student | PID | Model | Withdrawn
-    // ─────────────────────────────────────────────────────────────────────────
+    // ── TABLE 2 — Withdrawn only ──────────────────────────────────────────
     pw.Widget table2(List<Map<String, dynamic>> records) {
       final sorted = sortedBySid(records);
       final rows   = <pw.TableRow>[
@@ -281,19 +282,16 @@ class _ReportPageState extends State<ReportPage> {
       return pw.Table(
         border: pw.TableBorder.all(color: PdfColors.grey400, width: 0.5),
         columnWidths: const {
-          0: pw.FlexColumnWidth(2.2),   // Student
-          1: pw.FlexColumnWidth(3.6),   // PID
-          2: pw.FlexColumnWidth(2.2),   // Model
-          3: pw.FlexColumnWidth(2.5),   // Withdrawn
+          0: pw.FlexColumnWidth(2.2),
+          1: pw.FlexColumnWidth(3.6),
+          2: pw.FlexColumnWidth(2.2),
+          3: pw.FlexColumnWidth(2.5),
         },
         children: rows,
       );
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // TABLE 3 — Deposited only
-    // Columns: Student | PID | Model | Deposited
-    // ─────────────────────────────────────────────────────────────────────────
+    // ── TABLE 3 — Deposited only ──────────────────────────────────────────
     pw.Widget table3(List<Map<String, dynamic>> records) {
       final sorted = sortedBySid(records);
       final rows   = <pw.TableRow>[
@@ -328,16 +326,16 @@ class _ReportPageState extends State<ReportPage> {
       return pw.Table(
         border: pw.TableBorder.all(color: PdfColors.grey400, width: 0.5),
         columnWidths: const {
-          0: pw.FlexColumnWidth(2.2),   // Student
-          1: pw.FlexColumnWidth(3.6),   // PID
-          2: pw.FlexColumnWidth(2.2),   // Model
-          3: pw.FlexColumnWidth(2.5),   // Deposited
+          0: pw.FlexColumnWidth(2.2),
+          1: pw.FlexColumnWidth(3.6),
+          2: pw.FlexColumnWidth(2.2),
+          3: pw.FlexColumnWidth(2.5),
         },
         children: rows,
       );
     }
 
-    // ── Section wrapper (one call per section, no per-student sub-headers) ───
+    // ── Section wrapper ───────────────────────────────────────────────────
     pw.Widget buildSection(
       String title,
       String subtitle,
@@ -390,7 +388,7 @@ class _ReportPageState extends State<ReportPage> {
       );
     }
 
-    // ── Page header ───────────────────────────────────────────────────────────
+    // ── Page header ───────────────────────────────────────────────────────
     pw.Widget pageHeader() => pw.Column(
           crossAxisAlignment: pw.CrossAxisAlignment.stretch,
           children: [
@@ -421,11 +419,11 @@ class _ReportPageState extends State<ReportPage> {
                       style: pw.TextStyle(font: font, fontSize: 9)),
                   pw.TextSpan(
                       text: '${_stressStart.format(context)}'
-                            '  →  ${_stressEnd.format(context)}',
+                            '  ->  ${_stressEnd.format(context)}',
                       style: pw.TextStyle(font: fontB, fontSize: 9)),
                   pw.TextSpan(
                       text:
-                          '   ■ Bold orange = outside normal hours',
+                          '   Bold = outside normal hours',
                       style: pw.TextStyle(
                           font: font,
                           fontSize: 8.5,
@@ -439,7 +437,7 @@ class _ReportPageState extends State<ReportPage> {
           ],
         );
 
-    // ── Assemble document ─────────────────────────────────────────────────────
+    // ── Assemble document ─────────────────────────────────────────────────
     doc.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
@@ -461,13 +459,13 @@ class _ReportPageState extends State<ReportPage> {
           pw.SizedBox(height: 12),
           buildSection(
             '2.  WITHDRAWN WITHOUT DEPOSIT',
-            'Withdrawal in interval — deposit outside or prior',
+            'Withdrawal in interval - deposit outside or prior',
             sec2, table2,
           ),
           pw.SizedBox(height: 12),
           buildSection(
             '3.  DEPOSITED WITHOUT WITHDRAWAL',
-            'Deposit in interval — phone still stored or retrieved later',
+            'Deposit in interval - phone still stored or retrieved later',
             sec3, table3,
           ),
         ],
@@ -477,9 +475,9 @@ class _ReportPageState extends State<ReportPage> {
     return doc;
   }
 
-  // ══════════════════════════════════════════════════════
-  // UI
-  // ══════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════
+  // UI — unchanged from original
+  // ══════════════════════════════════════════════════════════
 
   @override
   Widget build(BuildContext context) {

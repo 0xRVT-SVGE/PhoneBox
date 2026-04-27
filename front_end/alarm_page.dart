@@ -5,6 +5,8 @@ import 'socket_service.dart';
 import 'api_service.dart';
 import 'admin_resolution_page.dart';
 
+import 'webrtc_config.dart';
+
 class AlarmPage extends StatefulWidget {
   final List<dynamic> initialMismatches;
   final RTCVideoRenderer mainRenderer;
@@ -110,11 +112,7 @@ class _AlarmPageState extends State<AlarmPage>
     if (_disposed) return;
     try {
       await ApiService.cancelAdmin();
-      _adminPc = await createPeerConnection({
-        'iceServers': [
-          {'urls': 'stun:stun.l.google.com:19302'}
-        ],
-      });
+      _adminPc = await createPeerConnection(WebRTCConfig.iceConfig);
       _adminPc!.onTrack = (event) {
         if (_disposed || !mounted) return;
         if (event.streams.isNotEmpty) {
@@ -138,8 +136,7 @@ class _AlarmPageState extends State<AlarmPage>
           }
         }
       };
-      final offer = await _adminPc!.createOffer(
-          {'offerToReceiveVideo': true, 'offerToReceiveAudio': false});
+      final offer = await _adminPc!.createOffer(WebRTCConfig.videoOfferConstraints);
       await _adminPc!.setLocalDescription(offer);
       final sdp = await ApiService.sendOffer(offer.sdp!, mode: 'admin',
           maxRetries: 1);

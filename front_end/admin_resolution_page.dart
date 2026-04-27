@@ -5,6 +5,8 @@ import 'socket_service.dart';
 import 'api_service.dart';
 import 'scan_success_page.dart';
 
+import 'webrtc_config.dart';
+
 enum _Step {
   opening,
   selectingPhone,
@@ -638,9 +640,7 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
     if (_disposed) return;
     try {
       await ApiService.cancelAdmin();
-      _pc = await createPeerConnection({
-        'iceServers': [{'urls': 'stun:stun.l.google.com:19302'}],
-      });
+      _pc = await createPeerConnection(WebRTCConfig.iceConfig);
       _pc!.onTrack = (event) {
         if (_disposed || !mounted) return;
         if (event.streams.isNotEmpty) {
@@ -651,8 +651,7 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
         }
       };
       _pc!.onConnectionState = _handleConnectionState;
-      final offer = await _pc!.createOffer(
-          {'offerToReceiveVideo': true, 'offerToReceiveAudio': false});
+      final offer = await _pc!.createOffer(WebRTCConfig.videoOfferConstraints);
       await _pc!.setLocalDescription(offer);
       final sdp = await ApiService.sendOffer(offer.sdp!, mode: 'admin');
       if (sdp != null && !_disposed) {

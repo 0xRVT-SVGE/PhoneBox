@@ -8,6 +8,8 @@ import 'api_service.dart';
 import 'scan_success_page.dart';
 import 'alarm_page.dart';
 
+import 'webrtc_config.dart';
+
 class ScanPage extends StatefulWidget {
   const ScanPage({super.key});
 
@@ -119,11 +121,7 @@ class _ScanPageState extends State<ScanPage> {
     if (viewDisposed) return;
     try {
       await ApiService.cancelMain();
-      _peerConnection = await createPeerConnection({
-        'iceServers': [
-          {'urls': 'stun:stun.l.google.com:19302'}
-        ],
-      });
+      _peerConnection = await createPeerConnection(WebRTCConfig.iceConfig);
 
       _peerConnection!.onTrack = (event) {
         if (viewDisposed || !mounted) return;
@@ -160,10 +158,7 @@ class _ScanPageState extends State<ScanPage> {
         }
       };
 
-      final offer = await _peerConnection!.createOffer({
-        'offerToReceiveVideo': true,
-        'offerToReceiveAudio': false,
-      });
+      final offer = await _peerConnection!.createOffer(WebRTCConfig.videoOfferConstraints);
       await _peerConnection!.setLocalDescription(offer);
 
       final answerSDP = await ApiService.sendOffer(offer.sdp!);

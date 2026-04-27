@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'api_service.dart';
 import 'socket_service.dart';
+import 'webrtc_config.dart';
+
 import 'shimmer_widgets.dart'; // Opt #31
 
 // ══════════════════════════════════════════════════════════
@@ -57,9 +59,7 @@ class _AdminMenuPageState extends State<AdminMenuPage> {
     _topConnecting = true;
     try {
       await ApiService.cancelAdmin();
-      _topPc = await createPeerConnection({
-        'iceServers': [{'urls': 'stun:stun.l.google.com:19302'}],
-      });
+      _topPc = await createPeerConnection(WebRTCConfig.iceConfig);
       _topPc!.onTrack = (event) {
         if (_topPageDisposed || !mounted) return;
         if (event.streams.isNotEmpty) {
@@ -82,8 +82,7 @@ class _AdminMenuPageState extends State<AdminMenuPage> {
           }
         }
       };
-      final offer = await _topPc!.createOffer(
-          {'offerToReceiveVideo': true, 'offerToReceiveAudio': false});
+      final offer = await _topPc!.createOffer(WebRTCConfig.videoOfferConstraints);
       await _topPc!.setLocalDescription(offer);
       final sdp = await ApiService.sendOffer(offer.sdp!, mode: 'admin',
           maxRetries: 2);
