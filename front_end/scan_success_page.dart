@@ -344,9 +344,7 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
     _topConnecting = true;
     try {
       await ApiService.cancelAdmin();
-      _topPc = await createPeerConnection({
-        'iceServers': [{'urls': 'stun:stun.l.google.com:19302'}],
-      });
+      _topPc = await createPeerConnection(WebRTCConfig.iceConfig);
       _topPc!.onTrack = (event) {
         if (_disposed || !mounted) return;
         if (event.streams.isNotEmpty) {

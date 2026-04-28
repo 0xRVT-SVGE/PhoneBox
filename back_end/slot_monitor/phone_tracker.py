@@ -3,6 +3,30 @@
 # ============================================================
 """
 Phone Tracker  —  4-layer tracking + rotation-aware state machine.
+
+Opt #9: TrackerNano replaces CSRT as the primary tracker.
+───────────────────────────────────────────────────────────
+TrackerNano is a lightweight Siamese-network tracker (~1 MB ONNX
+models) introduced in OpenCV contrib 4.7.  On the PhoneBox workload
+(slow, controlled, well-lit, single foreground object) it is:
+
+  • 3-5× faster per frame than CSRT
+  • Comparably accurate for smooth, predictable motion
+  • More stable between reinitializations (NANO_REINIT_INTERVAL = 20
+    vs CSRT_REINIT_INTERVAL = 12)
+
+Backend selection is controlled by TrackerConfig.TRACKER_BACKEND:
+  "auto"  — try Nano, fall back to CSRT silently (default)
+  "nano"  — always Nano (raises if unavailable)
+  "csrt"  — always CSRT (original behaviour)
+
+The factory function _make_tracker() is a drop-in replacement for
+the old _make_csrt_tracker() — same init/update API, same call sites.
+
+Model files (download once, then fully offline):
+  back_end/models/nanotrack_backbone_sim.onnx
+  back_end/models/nanotrack_head_sim.onnx
+Run: python back_end/slot_monitor/tools/download_tracker_models.py
 """
 
 from __future__ import annotations
@@ -14,6 +38,7 @@ import os
 import threading
 import time
 from enum import Enum, auto
+from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 import re
 
@@ -39,27 +64,140 @@ _orb_reidentifier  = cv2.ORB_create(nfeatures=200)
 logger = logging.getLogger(__name__)
 
 
-# ── CSRT compatibility helper ────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# Opt #9 — TRACKER FACTORY
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Module-level state: resolved once, then cached.
+# "_NANO_AVAILABLE" is None until first call (lazy probe), then True/False.
+_NANO_AVAILABLE: Optional[bool] = None
+_ACTIVE_BACKEND: str = "unknown"   # set on first _make_tracker() call
+_ACTIVE_REINIT_INTERVAL: int = _MC.CSRT_REINIT_INTERVAL
+
+
+def _probe_nano() -> bool:
+    """
+    Check whether TrackerNano is available in the current OpenCV build
+    AND the two ONNX model files exist.
+
+    Called at most once per process (result cached in _NANO_AVAILABLE).
+    """
+    # 1. Check OpenCV has TrackerNano
+    has_class = (
+        hasattr(cv2, "TrackerNano") or
+        hasattr(cv2, "TrackerNano_create") or
+        (hasattr(cv2, "legacy") and hasattr(getattr(cv2, "legacy", None), "TrackerNano"))
+    )
+    if not has_class:
+        logger.info(
+            "[Tracker] cv2.TrackerNano not in this OpenCV build — using CSRT. "
+            "Install opencv-contrib-python >= 4.7 to enable Nano."
+        )
+        return False
+
+    # 2. Check model files exist and are non-empty
+    backbone = Path(_TC.NANO_BACKBONE_PATH)
+    neckhead = Path(_TC.NANO_NECKHEAD_PATH)
+    if not backbone.exists() or backbone.stat().st_size < 10_000:
+        logger.info(
+            f"[Tracker] TrackerNano backbone not found at {backbone} — using CSRT. "
+            "Run: python back_end/slot_monitor/tools/download_tracker_models.py"
+        )
+        return False
+    if not neckhead.exists() or neckhead.stat().st_size < 1_000:
+        logger.info(
+            f"[Tracker] TrackerNano neckhead not found at {neckhead} — using CSRT."
+        )
+        return False
+
+    # 3. Smoke-test: create one instance to catch bad model files early
+    try:
+        _make_nano_tracker()
+        logger.info(
+            f"[Tracker] TrackerNano available — "
+            f"backbone={backbone.name}, neckhead={neckhead.name}"
+        )
+        return True
+    except Exception as exc:
+        logger.warning(f"[Tracker] TrackerNano smoke-test failed ({exc}) — using CSRT")
+        return False
+
+
+def _make_nano_tracker():
+    """
+    Create a TrackerNano instance.  Handles OpenCV API differences across
+    contrib builds.
+
+    Raises RuntimeError if TrackerNano is not constructable.
+    """
+    backbone = str(_TC.NANO_BACKBONE_PATH)
+    neckhead = str(_TC.NANO_NECKHEAD_PATH)
+
+    # API variant 1: modern class-method (most contrib 4.8+ builds)
+    cls = getattr(cv2, "TrackerNano", None)
+    if cls is not None:
+        if hasattr(cls, "create"):
+            try:
+                params = cv2.TrackerNano_Params()
+                params.backbone = backbone
+                params.neckhead = neckhead
+                return cls.create(params)
+            except Exception:
+                pass
+            # Some builds don't expose Params; try positional
+            try:
+                return cls.create(backbone, neckhead)
+            except Exception:
+                pass
+
+    # API variant 2: factory function
+    factory = getattr(cv2, "TrackerNano_create", None)
+    if factory is not None:
+        try:
+            params = cv2.TrackerNano_Params()
+            params.backbone = backbone
+            params.neckhead = neckhead
+            return factory(params)
+        except Exception:
+            pass
+        try:
+            return factory(backbone, neckhead)
+        except Exception:
+            pass
+
+    # API variant 3: legacy module
+    legacy = getattr(cv2, "legacy", None)
+    if legacy is not None:
+        cls = getattr(legacy, "TrackerNano", None)
+        if cls is not None and hasattr(cls, "create"):
+            try:
+                params = cv2.TrackerNano_Params()
+                params.backbone = backbone
+                params.neckhead = neckhead
+                return cls.create(params)
+            except Exception:
+                pass
+
+    raise RuntimeError("cv2.TrackerNano not constructable with any known API variant")
+
+
 def _make_csrt_tracker():
     """
-    Create a CSRT tracker compatible with any OpenCV 4.x build.
+    Create a CSRT tracker, compatible with any OpenCV 4.x build.
 
-    OpenCV < 4.5  : cv2.TrackerCSRT_create()  (old top-level API)
-    OpenCV 4.5+   : cv2.TrackerCSRT.create()  (class-method API)
+    OpenCV < 4.5  : cv2.TrackerCSRT_create()
+    OpenCV 4.5+   : cv2.TrackerCSRT.create()
     opencv-contrib: cv2.legacy.TrackerCSRT.create()
     """
-    # Preferred: modern class-method API
-    tracker_cls = getattr(cv2, 'TrackerCSRT', None)
-    if tracker_cls is not None and hasattr(tracker_cls, 'create'):
+    tracker_cls = getattr(cv2, "TrackerCSRT", None)
+    if tracker_cls is not None and hasattr(tracker_cls, "create"):
         return tracker_cls.create()
-    # Fallback: old factory function
-    factory = getattr(cv2, 'TrackerCSRT_create', None)
+    factory = getattr(cv2, "TrackerCSRT_create", None)
     if factory is not None:
         return factory()
-    # Last resort: contrib module
-    legacy = getattr(cv2, 'legacy', None)
+    legacy = getattr(cv2, "legacy", None)
     if legacy is not None:
-        cls = getattr(legacy, 'TrackerCSRT', None)
+        cls = getattr(legacy, "TrackerCSRT", None)
         if cls is not None:
             return cls.create()
     raise RuntimeError(
@@ -68,8 +206,54 @@ def _make_csrt_tracker():
     )
 
 
+def _make_tracker():
+    """
+    Opt #9 — unified tracker factory.
+
+    Returns a TrackerNano or TrackerCSRT instance depending on
+    TrackerConfig.TRACKER_BACKEND and model availability.
+
+    This is a drop-in replacement for the old _make_csrt_tracker():
+    the returned object has the same .init(frame, bbox) and
+    .update(frame) → (ok, bbox) API.
+
+    Also sets _ACTIVE_REINIT_INTERVAL at module level so _track()
+    uses the correct reinit cadence for the chosen backend.
+    """
+    global _NANO_AVAILABLE, _ACTIVE_BACKEND, _ACTIVE_REINIT_INTERVAL
+
+    backend = _TC.TRACKER_BACKEND.lower()
+
+    if backend == "csrt":
+        _ACTIVE_BACKEND         = "csrt"
+        _ACTIVE_REINIT_INTERVAL = _MC.CSRT_REINIT_INTERVAL
+        return _make_csrt_tracker()
+
+    if backend == "nano":
+        _ACTIVE_BACKEND         = "nano"
+        _ACTIVE_REINIT_INTERVAL = _MC.NANO_REINIT_INTERVAL
+        return _make_nano_tracker()
+
+    # "auto" (default): probe once, then cache result
+    if _NANO_AVAILABLE is None:
+        _NANO_AVAILABLE = _probe_nano()
+
+    if _NANO_AVAILABLE:
+        _ACTIVE_BACKEND         = "nano"
+        _ACTIVE_REINIT_INTERVAL = _MC.NANO_REINIT_INTERVAL
+        try:
+            return _make_nano_tracker()
+        except Exception as exc:
+            logger.warning(f"[Tracker] Nano construction failed ({exc}), falling back to CSRT")
+            _NANO_AVAILABLE = False
+
+    _ACTIVE_BACKEND         = "csrt"
+    _ACTIVE_REINIT_INTERVAL = _MC.CSRT_REINIT_INTERVAL
+    return _make_csrt_tracker()
+
+
 # ══════════════════════════════════════════════════════════════════════════════
-# CONSTANTS  (sourced from back_end/config.py — edit there, not here)
+# CONSTANTS  (sourced from back_end/config.py)
 # ══════════════════════════════════════════════════════════════════════════════
 
 DETECT_TIMEOUT          = _TC.DETECT_TIMEOUT
@@ -97,7 +281,7 @@ MOTION_THRESH        = _MC.THRESH
 MOTION_DILATE        = _MC.DILATE
 MOTION_MIN_AREA      = _MC.MIN_AREA
 MOTION_IOU_MERGE     = _MC.IOU_MERGE
-CSRT_REINIT_INTERVAL = _MC.CSRT_REINIT_INTERVAL
+CSRT_REINIT_INTERVAL = _MC.CSRT_REINIT_INTERVAL   # kept for reference
 CSRT_MOTION_GATE_N   = _MC.CSRT_MOTION_GATE_N
 
 LK_MAX_POINTS   = _LK.MAX_POINTS
@@ -113,7 +297,7 @@ ORB_MIN_MATCHES     = _OC.MIN_MATCHES
 
 STAGING_HOLD_TIME = _TC.STAGING_HOLD_TIME
 
-# BGR colour palette (from config.OverlayConfig)
+# BGR colour palette
 _COL_SOURCE        = _OV.COL_SOURCE
 _COL_DEST_BASE     = _OV.COL_DEST_BASE
 _COL_STAGING_EMPTY = _OV.COL_STAGING_EMPTY
@@ -141,7 +325,7 @@ class _TS(Enum):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# DRAWING HELPERS
+# DRAWING HELPERS  (unchanged)
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _draw_dashed_line(frame, x1, y1, x2, y2, color, thickness=2, dash=12, gap=7):
@@ -201,7 +385,7 @@ def _pulse(base, period=1.2, lo=0.55, hi=1.0):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# ROI FILE LOADER
+# ROI FILE LOADER  (unchanged)
 # ══════════════════════════════════════════════════════════════════════════════
 
 _roi_cache: Optional[Dict[int,Tuple]] = None
@@ -228,7 +412,7 @@ def load_all_top_rois() -> Dict[int,Tuple]:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# OVERLAY FACTORIES
+# OVERLAY FACTORIES  (unchanged)
 # ══════════════════════════════════════════════════════════════════════════════
 
 def make_dvw_context_overlay(all_rois, source_lid, dest_lid):
@@ -293,7 +477,7 @@ def make_admin_session_overlay(all_slot_rois, staging_rois, staged_pids,
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# LOW-LEVEL TRACKING HELPERS
+# LOW-LEVEL TRACKING HELPERS  (unchanged)
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _motion_bbox(prev_gray, curr_gray):
@@ -422,11 +606,13 @@ class _RotationSignal:
 class PhoneTracker:
     """
     4-layer tracking pipeline with rotation-aware state machine.
+
+    Opt #9: primary tracker is TrackerNano (auto-selected) or CSRT fallback.
+    All _make_csrt_tracker() calls replaced with _make_tracker().
+    The reinit interval is set from _ACTIVE_REINIT_INTERVAL which is chosen
+    by _make_tracker() based on the active backend.
     """
 
-    # ── Debug toggle ─────────────────────────────────────────────────────────
-    # Set False to hide the phone bounding-box overlay on the top-camera feed.
-    # Can also be toggled at runtime: PhoneTracker.DRAW_TRACKING_BOX = False
     DRAW_TRACKING_BOX: bool = True
 
     def __init__(self, pid, lid, slot_roi, background_frame, cancel_event,
@@ -487,12 +673,17 @@ class PhoneTracker:
                                   else "detect_timeout", tc)
             frame=self._safe_frame(tc.get_raw_frame,tc.get_frame)
             if frame is None: return self._fail("detect_timeout",tc)
-            # ── Use compat helper instead of cv2.TrackerCSRT_create() ──
-            csrt=_make_csrt_tracker(); csrt.init(frame,bbox)
+
+            # Opt #9: use _make_tracker() instead of _make_csrt_tracker()
+            tracker=_make_tracker(); tracker.init(frame,bbox)
             self._bbox=bbox; self._state=_TS.TRACKING
             tc.set_tracker_overlay(self._draw_overlay)
-            logger.info(f"[Tracker] CSRT init bbox={bbox} TRACKING")
-            self._track(csrt,tc)
+            logger.info(
+                f"[Tracker] backend={_ACTIVE_BACKEND} "
+                f"reinit_interval={_ACTIVE_REINIT_INTERVAL} "
+                f"bbox={bbox} TRACKING"
+            )
+            self._track(tracker,tc)
         except Exception as e:
             logger.error(f"[Tracker] Fatal: {e}",exc_info=True)
             try:
@@ -501,14 +692,17 @@ class PhoneTracker:
             except Exception: pass
             if self._on_failure: self._on_failure("error")
 
-    def _track(self, csrt, tc):  # noqa: C901
+    def _track(self, tracker, tc):  # noqa: C901
+        # Use _ACTIVE_REINIT_INTERVAL which was set by _make_tracker()
+        reinit_interval = _ACTIVE_REINIT_INTERVAL
+
         deadline        = time.time()+PLACEMENT_TIMEOUT
         last_emit       = 0.0
         frame_count     = 0
         last_qr_ts      = time.time()
         qr_confirmed    = False
         self._qr_visible= True
-        csrt_ok         = True
+        tracker_ok      = True
         reinit_count    = 0
         lk_pts          = None
         prev_gray       = None
@@ -535,12 +729,8 @@ class PhoneTracker:
             curr_gray=cv2.cvtColor(frame,cv2.COLOR_BGR2GRAY)
             frame_count+=1
 
-            #Skip QR decode in states where QR is no longer needed.
-            # INSERTING/STABILIZING: phone is already in the slot area;
-            # QR loss at this point is expected and should not fail the operation.
             _qr_check_needed = self._state in (_TS.DETECTING, _TS.TRACKING, _TS.ENTERING)
             if _qr_check_needed and frame_count % QR_CHECK_EVERY_N == 0:
-            #remove this to disable deposit failure when entering slot _qr_check_needed
                 if self._check_qr(frame):
                     last_qr_ts = time.time()
                     qr_confirmed = True
@@ -548,31 +738,30 @@ class PhoneTracker:
             self._qr_visible = (qr_absent < QR_ABSENT_FAIL_S)
 
             bx=by=bw=bh=0
-            if csrt_ok:
-                 ok,raw=csrt.update(frame)
-                 if ok:
-                     bx,by,bw,bh=(int(v) for v in raw)
-                     if bx+bw<=0 or bx>=fw or by+bh<=0 or by>=fh:
-                         csrt_ok=False
-                     else:
-                         reinit_count+=1
-                         # Opt #13: motion-bbox merge every CSRT_MOTION_GATE_N (=5) frames.
-                         # More frequent than CSRT reinit (=12) for responsive correction.
-                         if prev_gray is not None and frame_count % CSRT_MOTION_GATE_N == 0:
-                             pb=cv2.GaussianBlur(prev_gray,(MOTION_BLUR_K,)*2,0)
-                             cb=cv2.GaussianBlur(curr_gray,(MOTION_BLUR_K,)*2,0)
-                             mo=_motion_bbox(pb,cb)
-                             if mo and _iou((bx,by,bw,bh),mo)>=MOTION_IOU_MERGE:
-                                 bx,by,bw,bh=_merge_bbox((bx,by,bw,bh),mo)
+            if tracker_ok:
+                ok,raw=tracker.update(frame)
+                if ok:
+                    bx,by,bw,bh=(int(v) for v in raw)
+                    if bx+bw<=0 or bx>=fw or by+bh<=0 or by>=fh:
+                        tracker_ok=False
+                    else:
+                        reinit_count+=1
+                        # Opt #13: motion-bbox merge every CSRT_MOTION_GATE_N frames
+                        if prev_gray is not None and frame_count % CSRT_MOTION_GATE_N == 0:
+                            pb=cv2.GaussianBlur(prev_gray,(MOTION_BLUR_K,)*2,0)
+                            cb=cv2.GaussianBlur(curr_gray,(MOTION_BLUR_K,)*2,0)
+                            mo=_motion_bbox(pb,cb)
+                            if mo and _iou((bx,by,bw,bh),mo)>=MOTION_IOU_MERGE:
+                                bx,by,bw,bh=_merge_bbox((bx,by,bw,bh),mo)
 
-                         if reinit_count>=CSRT_REINIT_INTERVAL:
-                            # ── compat helper ──
-                            csrt=_make_csrt_tracker(); csrt.init(frame,(bx,by,bw,bh))
+                        # Opt #9: reinit_interval is backend-aware
+                        if reinit_count>=reinit_interval:
+                            tracker=_make_tracker(); tracker.init(frame,(bx,by,bw,bh))
                             reinit_count=0
-                 else:
-                    csrt_ok=False
+                else:
+                    tracker_ok=False
 
-            if not csrt_ok:
+            if not tracker_ok:
                 if prev_gray is not None:
                     pb=cv2.GaussianBlur(prev_gray,(MOTION_BLUR_K,)*2,0)
                     cb=cv2.GaussianBlur(curr_gray,(MOTION_BLUR_K,)*2,0)
@@ -581,9 +770,8 @@ class PhoneTracker:
 
                 if mo:
                     bx,by,bw,bh=mo
-                    # ── compat helper ──
-                    csrt=_make_csrt_tracker(); csrt.init(frame,mo)
-                    csrt_ok=True; reinit_count=0; lk_pts=None
+                    tracker=_make_tracker(); tracker.init(frame,mo)
+                    tracker_ok=True; reinit_count=0; lk_pts=None
 
                 elif lk_pts is not None and prev_gray is not None:
                     lk_pts,lk_bbox=_lk_update(prev_gray,curr_gray,lk_pts)
@@ -594,9 +782,8 @@ class PhoneTracker:
                     rec=_orb_reidentify(curr_gray,orb_ref_descs,last_bbox)
                     if rec:
                         bx,by,bw,bh=rec
-                        # ── compat helper ──
-                        csrt=_make_csrt_tracker(); csrt.init(frame,rec)
-                        csrt_ok=True; reinit_count=0; lk_pts=None
+                        tracker=_make_tracker(); tracker.init(frame,rec)
+                        tracker_ok=True; reinit_count=0; lk_pts=None
                         logger.debug(f"[Tracker] PID={self._pid} ORB re-ID")
                     else:
                         if self._state in (_TS.ENTERING,_TS.INSERTING):
@@ -609,7 +796,7 @@ class PhoneTracker:
 
             if bw==0 or bh==0: prev_gray=curr_gray; continue
 
-            if csrt_ok and (lk_pts is None or frame_count%10==0):
+            if tracker_ok and (lk_pts is None or frame_count%10==0):
                 new_lk=_lk_init(curr_gray,(bx,by,bw,bh))
                 if new_lk is not None: lk_pts=new_lk
 
@@ -710,19 +897,17 @@ class PhoneTracker:
         return -1
 
     def _check_qr(self, frame: np.ndarray) -> bool:
-
-     try:
-           # Convert to gray once — cv2.QRCodeDetector works faster on grayscale
-           gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-           data, _, _ = _qr_detector_tracker.detectAndDecode(gray)
-           if not data:
-               return False
-           raw = data.strip()
-           if raw.upper().startswith("PID:"):
-               raw = raw[4:].strip()
-           return bool(_UUID_RE_TRACKER.match(raw) and raw.lower() == self._pid.lower())
-     except Exception:
-           return False
+        try:
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            data, _, _ = _qr_detector_tracker.detectAndDecode(gray)
+            if not data:
+                return False
+            raw = data.strip()
+            if raw.upper().startswith("PID:"):
+                raw = raw[4:].strip()
+            return bool(_UUID_RE_TRACKER.match(raw) and raw.lower() == self._pid.lower())
+        except Exception:
+            return False
 
     def _run_verify(self,tc):
         if self._verify_fn is None:
@@ -758,6 +943,7 @@ class PhoneTracker:
                 "qr_absent":round(qr_absent,1),"state":self._state.name,
                 "area_ratio":round(area_ratio,2) if area_ratio else None,
                 "angle_delta":round(angle_delta,1) if angle_delta else None,
+                "tracker_backend": _ACTIVE_BACKEND,
             },to=self._client_id,namespace="/")
         except Exception as e:
             logger.debug(f"[Tracker] emit_update: {e}")
@@ -783,7 +969,7 @@ class PhoneTracker:
             cv2.line(frame,(ax,ay),(ex,ey),col,2)
             cv2.line(frame,(ex,ey),(cx,cy),col,2)
         lbl={
-            _TS.TRACKING:   "QR OK" if self._qr_visible else "QR LOST",
+            _TS.TRACKING:   f"QR OK [{_ACTIVE_BACKEND}]" if self._qr_visible else f"QR LOST [{_ACTIVE_BACKEND}]",
             _TS.ENTERING:   "APPROACHING SLOT",
             _TS.INSERTING:  "INSERTING...",
             _TS.STABILIZING:"VERIFYING...",

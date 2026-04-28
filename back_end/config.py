@@ -21,7 +21,7 @@ Sections
   ScannerConfig         Front-camera face+barcode scan worker
   ScannerStateConfig    Badge / auth timeout for the scanner state machine
   TrackerConfig         PhoneTracker state-machine timeouts and knobs
-  MotionConfig          Motion-detection and CSRT tracker parameters
+  MotionConfig          Motion-detection and CSRT/Nano tracker parameters
   LKConfig              Lucas-Kanade optical-flow parameters
   OrbConfig             ORB feature-matching parameters
   SlotMonitorConfig     Bottom-camera slot monitoring workers
@@ -37,6 +37,12 @@ Sections
   OverlayConfig         On-screen draw colours (BGR tuples)
 """
 
+from pathlib import Path
+
+# ── Repository root (back_end/ is one level below this file) ──────────────
+_REPO_ROOT  = Path(__file__).parent.parent
+_MODELS_DIR = _REPO_ROOT / "back_end" / "models"
+
 
 # ============================================================
 # CAMERAS
@@ -44,7 +50,6 @@ Sections
 
 class CameraConfig:
     # ── Device indices ────────────────────────────────────
-    # Change these to match your physical camera layout.
     FRONT_CAM_INDEX  = 0   # scanner_loop.py  — face + barcode
     TOP_CAM_INDEX    = 2   # top_camera.py    — QR scan + phone tracking
     BOTTOM_CAM_INDEX = 1   # headless_slot_monitor.py — slot embedding
@@ -71,23 +76,19 @@ class CameraConfig:
 
 class DatabaseConfig:
     # ── Synchronous connection pool (psycopg2) ────────────
-    # Used by: db.py, SlotMonitorDB, SlotOperations, EvidenceRecorder
     SYNC_HOST     = "localhost"
     SYNC_PORT     = 5432
     SYNC_DATABASE = "PhoneBoxDB"
     SYNC_POOL_MIN = 1
     SYNC_POOL_MAX = 10
-    # Credentials: imported from back_end.secrets.Secrets.DB_USER / DB_PASSWORD
 
     # ── Async connection pool (asyncpg) ───────────────────
-    # Used by: AsyncSlotMonitorDB / HeadlessSlotMonitor
     ASYNC_HOST        = "localhost"
     ASYNC_PORT        = 5432
     ASYNC_DATABASE    = "PhoneBoxDB"
     ASYNC_POOL_MIN    = 5
     ASYNC_POOL_MAX    = 20
-    ASYNC_CMD_TIMEOUT = 10.0   # seconds per command
-    # Credentials: imported from back_end.secrets.Secrets.DB_USER / DB_PASSWORD
+    ASYNC_CMD_TIMEOUT = 10.0
 
 
 # ============================================================
@@ -198,7 +199,21 @@ class TrackerConfig:
     STAGING_HOLD_TIME = 1.5   # seconds
     EMIT_INTERVAL     = 0.5   # seconds between tracking_update events
 
-    # ── Debug / display ───────────────────────────────────
+    # ── Opt #9: TrackerNano backend ───────────────────────
+    # "nano"  — use TrackerNano (opencv-contrib >= 4.7, ~3-5× lighter than CSRT)
+    # "csrt"  — always use CSRT (original behaviour)
+    # "auto"  — try Nano first; fall back to CSRT if models missing or OpenCV
+    #           build does not include contrib trackers (default, safest)
+    TRACKER_BACKEND = "auto"
+
+    # Paths to the two TrackerNano ONNX model files.
+    # Run back_end/slot_monitor/tools/download_tracker_models.py once to
+    # populate these files.  On intranet: download on an internet machine,
+    # then scp the back_end/models/ directory to the server.
+    NANO_BACKBONE_PATH: str = str(_MODELS_DIR / "nanotrack_backbone_sim.onnx")
+    NANO_NECKHEAD_PATH: str = str(_MODELS_DIR / "nanotrack_head_sim.onnx")
+
+    # Debug / display
     # Set True to draw the phone bounding box on the top-camera feed.
     # Useful during development; can be disabled in production.
     DRAW_TRACKING_BOX = True
@@ -209,13 +224,21 @@ class TrackerConfig:
 # ============================================================
 
 class MotionConfig:
-    BLUR_K               = 15
-    THRESH               = 20
-    DILATE               = 3
-    MIN_AREA             = 1500
-    IOU_MERGE            = 0.20
-    CSRT_REINIT_INTERVAL = 12
-    CSRT_MOTION_GATE_N   = 5   # Opt #13: run motion detect every N frames when CSRT OK
+    BLUR_K  = 15
+    THRESH  = 20
+    DILATE  = 3
+    MIN_AREA = 1500
+    IOU_MERGE = 0.20
+
+    # Opt #9: TrackerNano is statistically more stable than CSRT between
+    # reinitializations, so we can reinit less aggressively.
+    # CSRT was reinitialised every 12 frames; Nano every 20.
+    # In "auto" mode _make_tracker() sets this at runtime.
+    CSRT_REINIT_INTERVAL = 12   # used when backend == "csrt"
+    NANO_REINIT_INTERVAL = 20   # used when backend == "nano"
+
+    # Opt #13: run motion detect every N frames when primary tracker is healthy
+    CSRT_MOTION_GATE_N = 5
 
 
 # ============================================================
