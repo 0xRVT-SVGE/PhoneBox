@@ -37,6 +37,11 @@ dependencies:
   # Opt #31: shimmer — skeleton loaders (perceived latency improvement)
   shimmer: ^3.0.0
 
+  # Opt #33: offline-first op queue — sqflite for local SQLite persistence
+  # Zero network dependency; writes to device app-data directory only.
+  sqflite: ^2.3.2
+  path: ^1.9.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

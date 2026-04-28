@@ -22,11 +22,21 @@ from back_end.slot_monitor.slots import Slot, generate_grid_rois
 from back_end.slot_monitor.alarm_controller import AlarmController
 from back_end.slot_monitor.db_interface import AsyncSlotMonitorDB
 from back_end.config import (
-    CameraConfig       as _CC,
-    DatabaseConfig     as _DC,
-    SlotMonitorConfig  as _SMC,
+    CameraConfig        as _CC,
+    DatabaseConfig      as _DC,
+    SlotMonitorConfig   as _SMC,
+    CameraProcessConfig as _CPC,
 )
 from back_end.secrets import Secrets
+
+# Opt #1: use multi-process camera when CameraProcessConfig.ENABLED is True.
+if _CPC.ENABLED:
+    from back_end.camera_process import SharedFrameBuffer as _FrameBufferClass
+    _USING_PROCESS = True
+else:
+    _FrameBufferClass = AsyncFrameBuffer   # type: ignore[assignment]
+    _USING_PROCESS = False
+
 
 
 class HeadlessSlotMonitor:
@@ -131,7 +141,12 @@ class HeadlessSlotMonitor:
 
     async def _setup_camera(self):
         logger.info("Setting up camera...")
-        self.frame_buffer = AsyncFrameBuffer()
+        logger.info(
+            "[SlotMonitor] camera backend: %s",
+            "multi-process (Opt #1)" if _USING_PROCESS else "threading (default)",
+        )
+        self.frame_buffer = _FrameBufferClass()
+
         self.frame_buffer.set_event_loop(self.loop)
 
         self.frame_buffer.start_capture(

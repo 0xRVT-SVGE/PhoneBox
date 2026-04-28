@@ -2,6 +2,7 @@
 <module type="PYTHON_MODULE" version="4">
   <component name="NewModuleRootManager">
     <content url="file://$MODULE_DIR$">
+      <sourceFolder url="file://$MODULE_DIR$" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/front_end/.dart_tool" />
       <excludeFolder url="file://$MODULE_DIR$/front_end/.pub" />
       <excludeFolder url="file://$MODULE_DIR$/front_end/build" />

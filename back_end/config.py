@@ -454,3 +454,47 @@ class OverlayConfig:
     COL_STAGING_OCC   = [(255, 180, 80), (80, 180, 255)]
 
     ROI_RECT_COLOR = (255, 255, 0)
+
+
+# ============================================================
+# SLOT EMBED  (bottom-camera embedding algorithm)
+# ============================================================
+
+class SlotEmbedConfig:
+    # All ROIs are resized to IMG_SIZE × IMG_SIZE before feature extraction.
+    IMG_SIZE  = 64   # pixels
+
+    # Number of histogram bins (lighting-tolerant component)
+    HIST_BINS = 32
+
+    # Top-left DCT_SIZE × DCT_SIZE coefficients kept (structure-sensitive)
+    DCT_SIZE  = 8    # 8×8 = 64 coefficients
+
+    # Derived: HIST_BINS + DCT_SIZE². Do not change independently.
+    EMBEDDING_DIM = HIST_BINS + (DCT_SIZE * DCT_SIZE)   # 96
+
+
+# ============================================================
+# CAMERA PROCESS  (Opt #1 — multi-process camera)
+# ============================================================
+
+class CameraProcessConfig:
+    # Master toggle.
+    # False (default) = legacy AsyncFrameBuffer (threading, current behaviour).
+    # True  = each camera runs in its own OS process (true GIL bypass).
+    # Enable when you have ≥ 8 slots and a multi-core CPU.
+    # Recommended: profile with py-spy first; then flip to True.
+    ENABLED = False
+
+    # Watcher-thread poll interval (seconds).
+    # 1 ms keeps latency well below one 30 fps frame interval (33 ms)
+    # without measurable CPU cost (< 0.1 % on any modern core).
+    WATCHER_POLL_S = 0.001   # 1 ms
+
+    # Child-process startup timeout.
+    # SharedFrameBuffer.start_capture() raises RuntimeError if the child
+    # does not deliver the first frame within this many seconds.
+    STARTUP_TIMEOUT = 5.0   # seconds
+
+    # Warm-up frames discarded inside the child process before sharing starts.
+    WARMUP_FRAMES = 10

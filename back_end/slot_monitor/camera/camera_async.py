@@ -204,11 +204,12 @@ class AsyncCameraCapture:
 
     def __init__(
         self,
-        frame_buffer: AsyncFrameBuffer,
+        frame_buffer: "AsyncFrameBuffer",   # also accepts SharedFrameBuffer (duck-typed)  # type: ignore[type-arg]
         camera_id: int = 0,
         width:  int = 1920,
         height: int = 1080,
     ):
+
         self.frame_buffer = frame_buffer
         self.camera_id    = camera_id
         self.width        = width

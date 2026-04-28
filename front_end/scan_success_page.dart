@@ -4,8 +4,10 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'socket_service.dart';
 import 'api_service.dart';
 import 'webrtc_config.dart';
+import 'offline_op_queue.dart'; // Opt #33
 
 import 'shimmer_widgets.dart'; // Opt #31
+
 
 // ── Shared location label helper ─────────────────────────
 String phoneLocationLabel(Map<String, dynamic> p) {
@@ -40,8 +42,9 @@ class ScanSuccessPage extends StatefulWidget {
 
 class _ScanSuccessPageState extends State<ScanSuccessPage> {
   final _socketService = SocketService();
-  bool          _loading = true;
-  List<dynamic> _phones  = [];
+  bool          _loading    = true;
+  List<dynamic> _phones     = [];
+  int           _pendingOps = 0;   // Opt #33: queued op count
 
   // ── Top-camera pre-connection (Opt #27) ──────────────────────────────────
   final _topRenderer    = RTCVideoRenderer();
@@ -58,6 +61,7 @@ class _ScanSuccessPageState extends State<ScanSuccessPage> {
       if (!_topPageDisposed) _preconnectTopCamera();
     });
   }
+
 
   @override
   void dispose() {
@@ -123,7 +127,28 @@ class _ScanSuccessPageState extends State<ScanSuccessPage> {
       _phones  = data ?? [];
       _loading = false;
     });
+    // Opt #33: drain any queued ops now that we have a fresh list
+    _drainAndRefresh();
   }
+
+  /// Opt #33 — replay pending ops then refresh the phone list once more.
+  Future<void> _drainAndRefresh() async {
+    final queue = OfflineOpQueue.instance;
+    final count = await queue.pendingCount();
+    if (mounted) setState(() => _pendingOps = count);
+
+    if (count > 0) {
+      final replayed = await queue.drainAndReplay(_socketService);
+      if (replayed > 0 && mounted) {
+        setState(() => _pendingOps = 0);
+        // Brief delay to let the server process the replayed op
+        await Future.delayed(const Duration(milliseconds: 600));
+        final fresh = await ApiService.getPhones(widget.sid);
+        if (mounted) setState(() => _phones = fresh ?? _phones);
+      }
+    }
+  }
+
 
   void _startOperation(String pid, bool isDeposit) {
     if (isDeposit) {
@@ -209,18 +234,45 @@ class _ScanSuccessPageState extends State<ScanSuccessPage> {
         title:   Text(widget.studentName),
         leading: const BackButton(),
       ),
-      // Opt #31: skeleton instead of spinner
-      body: _loading
-          ? const PhoneListSkeleton()
-          : _phones.isEmpty
-              ? const Center(child: Text('No phones found'))
-              : ListView.builder(
-                  itemCount:   _phones.length,
-                  itemBuilder: (_, i) =>
-                      _buildPhoneCard(_phones[i] as Map<String, dynamic>),
-                ),
+      body: Column(
+        children: [
+          // Opt #33: pending-ops banner
+          if (_pendingOps > 0)
+            Material(
+              color: Colors.orange.shade800,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Row(children: [
+                  const Icon(Icons.wifi_off, color: Colors.white, size: 16),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '$_pendingOps pending operation${_pendingOps == 1 ? '' : 's'} '
+                      '— will retry when reconnected',
+                      style: const TextStyle(
+                          color: Colors.white, fontSize: 12),
+                    ),
+                  ),
+                ]),
+              ),
+            ),
+          // Opt #31: skeleton instead of spinner
+          Expanded(
+            child: _loading
+                ? const PhoneListSkeleton()
+                : _phones.isEmpty
+                    ? const Center(child: Text('No phones found'))
+                    : ListView.builder(
+                        itemCount:   _phones.length,
+                        itemBuilder: (_, i) =>
+                            _buildPhoneCard(_phones[i] as Map<String, dynamic>),
+                      ),
+          ),
+        ],
+      ),
     );
   }
+
 }
 
 // ── Shared action button ──────────────────────────────────
