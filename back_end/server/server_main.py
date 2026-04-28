@@ -190,6 +190,15 @@ if __name__ == "__main__":
     threading.Thread(target=scan_worker, daemon=True, name="ScanWorker").start()
     logger.info("Scan worker started")
 
+    # Opt #38: start evidence storage pruner (background retention checks)
+    try:
+        from back_end.server.evidence_storage import evidence_store
+        evidence_store.start()
+        logger.info("Evidence storage pruner started (Opt #38)")
+    except Exception as e:
+        logger.warning(f"Evidence storage pruner failed (non-fatal): {e}")
+
+
     # Opt #16: pre-warm DeepFace — loads SFace model in background so first scan
     # has no cold-start delay (~1-3 s on first DeepFace.represent() call).
     def _prewarm_deepface():
@@ -297,6 +306,14 @@ if __name__ == "__main__":
             # 8. Admin handlers
             register_admin_handlers(socketio, slot_ops, slot_monitor.alarm)
             logger.info("Admin resolution system ready")
+
+            # Opt #39: wire Redis publisher into alarm controller if prepared in app.py
+            publisher = getattr(slot_monitor, "_pending_redis_publisher", None)
+            if publisher is not None:
+                slot_monitor.alarm.set_redis_publisher(publisher)
+                del slot_monitor._pending_redis_publisher
+                logger.info("Alarm controller: Redis fanout enabled (Opt #39)")
+
         else:
             logger.warning("Admin resolution system not started — alarm unavailable")
     else:

@@ -53,12 +53,15 @@ import numpy as np
 from back_end.Database.db import get_conn, put_conn
 from back_end.slot_monitor.camera.top_camera import top_camera
 from back_end.config import EvidenceConfig as _EC
+from back_end.server.evidence_storage import evidence_store   # Opt #38
 
 logger = logging.getLogger(__name__)
 
-# Edit back_end/config.py → EvidenceConfig to change these.
-EVIDENCE_BASE_DIR = Path(_EC.BASE_DIR)
+# Legacy alias kept for any remaining direct references in tools/scripts.
+# New code: use evidence_store.session_dir() instead.
+EVIDENCE_BASE_DIR = evidence_store._base
 RECORD_FPS        = _EC.RECORD_FPS
+
 
 
 # ── DB helpers ────────────────────────────────────────────────────────────────
@@ -417,22 +420,29 @@ class EvidenceRecorder:
 
     def __init__(self, session_id: str):
         self.session_id  = session_id
-        self._session_dir = EVIDENCE_BASE_DIR / session_id
+        # Opt #38: use evidence_store for date-partitioned layout + retention tracking
         self._opened_at  = datetime.utcnow()
+        self._session_dir = evidence_store.session_dir(
+            session_id, date=self._opened_at
+        )
+        self._clip_count = 0
+        self._total_duration_s = 0.0
 
         self._current: Optional[PhoneRecorder] = None
         self._any_kept  = False  # True if at least one clip was kept
 
+
     # ── Session lifecycle ─────────────────────────────────────────────────────
 
     def start(self):
-        """Create session directory and DB record."""
-        self._session_dir.mkdir(parents=True, exist_ok=True)
+        """Create session directory (already created by evidence_store.session_dir) and DB record."""
+        # Directory already created by evidence_store.session_dir() in __init__.
         _db_create_session(self.session_id, self._opened_at)
         logger.info(
             f"[Evidence] Session started: {self.session_id}  "
             f"dir={self._session_dir}"
         )
+
 
     def close(self, outcome: str, warnings: list):
         """
@@ -502,6 +512,17 @@ class EvidenceRecorder:
             logger.info(
                 f"[Evidence] Session {self.session_id} evidence deleted (clean)"
             )
+
+        # Opt #38: register with evidence_store for retention management
+        evidence_store.register_session(
+            session_id = self.session_id,
+            outcome    = outcome,
+            kept       = kept,
+            clip_count = self._clip_count,
+            duration_s = self._total_duration_s,
+            opened_at  = self._opened_at,
+        )
+
 
     # ── Per-phone clip control ────────────────────────────────────────────────
 

@@ -47,6 +47,7 @@ class AlarmController:
         self._alarm_start_time = None
         self._silenced         = False
         self.socketio          = None
+        self._redis_pub        = None   # Opt #39: set for multi-instance Redis fanout
 
         # Debounce: track last clip-save time per (pid, lid) to avoid flooding
         # the background encoder when a slot triggers multiple times in quick
@@ -56,6 +57,24 @@ class AlarmController:
     def set_socketio(self, socketio):
         with self._lock:
             self.socketio = socketio
+
+    def set_redis_publisher(self, publisher) -> None:
+        """
+        Opt #39 — set a Redis publisher for multi-instance alarm fanout.
+
+        When set, alarm events are published to Redis INSTEAD OF direct
+        SocketIO emit.  All Flask instances run an AlarmSubscriber that
+        re-emits the events to their local WebSocket clients.
+
+        Pass None to revert to direct SocketIO emit.
+        """
+        with self._lock:
+            self._redis_pub = publisher
+        if publisher is not None:
+            logger.info("[AlarmController] Redis pub/sub fanout enabled (Opt #39)")
+        else:
+            logger.info("[AlarmController] Redis pub/sub disabled — direct SocketIO emit")
+
 
     # ── Sound control ─────────────────────────────────────
 
@@ -104,19 +123,35 @@ class AlarmController:
             logger.warning(f"Mismatch added: PID={pid}, LID={lid}")
             snapshot = list(self.mismatches)
 
-        # ── Emit OUTSIDE lock ──────────────────────────────
-        if sio is not None and snapshot is not None:
+        # ── Emit OUTSIDE lock (Redis or SocketIO) ──────────────────
+        if snapshot is not None:
             mismatch_list = [[p, l] for p, l in snapshot]
-            if first_trigger:
-                sio.emit("alarm_triggered", {
+            redis_pub = None
+            with self._lock:
+                redis_pub = self._redis_pub
+
+            if redis_pub is not None:
+                # Opt #39: publish to Redis — AlarmSubscriber re-emits on all instances
+                if first_trigger:
+                    redis_pub.publish("alarm_triggered", {
+                        "mismatch_count": len(snapshot),
+                        "mismatches":     mismatch_list,
+                    })
+                redis_pub.publish("alarm_updated", {
                     "mismatch_count": len(snapshot),
                     "mismatches":     mismatch_list,
                 })
-            # Always emit updated state so clients stay in sync
-            sio.emit("alarm_updated", {
-                "mismatch_count": len(snapshot),
-                "mismatches":     mismatch_list,
-            })
+            elif sio is not None:
+                # Default: direct SocketIO emit (single-process mode)
+                if first_trigger:
+                    sio.emit("alarm_triggered", {
+                        "mismatch_count": len(snapshot),
+                        "mismatches":     mismatch_list,
+                    })
+                sio.emit("alarm_updated", {
+                    "mismatch_count": len(snapshot),
+                    "mismatches":     mismatch_list,
+                })
 
         self._save_alarm_clips(pid, lid)
 
@@ -145,8 +180,9 @@ class AlarmController:
             logger.warning(f"[Alarm] Failed to queue alarm clips: {e}")
 
     def resolve(self, pid: str, lid: int):
-        sio = None
-        cleared = False
+        sio       = None
+        redis_pub = None
+        cleared   = False
 
         with self._lock:
             self.mismatches.discard((pid, lid))
@@ -154,26 +190,35 @@ class AlarmController:
             if self.active and not self.mismatches:
                 self._clear_active_alarm()
                 cleared = True
-            sio = self.socketio
+            sio       = self.socketio
+            redis_pub = self._redis_pub
 
-        # Emit after releasing lock
-        if cleared and sio is not None:
-            sio.emit("alarm_cleared", {})
+        if cleared:
+            if redis_pub is not None:
+                redis_pub.publish("alarm_cleared", {})
+            elif sio is not None:
+                sio.emit("alarm_cleared", {})
 
     def stop_if_clear(self):
-        sio = None
-        cleared = False
+        sio       = None
+        redis_pub = None
+        cleared   = False
         with self._lock:
             if self.active and not self.mismatches:
                 self._clear_active_alarm()
                 cleared = True
-            sio = self.socketio
-        if cleared and sio is not None:
-            sio.emit("alarm_cleared", {})
+            sio       = self.socketio
+            redis_pub = self._redis_pub
+        if cleared:
+            if redis_pub is not None:
+                redis_pub.publish("alarm_cleared", {})
+            elif sio is not None:
+                sio.emit("alarm_cleared", {})
 
     def clear(self):
-        sio = None
-        cleared = False
+        sio       = None
+        redis_pub = None
+        cleared   = False
         with self._lock:
             count = len(self.mismatches)
             self.mismatches.clear()
@@ -181,9 +226,14 @@ class AlarmController:
                 self._clear_active_alarm()
                 cleared = True
             logger.info(f"Alarm force-cleared ({count} mismatches removed)")
-            sio = self.socketio
-        if cleared and sio is not None:
-            sio.emit("alarm_cleared", {})
+            sio       = self.socketio
+            redis_pub = self._redis_pub
+        if cleared:
+            if redis_pub is not None:
+                redis_pub.publish("alarm_cleared", {})
+            elif sio is not None:
+                sio.emit("alarm_cleared", {})
+
 
     def _clear_active_alarm(self):
         """Must be called with self._lock held. Does NOT emit — caller handles that."""

@@ -13,10 +13,12 @@ from back_end.Database.API.students_API import students_bp
 from back_end.Database.API.phones_API import phones_bp
 from back_end.Database.logging_config import setup_logging
 from back_end.config import (
-    CameraConfig      as _CC,
-    DatabaseConfig    as _DC,
-    SlotMonitorConfig as _SMC,
+    CameraConfig         as _CC,
+    DatabaseConfig       as _DC,
+    SlotMonitorConfig    as _SMC,
+    MonitorServiceConfig as _MSC,   # Opt #39
 )
+
 from back_end.secrets import Secrets
 
 # Optimization #24: HTTP gzip compression (~60-80% payload reduction on JSON)
@@ -67,8 +69,23 @@ def create_app(stop_event: threading.Event = None):
 
     _initialize_monitoring(socketio, stop_event)
 
+    # Opt #39: start Redis alarm subscriber so all Flask instances receive
+    # alarm events even if the slot monitor runs in a separate process.
+    if _MSC.ENABLED:
+        try:
+            from back_end.slot_monitor.redis_bridge import AlarmSubscriber
+            _alarm_sub = AlarmSubscriber(socketio)
+            _alarm_sub.start()
+            logger.info("[App] Redis alarm subscriber started (Opt #39)")
+        except Exception as e:
+            logger.error(
+                f"[App] Failed to start Redis alarm subscriber: {e} "
+                f"-- ensure Redis is running at {_MSC.REDIS_HOST}:{_MSC.REDIS_PORT}"
+            )
+
     logger.info("Flask application ready")
     return app, socketio
+
 
 
 def _initialize_monitoring(socketio, stop_event: threading.Event):
@@ -107,6 +124,23 @@ def _initialize_monitoring(socketio, stop_event: threading.Event):
         _slot_monitor = HeadlessSlotMonitor(**CONFIG)
         _slot_operations = SlotOperations(monitor=None)
         logger.info("Slot monitor created (not started yet)")
+
+        # Opt #39: wire Redis publisher into alarm controller when enabled
+        # so alarm events are fanned out to all Flask instances via Redis.
+        if _MSC.ENABLED:
+            try:
+                from back_end.slot_monitor.redis_bridge import AlarmPublisher
+                publisher = AlarmPublisher()
+                # Publisher is set after monitor.start() / alarm setup;
+                # see set_monitor_components() call in server_main.py.
+                _slot_monitor._pending_redis_publisher = publisher
+                logger.info("[App] AlarmPublisher ready for Redis fanout (Opt #39)")
+            except Exception as e:
+                logger.warning(
+                    f"[App] Redis publisher not available ({e}) "
+                    f"-- alarm fanout disabled"
+                )
+
 
     except Exception as e:
         logger.error(f"Failed to initialize monitoring: {e}", exc_info=True)

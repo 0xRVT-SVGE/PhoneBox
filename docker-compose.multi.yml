@@ -1,0 +1,179 @@
+# ============================================================
+# FILE: docker-compose.multi.yml
+# ============================================================
+# Opt #43 — Multi-instance PhoneBox deployment (LAN / intranet)
+#
+# Starts:
+#   redis        — alarm pub/sub + student embed cache
+#   phonebox_1   — PRIMARY: Flask + slot monitor (owns the camera)
+#   phonebox_2   — SECONDARY: Flask API only (subscribes Redis alarms)
+#   nginx        — LAN load balancer (port 80)
+#   prometheus   — metrics scraping (port 9090)
+#   grafana      — dashboards (port 3000)
+#
+# Usage:
+#   # First time only — build the image:
+#   docker compose -f docker-compose.multi.yml build
+#
+#   # Start all services:
+#   docker compose -f docker-compose.multi.yml up -d
+#
+#   # Tail logs:
+#   docker compose -f docker-compose.multi.yml logs -f phonebox_1
+#
+#   # Scale (adds more secondary instances):
+#   docker compose -f docker-compose.multi.yml up -d --scale phonebox_2=3
+#
+# Intranet note:
+#   All services run on the LAN server — no internet connection required.
+#   Adjust volume paths and PHONEBOX_* env vars to match your deployment.
+#
+# Camera access:
+#   Only phonebox_1 needs /dev/video* devices.  Cameras are physical USB
+#   devices and cannot be shared across containers without a dedicated
+#   frame-sharing layer (use back_end/camera_process.py shared memory
+#   for cross-process sharing on the same host).
+#
+# ============================================================
+
+name: phonebox
+
+services:
+
+  # ── Redis ──────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    networks: [phonebox_net]
+    ports:
+      - "127.0.0.1:6379:6379"   # Only exposed on loopback — not to LAN
+    volumes:
+      - redis_data:/data
+    command: >
+      redis-server
+        --save 60 1
+        --loglevel warning
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ── Primary Flask instance (runs slot monitor) ─────────────────────────────
+  phonebox_1:
+    image: phonebox:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    networks: [phonebox_net]
+    ports:
+      - "127.0.0.1:5001:5000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      - PHONEBOX_INSTANCE=primary
+      - PHONEBOX_MONITOR_ENABLED=true
+      - PHONEBOX_REDIS_HOST=redis
+      - PHONEBOX_REDIS_PORT=6379
+    volumes:
+      # Shared evidence directory (mount to same host path on all instances)
+      - ./evidence:/opt/phonebox/evidence
+      # Config / model files
+      - ./back_end/models:/opt/phonebox/back_end/models:ro
+      - ./back_end/slot_monitor/tools:/opt/phonebox/back_end/slot_monitor/tools:ro
+    # Camera devices — only the primary instance needs them
+    devices:
+      - "/dev/video0:/dev/video0"   # FRONT_CAM_INDEX = 0
+      - "/dev/video1:/dev/video1"   # BOTTOM_CAM_INDEX = 1
+      - "/dev/video2:/dev/video2"   # TOP_CAM_INDEX = 2
+    privileged: false
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:5000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ── Secondary Flask instance (API + Redis alarm subscriber) ───────────────
+  phonebox_2:
+    image: phonebox:latest
+    restart: unless-stopped
+    networks: [phonebox_net]
+    ports:
+      - "127.0.0.1:5002:5000"
+    depends_on:
+      redis:
+        condition: service_healthy
+      phonebox_1:
+        condition: service_healthy
+    environment:
+      - PHONEBOX_INSTANCE=secondary
+      - PHONEBOX_MONITOR_ENABLED=false   # No slot monitor — API only
+      - PHONEBOX_REDIS_HOST=redis
+      - PHONEBOX_REDIS_PORT=6379
+    volumes:
+      - ./evidence:/opt/phonebox/evidence
+      - ./back_end/models:/opt/phonebox/back_end/models:ro
+    # No /dev/video* — secondary has no camera
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:5000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ── nginx LAN load balancer ────────────────────────────────────────────────
+  nginx:
+    image: nginx:1.25-alpine
+    restart: unless-stopped
+    networks: [phonebox_net]
+    ports:
+      - "80:80"   # LAN-accessible
+    depends_on:
+      - phonebox_1
+      - phonebox_2
+    volumes:
+      - ./nginx/phonebox.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./evidence:/opt/phonebox/evidence:ro   # Direct evidence serving
+
+  # ── Prometheus (metrics, no internet) ─────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    restart: unless-stopped
+    networks: [phonebox_net]
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./back_end/server/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=30d"
+
+  # ── Grafana (dashboards, no internet) ─────────────────────────────────────
+  grafana:
+    image: grafana/grafana:10.4.0
+    restart: unless-stopped
+    networks: [phonebox_net]
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on: [prometheus]
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=phonebox_admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_ANALYTICS_REPORTING_ENABLED=false   # Disable telemetry
+      - GF_ANALYTICS_CHECK_FOR_UPDATES=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+
+networks:
+  phonebox_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16   # Isolated internal subnet
+
+volumes:
+  redis_data:
+  prometheus_data:
+  grafana_data:

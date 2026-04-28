@@ -497,4 +497,61 @@ class CameraProcessConfig:
     STARTUP_TIMEOUT = 5.0   # seconds
 
     # Warm-up frames discarded inside the child process before sharing starts.
+    # Warm-up frames discarded inside the child process before sharing starts.
     WARMUP_FRAMES = 10
+
+
+# ============================================================
+# EVIDENCE STORAGE  (Opt #38 — local structured storage)
+# ============================================================
+
+class EvidenceStorageConfig:
+    # Root directory for all evidence (date-partitioned subdirectories).
+    # Relative to the working directory where server_main.py is launched.
+    BASE_DIR = "evidence"
+
+    # Auto-delete sessions (kept=False) older than this many days.
+    # Sessions flagged kept=True are NEVER auto-deleted.
+    RETENTION_DAYS = 30
+
+    # Log a WARNING when total evidence directory exceeds this size (GB).
+    DISK_WARN_GB = 10.0
+
+    # Prune oldest non-kept sessions automatically when usage exceeds this (GB).
+    # Set to a very large value to disable auto-pruning (rely on RETENTION_DAYS only).
+    DISK_HARD_CAP_GB = 20.0
+
+    # How often the background retention thread checks for expired sessions (seconds).
+    PRUNE_INTERVAL_S = 3600   # once per hour
+
+
+# ============================================================
+# MONITOR SERVICE  (Opt #39 — slot monitor microservice / Redis fanout)
+# ============================================================
+
+class MonitorServiceConfig:
+    # Master toggle.
+    # False (default) = single-process mode: AlarmController emits via SocketIO
+    #                   directly (current behaviour, no Redis needed).
+    # True  = multi-process mode: monitor publishes alarm events to Redis;
+    #         Flask server subscribes and re-emits to SocketIO clients.
+    #         Required when running the slot monitor as a separate process
+    #         (back_end/slot_monitor/monitor_service.py) for multi-instance scaling.
+    ENABLED = False
+
+    # Redis connection (host/port for alarm pub/sub channel).
+    # Must match the Redis instance used by the monitor process.
+    REDIS_HOST = "localhost"
+    REDIS_PORT = 6379
+    REDIS_DB   = 0
+
+    # Pub/sub channel name for alarm events.
+    ALARM_CHANNEL = "phonebox:alarms"
+
+    # Pub/sub channel for slot-state updates (future: cache invalidation).
+    SLOT_STATE_CHANNEL = "phonebox:slot_state"
+
+    # Timeout (seconds) for the Redis subscriber listen loop iteration.
+    # Lower = faster shutdown; higher = less CPU spin.
+    SUBSCRIBE_TIMEOUT_S = 1.0
+
