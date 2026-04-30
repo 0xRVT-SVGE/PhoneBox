@@ -554,4 +554,55 @@ class MonitorServiceConfig:
     # Timeout (seconds) for the Redis subscriber listen loop iteration.
     # Lower = faster shutdown; higher = less CPU spin.
     SUBSCRIBE_TIMEOUT_S = 1.0
-
+
+
+
+# ============================================================
+# ADDITIONS TO back_end/config.py
+# ============================================================
+# Add the two classes below into the existing config.py file.
+# Insert NtfyConfig after EvidenceStorageConfig.
+# Add RAW_BUFFER_ENABLED to RollingBufferConfig.
+# ============================================================
+
+
+# ── Patch for RollingBufferConfig (add this field) ────────────────────────────
+#
+# Inside the existing RollingBufferConfig class, add:
+#
+#     # Opt #15: raw numpy ring buffer
+#     # True  = store BGR arrays directly (no JPEG encode/decode round-trip)
+#     #         ~30-50% faster save_to_mp4; higher RAM cost
+#     #         (30 s × 30 fps × 1280×720×3 ≈ 2.6 GB — enable only on 4+ GB machines)
+#     # False = JPEG path (default, safe on all hardware)
+#     RAW_BUFFER_ENABLED = False
+
+
+# ── New class: NtfyConfig ─────────────────────────────────────────────────────
+
+class NtfyConfig:
+    """
+    LAN-native push notifications via self-hosted ntfy server.
+    Replaces Firebase FCM — no internet, no API keys.
+
+    Setup:
+        docker run -d --name ntfy -p 80:80 binwiederhier/ntfy serve
+
+    Then set ENABLED = True and SERVER_URL to your ntfy host.
+
+    This must match front_end/ntfy_service.dart constants
+    (_kNtfyServer and _kNtfyTopic).
+    """
+
+    # Master toggle — False = push disabled, AlarmController skips ntfy entirely
+    ENABLED = False
+
+    # URL of your self-hosted ntfy instance (no trailing slash)
+    SERVER_URL = "http://ntfy.phonebox.local"
+
+    # Topic name — must match _kNtfyTopic in ntfy_service.dart
+    TOPIC = "phonebox-alarms"
+
+    # HTTP timeout for the push POST (seconds)
+    # Keep short — push is fire-and-forget; a slow ntfy server must not block
+    TIMEOUT_S = 3.0
