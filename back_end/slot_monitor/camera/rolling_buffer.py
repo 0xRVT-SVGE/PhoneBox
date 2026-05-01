@@ -55,7 +55,7 @@ TOP_FPS_IDLE      = _RBC.TOP_FPS_IDLE
 EVIDENCE_BASE_DIR = Path(_EC.BASE_DIR)
 
 # Raw buffer enabled flag — costs more RAM but eliminates encode/decode cycles
-RAW_BUFFER_ENABLED = getattr(_RBC, "RAW_BUFFER_ENABLED", False)
+RAW_BUFFER_ENABLED = _RBC.RAW_BUFFER_ENABLED
 
 _Frame     = Tuple[float, bytes]          # JPEG path: (timestamp, jpeg_bytes)
 _RawFrame  = Tuple[float, np.ndarray]     # Raw path:  (timestamp, bgr_array)

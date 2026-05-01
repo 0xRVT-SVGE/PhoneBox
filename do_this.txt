@@ -47,3 +47,18 @@ Grafana
 Download .tar.gz, extract, then:
 
 ./bin/grafana-server
+
+
+#install redis
+
+sudo apt install redis-server
+
+#check with
+
+redis-server
+redis-cli ping
+
+
+#install libjpeg-turbo
+
+sudo apt install libturbojpeg

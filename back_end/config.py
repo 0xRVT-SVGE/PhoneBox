@@ -413,6 +413,12 @@ class RollingBufferConfig:
     JPEG_QUALITY      = 70
     TOP_FPS_ACTIVE    = 20
     TOP_FPS_IDLE      = 5
+    # Opt #15: raw numpy ring buffer
+    # True  = store BGR arrays directly (no JPEG encode/decode round-trip)
+    #         ~30-50% faster save_to_mp4; higher RAM cost
+    #         (30 s × 30 fps × 1280×720×3 ≈ 2.6 GB — enable only on 4+ GB machines)
+    # False = JPEG path (default, safe on all hardware)
+    RAW_BUFFER_ENABLED = False
 
 
 # ============================================================
@@ -554,29 +560,6 @@ class MonitorServiceConfig:
     # Timeout (seconds) for the Redis subscriber listen loop iteration.
     # Lower = faster shutdown; higher = less CPU spin.
     SUBSCRIBE_TIMEOUT_S = 1.0
-
-
-
-# ============================================================
-# ADDITIONS TO back_end/config.py
-# ============================================================
-# Add the two classes below into the existing config.py file.
-# Insert NtfyConfig after EvidenceStorageConfig.
-# Add RAW_BUFFER_ENABLED to RollingBufferConfig.
-# ============================================================
-
-
-# ── Patch for RollingBufferConfig (add this field) ────────────────────────────
-#
-# Inside the existing RollingBufferConfig class, add:
-#
-#     # Opt #15: raw numpy ring buffer
-#     # True  = store BGR arrays directly (no JPEG encode/decode round-trip)
-#     #         ~30-50% faster save_to_mp4; higher RAM cost
-#     #         (30 s × 30 fps × 1280×720×3 ≈ 2.6 GB — enable only on 4+ GB machines)
-#     # False = JPEG path (default, safe on all hardware)
-#     RAW_BUFFER_ENABLED = False
-
 
 # ── New class: NtfyConfig ─────────────────────────────────────────────────────
 
