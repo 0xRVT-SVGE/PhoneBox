@@ -6,7 +6,6 @@ Unified slot abstraction — ROI loading reads from rois_bottom.json
 (written by the calibration tool).
 """
 
-import cv2
 import json
 import os
 import time
@@ -24,6 +23,29 @@ _TOOLS_DIR      = os.path.join(
 )
 ROI_FILE_BOTTOM = os.path.join(_TOOLS_DIR, "rois_bottom.json")
 
+_CY_UD_AVAILABLE = False
+try:
+    from back_end.slot_monitor.slots_cy import cy_update_distance as _cy_ud
+    _CY_UD_AVAILABLE = True
+    logger.info(
+        "[Slots] Cython cy_update_distance loaded — using compiled state machine"
+    )
+except ImportError:
+    logger.debug(
+        "[Slots] slots_cy not found — using pure-Python update_distance."
+    )
+
+_RECALC_MIN_SAMPLES = None
+
+def _get_recalc_min_samples():
+    global _RECALC_MIN_SAMPLES
+    if _RECALC_MIN_SAMPLES is None:
+        try:
+            from back_end.config import SlotMonitorConfig as _SMC
+            _RECALC_MIN_SAMPLES = _SMC.RECALC_MIN_SAMPLES
+        except Exception:
+            _RECALC_MIN_SAMPLES = 5
+    return _RECALC_MIN_SAMPLES
 
 class Slot:
     """
@@ -101,9 +123,37 @@ class Slot:
             recalc_threshold: float,
             grace_period: float,
     ) -> dict:
+        """
+        Run the distance → alarm state machine for one frame.
+
+        Delegates to the compiled Cython cy_update_distance() when available
+        (~7× faster), otherwise falls back to equivalent pure-Python logic.
+        """
+        if _CY_UD_AVAILABLE:
+            # ── Cython fast path ─────────────────────────────────────────────────
+            result = _cy_ud(
+                dist=dist,
+                mismatch_threshold=mismatch_threshold,
+                recalc_threshold=recalc_threshold,
+                grace_period=grace_period,
+                last_dist=self.last_dist,
+                current_mismatch=self.mismatch,
+                grace_start_ts=self._grace_start_ts,
+                distances_history=self.distances_history,
+                recalc_min_samples=_get_recalc_min_samples(),
+            )
+            self.last_dist = result["new_last_dist"]
+            self.mismatch = result["new_mismatch"]
+            self._grace_start_ts = result["new_grace_ts"]
+            return {
+                "trigger_alarm": result["trigger_alarm"],
+                "stop_alarm": result["stop_alarm"],
+                "needs_recalc": result["needs_recalc"],
+            }
+
+        # ── Pure-Python fallback ─────────────────────────────────────────────────
         self.last_dist = dist
         self.distances_history.append(dist)
-
         now = time.time()
 
         # ── CASE 1: NORMAL ─────────────────────────────

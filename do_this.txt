@@ -1,21 +1,41 @@
 pip uninstall opencv-python opencv-contrib-python -y
 pip install opencv-contrib-python==4.12.0.88
+pip install onnxruntime redis python-json-logger zxing-cpp flask-compress cython numpy prometheus_client
 
-pip install zxing-cpp
-pip install flask-compress
+docker compose file.yml up -d
+
+#Docker
+# ntfy server:
+docker run -d --name ntfy --restart unless-stopped \
+  -p 80:80 -v /var/cache/ntfy:/var/cache/ntfy \
+  binwiederhier/ntfy serve
+# Then: NtfyConfig.ENABLED = True in back_end/config.py
+
+#if gpu
+pip uninstall onnxruntime onnxruntime-gpu -y
+pip install onnxruntime-gpu==1.17.1
+
+#Pgvector -Linux or sudo apt install postgresql-16-pgvector ??18
+cd /tmp
+git clone --branch v0.8.2 https://github.com/pgvector/pgvector.git
+cd pgvector
+make
+make install # may need sudo
+
+#Pgvector -Windows
+set "PGROOT=C:\Postgresfolder"
+cd %TEMP%
+git clone --branch v0.8.2 https://github.com/pgvector/pgvector.git
+cd pgvector
+nmake /F Makefile.win
+nmake /F Makefile.win install
 
 
-
-and what about grafana and prometheus
-
-For an embedded-oriented setup, running Prometheus and Grafana on Windows directly is not a good fit. You have two realistic options:
-
+#Grafana and Prometheus
 Option 1 — Run them in WSL (recommended compromise)
-This keeps things lightweight enough while staying close to Linux (your likely target).
-
 Prometheus
-# download
-wget https://github.com/prometheus/prometheus/releases/latest/download/prometheus-*.linux-amd64.tar.gz
+# download wget
+https://github.com/prometheus/prometheus/releases/latest/download/prometheus-*.linux-amd64.tar.gz
 
 # extract
 tar xvf prometheus-*.tar.gz
@@ -23,29 +43,25 @@ cd prometheus-*
 
 # run
 ./prometheus --config.file=prometheus.yml
-Access:
+Access: http://localhost:9090
 
-http://localhost:9090
 Grafana
 sudo apt install -y software-properties-common
 sudo add-apt-repository "deb https://packages.grafana.com/oss/deb stable main"
 wget -q -O - https://packages.grafana.com/gpg.key | sudo apt-key add -
 sudo apt update
 sudo apt install grafana -y
-Start:
 
-sudo service grafana-server start
-Access:
+Start: sudo service grafana-server start
 
-http://localhost:3000
+Access: http://localhost:3000
+
 Option 2 — Bare binaries (even lighter, no package manager)
 Prometheus
 Download and run directly:
-
 ./prometheus --config.file=prometheus.yml
 Grafana
 Download .tar.gz, extract, then:
-
 ./bin/grafana-server
 
 
@@ -56,9 +72,19 @@ sudo apt install redis-server
 #check with
 
 redis-server
+or
+redis-server --daemonize yes
 redis-cli ping
 
 
 #install libjpeg-turbo
-
+-Linux
 sudo apt install libturbojpeg
+
+-Windows
+download binaries
+
+
+#Cython Deployment
+# After pip install -r requirements.txt:
+python setup.py build_ext --inplace

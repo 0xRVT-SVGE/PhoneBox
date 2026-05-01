@@ -27,11 +27,8 @@ from pathlib import Path
 MODELS_DIR = Path(__file__).parent.parent.parent / "models"
 
 # ── Model URLs and expected SHA-256 checksums ─────────────
-# From opencv_zoo commit pinned for reproducibility.
 BASE = (
-    "https://raw.githubusercontent.com/opencv/opencv_zoo/"
-    "9bba7beb5e97dad3d6bfb428bf8dc1bc73d0b73c/"
-    "models/nanotrack"
+    "https://files.kde.org/kdenlive/motion-tracker/Nano"
 )
 
 MODELS = [
