@@ -64,6 +64,9 @@ CREATE TABLE locations (
     UNIQUE (x, y)
 );
 
+-- Reset sequence to start at 0
+ALTER SEQUENCE locations_lid_seq MINVALUE 0 START 0 RESTART 0;
+
 -- Pre-populate grid (run once during hardware setup):
 -- INSERT INTO locations (x, y)
 -- SELECT x, y FROM generate_series(1, 10) x, generate_series(1, 10) y;
