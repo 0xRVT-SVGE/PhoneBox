@@ -1,7 +1,10 @@
 """
 PhoneBox — Cython build script
 ==============================
-Compiles the hot-path .pyx modules into native C extensions.
+Compiles all hot-path .pyx modules into native C extensions.
+
+Session 12: slot_embed_cy, slots_cy
+Session 13: phone_tracker_cy  ← added this session
 
 Usage
 ─────
@@ -16,12 +19,12 @@ Usage
 
 What gets compiled
 ──────────────────
-  back_end/slot_monitor/slot_embed_cy.pyx   →  slot_embed_cy.so/.pyd
-  back_end/slot_monitor/slots_cy.pyx        →  slots_cy.so/.pyd
+  back_end/slot_monitor/slot_embed_cy.pyx      →  slot_embed_cy.so/.pyd
+  back_end/slot_monitor/slots_cy.pyx           →  slots_cy.so/.pyd
+  back_end/slot_monitor/phone_tracker_cy.pyx   →  phone_tracker_cy.so/.pyd
 
 Each .py original is kept untouched.  The compiled module is imported
-with a fallback to the pure-Python version if the .so is missing or
-the build was not run (see each module's __init__ for the fallback).
+with a fallback to the pure-Python version if the .so is missing.
 
 Requirements
 ────────────
@@ -32,6 +35,7 @@ Requirements
 
 from setuptools import setup, Extension
 import numpy as np
+import platform
 
 try:
     from Cython.Build import cythonize
@@ -43,10 +47,7 @@ except ImportError:
     HAS_CYTHON = False
     print("[setup.py] Cython not found — run: pip install cython")
 
-# ── Common compiler flags ─────────────────────────────────────────────────────
-import sys
-import platform
-
+# ── Compiler flags ────────────────────────────────────────────────────────────
 _COMPILE_ARGS = []
 _LINK_ARGS    = []
 
@@ -71,6 +72,7 @@ NP_INCLUDE = np.get_include()
 # ── Extension definitions ─────────────────────────────────────────────────────
 # Add new .pyx modules here as you create them.
 EXTENSIONS = [
+    # Session 12 — slot monitoring hot paths
     Extension(
         name               = "back_end.slot_monitor.slot_embed_cy",
         sources            = ["back_end/slot_monitor/slot_embed_cy.pyx"],
@@ -85,6 +87,14 @@ EXTENSIONS = [
         extra_compile_args = _COMPILE_ARGS,
         extra_link_args    = _LINK_ARGS,
     ),
+    # Session 13 — phone tracker arithmetic
+    Extension(
+        name               = "back_end.slot_monitor.phone_tracker_cy",
+        sources            = ["back_end/slot_monitor/phone_tracker_cy.pyx"],
+        include_dirs       = [NP_INCLUDE],
+        extra_compile_args = _COMPILE_ARGS,
+        extra_link_args    = _LINK_ARGS,
+    ),
 ]
 
 if not HAS_CYTHON:
@@ -93,7 +103,7 @@ if not HAS_CYTHON:
 
 setup(
     name    = "phonebox_cy",
-    version = "1.0.0",
+    version = "1.1.0",
     ext_modules = cythonize(
         EXTENSIONS,
         compiler_directives = {

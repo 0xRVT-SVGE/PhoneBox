@@ -63,6 +63,25 @@ _orb_reidentifier  = cv2.ORB_create(nfeatures=200)
 
 logger = logging.getLogger(__name__)
 
+# ── Opt #2: Cython-accelerated arithmetic helpers (graceful fallback) ─────────
+_CY_TRACKER_AVAILABLE = False
+try:
+    from back_end.slot_monitor.phone_tracker_cy import (
+        cy_iou,
+        cy_merge_bbox,
+        cy_lk_postprocess,
+    )
+    _CY_TRACKER_AVAILABLE = True
+    logger.info(
+        "[Tracker] Cython phone_tracker_cy loaded — "
+        "cy_iou/cy_merge_bbox/cy_lk_postprocess active"
+    )
+except ImportError:
+    cy_iou            = None   # assigned after _iou() is defined below
+    cy_merge_bbox     = None   # assigned after _merge_bbox() is defined below
+    cy_lk_postprocess = None
+
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Opt #9 — TRACKER FACTORY
@@ -499,6 +518,9 @@ def _iou(a,b):
     if not inter: return 0.0
     return inter/(aw*ah+bw*bh-inter) if aw*ah+bw*bh-inter else 0.0
 
+# Bind Cython fallback — if the .so was not built, cy_iou IS _iou
+if not _CY_TRACKER_AVAILABLE:
+    cy_iou = _iou
 
 def _merge_bbox(csrt,motion,alpha=0.4):
     cx_c=csrt[0]+csrt[2]/2; cy_c=csrt[1]+csrt[3]/2
@@ -506,6 +528,9 @@ def _merge_bbox(csrt,motion,alpha=0.4):
     cx=cx_c*(1-alpha)+cx_m*alpha; cy=cy_c*(1-alpha)+cy_m*alpha
     return (int(cx-csrt[2]/2),int(cy-csrt[3]/2),csrt[2],csrt[3])
 
+# Bind Cython fallback
+if not _CY_TRACKER_AVAILABLE:
+    cy_merge_bbox = _merge_bbox
 
 def _lk_init(gray, bbox):
     x,y,w,h=(int(v) for v in bbox)
@@ -524,6 +549,9 @@ def _lk_update(prev_gray, curr_gray, prev_pts):
                                          winSize=LK_WIN_SIZE,maxLevel=LK_MAX_LEVEL,
                                          criteria=LK_CRITERIA)
     if nxt is None or st is None: return None,None
+    # Opt #2: Cython post-processor when available; pure-Python fallback
+    if cy_lk_postprocess is not None:
+        return cy_lk_postprocess(nxt, st, LK_MIN_POINTS)
     good = nxt[st.ravel()==1]
     if len(good)<LK_MIN_POINTS: return None,None
     xs,ys=good[:,0,0],good[:,0,1]
@@ -751,8 +779,8 @@ class PhoneTracker:
                             pb=cv2.GaussianBlur(prev_gray,(MOTION_BLUR_K,)*2,0)
                             cb=cv2.GaussianBlur(curr_gray,(MOTION_BLUR_K,)*2,0)
                             mo=_motion_bbox(pb,cb)
-                            if mo and _iou((bx,by,bw,bh),mo)>=MOTION_IOU_MERGE:
-                                bx,by,bw,bh=_merge_bbox((bx,by,bw,bh),mo)
+                            if mo and cy_iou((bx,by,bw,bh),mo)>=MOTION_IOU_MERGE:
+                                bx,by,bw,bh=cy_merge_bbox((bx,by,bw,bh),mo)
 
                         # Opt #9: reinit_interval is backend-aware
                         if reinit_count>=reinit_interval:
