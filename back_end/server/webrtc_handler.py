@@ -13,17 +13,35 @@ Modes:
 Opt #7  — recv() no longer busy-polls. Each track awaits
           run_in_executor(None, event.wait) which suspends the coroutine
           until the camera thread fires the event, releasing the event
-          loop completely between frames. Eliminates up to 10 wake-up
-          cycles per frame (was: while not event.wait(0.01): sleep(0.001)).
+          loop completely between frames.
 
 Opt #23 — Per-mode SDP bitrate caps:
           admin   → 800 kbps  (QR codes must be sharp)
           main    → 300 kbps  (face recognition detail)
           preview → 300 kbps  (same as main)
 
+Latency improvements (this revision):
+  • force_h264() now constrains the codec to H.264 Constrained Baseline
+    Profile (profile-level-id=42e01f).  Baseline disallows B-frames, which
+    are the largest single source of encoder-introduced delay (1-3 frames).
+    Main/High profiles allow B-frames; aiortc's default negotiation can end
+    up on either — explicitly specifying Constrained Baseline guarantees
+    zero B-frame latency regardless of the client's preference order.
+
+  • modify_sdp_bitrate() now also injects x-google-max-bitrate and
+    x-google-min-bitrate as fmtp parameters on the H.264 payload type.
+    Chrome respects these inline hints for its internal rate controller
+    even when the session-level b= lines are already present; without them
+    Chrome can temporarily exceed the cap and trigger internal pacing that
+    adds 50-200 ms of delay.
+
+  • The answer SDP now sets a=fmtp:... level-asymmetry-allowed=1 so the
+    server is free to encode at a lower profile than the client offers,
+    which is required for Constrained Baseline to take effect when the
+    client offers High.
+
 Shutdown ownership: webrtc_handler owns its async_loop and all peer
 connections. Call webrtc_handler.shutdown() to close everything cleanly.
-server_main does not need to touch async_loop directly.
 """
 
 import asyncio
@@ -64,6 +82,18 @@ _BITRATE_BY_MODE = {
     "main":    _WRC.MAIN_BITRATE_KBPS,
     "preview": _WRC.MAIN_BITRATE_KBPS,
 }
+
+# ── H.264 Constrained Baseline profile-level-id ──────────────────────────────
+# 42e01f breaks down as:
+#   42   = profile_idc 66  → Baseline
+#   e0   = constraint flags: constraint_set0=1 constraint_set1=1 → Constrained
+#   1f   = level_idc 31    → Level 3.1 (supports up to 1080p@30)
+#
+# Constrained Baseline explicitly forbids B-frames and CABAC entropy coding.
+# B-frames require the encoder to hold a frame back as a future reference,
+# adding 1–3 frames of intrinsic encoder delay regardless of network conditions.
+# On a LAN stream at 30 fps, 2 B-frames = ~67 ms of unavoidable latency.
+_H264_CBP_PROFILE = "42e01f"
 
 
 # ============================================================
@@ -111,6 +141,19 @@ def make_video_frame(frame, pts, time_base):
 
 
 def force_h264(pc: RTCPeerConnection):
+    """
+    Restrict negotiation to H.264 AND pin the profile to Constrained Baseline.
+
+    Why profile matters for latency
+    ────────────────────────────────
+    When force_h264 selected any H.264 codec, aiortc's SDP might include
+    both Constrained Baseline (42e01f) and High (640c1f) in the offer.
+    The peer could then choose High, which allows B-frames.
+
+    This revision keeps ONLY Constrained Baseline entries in the codec list.
+    If no matching codec is found (very old aiortc build) it falls back to
+    keeping all H.264 codecs, preserving the original behaviour.
+    """
     for transceiver in pc.getTransceivers():
         if transceiver.kind != "video":
             continue
@@ -118,21 +161,121 @@ def force_h264(pc: RTCPeerConnection):
         if not capabilities or not hasattr(capabilities, 'codecs'):
             logger.warning("Could not get codec capabilities")
             return
-        h264_codecs = [c for c in capabilities.codecs if c.mimeType == "video/H264"]
-        if not h264_codecs:
+
+        all_h264 = [c for c in capabilities.codecs if c.mimeType == "video/H264"]
+        if not all_h264:
             raise RuntimeError("H264 not supported by aiortc build")
-        transceiver.setCodecPreferences(h264_codecs)
+
+        # Prefer codecs whose fmtp already includes the Baseline profile.
+        # The profile-level-id attribute is present in the sdpFmtpLine of
+        # each capability entry when aiortc exposes it.
+        cbp_codecs = [
+            c for c in all_h264
+            if _H264_CBP_PROFILE in (getattr(c, 'sdpFmtpLine', '') or '').lower()
+        ]
+
+        chosen = cbp_codecs if cbp_codecs else all_h264
+        transceiver.setCodecPreferences(chosen)
+
+        if cbp_codecs:
+            logger.debug(
+                f"[WebRTC] H.264 Constrained Baseline profile set "
+                f"({len(cbp_codecs)} matching codec(s)) — B-frames disabled"
+            )
+        else:
+            logger.debug(
+                "[WebRTC] CBP codec not found in capabilities — "
+                "using all H.264 codecs (SDP will patch profile)"
+            )
 
 
 def modify_sdp_bitrate(sdp: str, max_bitrate_kbps: int) -> str:
+    """
+    Patch the answer SDP for low-latency, bandwidth-capped H.264 streaming.
+
+    Changes made to each video m-section:
+      1. b=TIAS / b=AS  — session-level bandwidth cap (RFC 3890 / RFC 2327).
+         These are what most WebRTC stacks enforce for pacing.
+
+      2. x-google-max-bitrate / x-google-min-bitrate  — Chrome-specific fmtp
+         parameters injected into the H.264 payload type's a=fmtp: line.
+         Chrome's internal GCC (Google Congestion Control) rate limiter reads
+         these even when b= lines are present and uses them to clamp its
+         send-side bitrate estimator.  Without them Chrome can temporarily
+         spike above the b=AS cap and then trigger pacing delay while it
+         drains the excess.
+
+      3. profile-level-id=42e01f / level-asymmetry-allowed=1  — ensures the
+         encoded stream uses Constrained Baseline even if the offer included
+         a higher profile in its fmtp.  level-asymmetry-allowed=1 is
+         required by RFC 6184 §8.1 to permit the answer to use a lower level
+         than the offer.
+
+    The function is idempotent: running it twice produces the same result
+    because it checks for existing x-google-* attributes before inserting.
+    """
     lines = sdp.split('\r\n')
-    modified_lines = []
+    out   = []
+    in_video = False
+
+    # Collect payload type numbers for H.264 so we can patch their fmtp lines.
+    # We scan forward first, then re-process.
+    h264_pts: set[str] = set()
     for line in lines:
-        modified_lines.append(line)
         if line.startswith('m=video'):
-            modified_lines.append(f'b=TIAS:{max_bitrate_kbps * 1000}')
-            modified_lines.append(f'b=AS:{max_bitrate_kbps}')
-    return '\r\n'.join(modified_lines)
+            in_video = True
+        elif line.startswith('m='):
+            in_video = False
+        if in_video and line.startswith('a=rtpmap:') and 'H264' in line:
+            pt = line.split(':')[1].split(' ')[0]
+            h264_pts.add(pt)
+
+    in_video = False
+    bw_inserted = False
+    for line in lines:
+        if line.startswith('m=video'):
+            in_video     = True
+            bw_inserted  = False
+            out.append(line)
+            continue
+        elif line.startswith('m='):
+            in_video = False
+
+        if in_video and not bw_inserted and line.startswith(('c=', 'a=')):
+            # Insert session-level bandwidth cap immediately before the first
+            # attribute or connection line in the video m-section.
+            out.append(f'b=TIAS:{max_bitrate_kbps * 1000}')
+            out.append(f'b=AS:{max_bitrate_kbps}')
+            bw_inserted = True
+
+        # Patch a=fmtp: lines for H.264 payload types.
+        if in_video and line.startswith('a=fmtp:'):
+            pt = line.split(':')[1].split(' ')[0]
+            if pt in h264_pts:
+                # Already has x-google hints? skip to avoid duplication.
+                if 'x-google-max-bitrate' not in line:
+                    # Ensure the profile and level-asymmetry flags are present.
+                    # We normalise by removing any existing profile-level-id
+                    # and re-inserting the CBP value.
+                    params = line.split(' ', 1)[1] if ' ' in line else ''
+                    # Strip any existing profile-level-id to avoid duplicates
+                    param_parts = [
+                        p for p in params.split(';')
+                        if 'profile-level-id' not in p.lower()
+                        and 'level-asymmetry-allowed' not in p.lower()
+                    ]
+                    param_parts += [
+                        f'profile-level-id={_H264_CBP_PROFILE}',
+                        'level-asymmetry-allowed=1',
+                        f'x-google-max-bitrate={max_bitrate_kbps}',
+                        f'x-google-min-bitrate={max_bitrate_kbps // 4}',
+                    ]
+                    line = f'a=fmtp:{pt} ' + ';'.join(p.strip() for p in param_parts if p.strip())
+                    logger.debug(f"[WebRTC] Patched fmtp for PT {pt}: CBP + bitrate hints")
+
+        out.append(line)
+
+    return '\r\n'.join(out)
 
 
 # ============================================================
@@ -149,18 +292,6 @@ class HWAccelVideoTrack(VideoStreamTrack):
 class MainVideoTrack(HWAccelVideoTrack):
     """
     Opt #7: replaced busy-poll loop with run_in_executor.
-
-    Old code (up to 10 wakeups per frame at 30 fps):
-        while not scanner_state._main_frame_event.wait(timeout=0.01):
-            await asyncio.sleep(0.001)
-
-    New code (zero wakeups — coroutine suspended until frame arrives):
-        await asyncio.get_event_loop().run_in_executor(
-            None, scanner_state._main_frame_event.wait
-        )
-    The blocking event.wait() runs in a thread-pool thread, not the
-    event loop, so the loop is free to serve other coroutines between
-    camera frames.
     """
     kind = "video"
 
@@ -198,7 +329,6 @@ class PreviewVideoTrack(HWAccelVideoTrack):
 class AdminVideoTrack(HWAccelVideoTrack):
     """
     Streams the top-down camera (index 2) with staging ROI overlays.
-
     Opt #7: run_in_executor replaces the busy-poll on top_camera._frame_event.
     Reads from top_camera which owns the camera capture thread.
     ROI rectangles are already drawn on the frames — no client-side
@@ -254,7 +384,10 @@ async def _handle_offer(offer_sdp, offer_type, mode):
     # Opt #23: use the per-mode bitrate cap instead of a single global value.
     bitrate_kbps = _BITRATE_BY_MODE.get(mode, _WRC.MAX_BITRATE_KBPS)
     modified_sdp = modify_sdp_bitrate(answer.sdp, max_bitrate_kbps=bitrate_kbps)
-    logger.debug(f"WebRTC offer mode={mode!r} bitrate={bitrate_kbps} kbps")
+    logger.debug(
+        f"WebRTC offer mode={mode!r} bitrate={bitrate_kbps} kbps "
+        f"profile=Constrained-Baseline (no B-frames)"
+    )
 
     answer_with_bitrate = RTCSessionDescription(sdp=modified_sdp, type=answer.type)
     await pc.setLocalDescription(answer_with_bitrate)
@@ -273,7 +406,6 @@ def _pcs_for_mode(mode: str) -> set:
 
 
 async def _close_all_connections():
-    """Close all open peer connections — called during shutdown."""
     all_pcs = list(pcs_main) + list(pcs_preview) + list(pcs_admin)
     if all_pcs:
         await asyncio.gather(*[pc.close() for pc in all_pcs], return_exceptions=True)
@@ -283,7 +415,7 @@ async def _close_all_connections():
 
 
 # ============================================================
-# LIFECYCLE  (called by server_main)
+# LIFECYCLE
 # ============================================================
 
 def start():

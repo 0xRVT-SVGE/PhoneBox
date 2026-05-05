@@ -23,7 +23,7 @@ make
 make install # may need sudo
 
 #Pgvector -Windows
-set "PGROOT=C:\Postgresfolder"
+set "PGROOT=C:\Program Files\PostgreSQL\18"
 cd %TEMP%
 git clone --branch v0.8.2 https://github.com/pgvector/pgvector.git
 cd pgvector

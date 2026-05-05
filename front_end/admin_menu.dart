@@ -4,8 +4,10 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'api_service.dart';
 import 'socket_service.dart';
 import 'webrtc_config.dart';
+import 'scan_success_page.dart';
 
 import 'shimmer_widgets.dart'; // Opt #31
+import 'report_page.dart';    // ← real ReportPage (was a stub before)
 
 // ══════════════════════════════════════════════════════════
 // ADMIN MENU PAGE
@@ -117,9 +119,11 @@ class _AdminMenuPageState extends State<AdminMenuPage> {
         MaterialPageRoute(builder: (_) => const ManageStudentsPage()));
   }
 
+  // FIX: was navigating to a stub 'ActivityReportPage' defined in this file.
+  // Now navigates to the real ReportPage from report_page.dart.
   void _openActivityReport() {
     Navigator.push(context,
-        MaterialPageRoute(builder: (_) => const ActivityReportPage()));
+        MaterialPageRoute(builder: (_) => const ReportPage()));
   }
 
   // ── Build ─────────────────────────────────────────────
@@ -134,58 +138,58 @@ class _AdminMenuPageState extends State<AdminMenuPage> {
         ],
       ),
       body: _loading
-          // Opt #31: skeleton while data loads
+      // Opt #31: skeleton while data loads
           ? const AdminPhoneListSkeleton()
           : RefreshIndicator(
+        onRefresh: _loadData,
+        child: ListView(children: [
+          _SectionHeader(
+            icon: Icons.inventory_2_outlined,
+            label: 'Stored Phones (${_storedPhones.length})',
+          ),
+          if (_storedPhones.isEmpty)
+            const _EmptyRow(text: 'No phones currently stored')
+          else
+            ..._storedPhones.map((p) => _AdminPhoneCard(
+              phone: p as Map<String, dynamic>,
               onRefresh: _loadData,
-              child: ListView(children: [
-                _SectionHeader(
-                  icon: Icons.inventory_2_outlined,
-                  label: 'Stored Phones (${_storedPhones.length})',
-                ),
-                if (_storedPhones.isEmpty)
-                  const _EmptyRow(text: 'No phones currently stored')
-                else
-                  ..._storedPhones.map((p) => _AdminPhoneCard(
-                        phone: p as Map<String, dynamic>,
-                        onRefresh: _loadData,
-                        topRenderer: _topRenderer,
-                        topConnectedNotifier: _topConnected,
-                      )),
-                const SizedBox(height: 8),
-                _SectionHeader(
-                  icon: Icons.person_outline,
-                  label: 'Taken Phones (${_takenPhones.length})',
-                ),
-                if (_takenPhones.isEmpty)
-                  const _EmptyRow(text: 'No phones taken')
-                else
-                  ..._takenPhones.map((p) => _AdminPhoneCard(
-                        phone: p as Map<String, dynamic>,
-                        onRefresh: _loadData,
-                        topRenderer: _topRenderer,
-                        topConnectedNotifier: _topConnected,
-                      )),
-                const SizedBox(height: 24),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Column(children: [
-                    _AdminMenuButton(
-                      icon: Icons.people_outline,
-                      label: 'Manage Students',
-                      onPressed: _openManageStudents,
-                    ),
-                    const SizedBox(height: 10),
-                    _AdminMenuButton(
-                      icon: Icons.bar_chart_outlined,
-                      label: 'Activity Report',
-                      onPressed: _openActivityReport,
-                    ),
-                  ]),
-                ),
-                const SizedBox(height: 24),
-              ]),
-            ),
+              topRenderer: _topRenderer,
+              topConnectedNotifier: _topConnected,
+            )),
+          const SizedBox(height: 8),
+          _SectionHeader(
+            icon: Icons.person_outline,
+            label: 'Taken Phones (${_takenPhones.length})',
+          ),
+          if (_takenPhones.isEmpty)
+            const _EmptyRow(text: 'No phones taken')
+          else
+            ..._takenPhones.map((p) => _AdminPhoneCard(
+              phone: p as Map<String, dynamic>,
+              onRefresh: _loadData,
+              topRenderer: _topRenderer,
+              topConnectedNotifier: _topConnected,
+            )),
+          const SizedBox(height: 24),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Column(children: [
+              _AdminMenuButton(
+                icon: Icons.people_outline,
+                label: 'Manage Students',
+                onPressed: _openManageStudents,
+              ),
+              const SizedBox(height: 10),
+              _AdminMenuButton(
+                icon: Icons.bar_chart_outlined,
+                label: 'Activity Report',
+                onPressed: _openActivityReport,
+              ),
+            ]),
+          ),
+          const SizedBox(height: 24),
+        ]),
+      ),
     );
   }
 }
@@ -199,17 +203,17 @@ class _SectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-        child: Row(children: [
-          Icon(icon, size: 18, color: Colors.grey),
-          const SizedBox(width: 6),
-          Text(label,
-              style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.grey)),
-        ]),
-      );
+    padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+    child: Row(children: [
+      Icon(icon, size: 18, color: Colors.grey),
+      const SizedBox(width: 6),
+      Text(label,
+          style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey)),
+    ]),
+  );
 }
 
 // ── Empty row ─────────────────────────────────────────────
@@ -220,10 +224,10 @@ class _EmptyRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-        child: Text(text,
-            style: const TextStyle(color: Colors.grey, fontSize: 13)),
-      );
+    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+    child: Text(text,
+        style: const TextStyle(color: Colors.grey, fontSize: 13)),
+  );
 }
 
 // ── Admin menu button ─────────────────────────────────────
@@ -237,18 +241,18 @@ class _AdminMenuButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => SizedBox(
-        width: double.infinity,
-        child: OutlinedButton.icon(
-          icon: Icon(icon),
-          label: Text(label),
-          onPressed: onPressed,
-          style: OutlinedButton.styleFrom(
-            padding: const EdgeInsets.symmetric(vertical: 14),
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          ),
-        ),
-      );
+    width: double.infinity,
+    child: OutlinedButton.icon(
+      icon: Icon(icon),
+      label: Text(label),
+      onPressed: onPressed,
+      style: OutlinedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        shape:
+        RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    ),
+  );
 }
 
 // ── Admin phone card ──────────────────────────────────────
@@ -366,20 +370,20 @@ class _SmallBtn extends StatelessWidget {
   final VoidCallback onPressed;
   const _SmallBtn(
       {required this.label,
-      required this.color,
-      required this.enabled,
-      required this.onPressed});
+        required this.color,
+        required this.enabled,
+        required this.onPressed});
 
   @override
   Widget build(BuildContext context) => ElevatedButton(
-        onPressed: enabled ? onPressed : null,
-        style: ElevatedButton.styleFrom(
-            backgroundColor: color,
-            fixedSize: const Size(72, 32),
-            padding: EdgeInsets.zero,
-            textStyle: const TextStyle(fontSize: 12)),
-        child: Text(label),
-      );
+    onPressed: enabled ? onPressed : null,
+    style: ElevatedButton.styleFrom(
+        backgroundColor: color,
+        fixedSize: const Size(72, 32),
+        padding: EdgeInsets.zero,
+        textStyle: const TextStyle(fontSize: 12)),
+    child: Text(label),
+  );
 }
 
 // ══════════════════════════════════════════════════════════
@@ -430,7 +434,7 @@ class _ManageStudentsPageState extends State<ManageStudentsPage> {
     _debounce?.cancel();
     _debounce = Timer(
       const Duration(milliseconds: 350),
-      () => _loadStudents(_searchCtrl.text.trim()),
+          () => _loadStudents(_searchCtrl.text.trim()),
     );
   }
 
@@ -475,11 +479,11 @@ class _ManageStudentsPageState extends State<ManageStudentsPage> {
               prefixIcon: const Icon(Icons.search),
               suffixIcon: _searchCtrl.text.isNotEmpty
                   ? IconButton(
-                      icon: const Icon(Icons.clear),
-                      onPressed: () {
-                        _searchCtrl.clear();
-                        _loadStudents();
-                      })
+                  icon: const Icon(Icons.clear),
+                  onPressed: () {
+                    _searchCtrl.clear();
+                    _loadStudents();
+                  })
                   : null,
               border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(10)),
@@ -492,50 +496,50 @@ class _ManageStudentsPageState extends State<ManageStudentsPage> {
           child: _loading
               ? const StudentListSkeleton()
               : _students.isEmpty
-                  ? const Center(child: Text('No students found'))
-                  : ListView.builder(
-                      itemCount: _students.length,
-                      itemBuilder: (_, i) {
-                        final s = _students[i] as Map<String, dynamic>;
-                        return ListTile(
-                          title: Text(
-                              '${s['first_name']} ${s['last_name']}'),
-                          subtitle:
-                              Text(s['sid'] as String? ?? ''),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              IconButton(
-                                icon: const Icon(Icons.phone_outlined,
-                                    size: 20),
-                                tooltip: 'Phones',
-                                onPressed: () => Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                        builder: (_) => StudentPhonesPage(
-                                            sid: s['sid'] as String,
-                                            studentName:
-                                                '${s['first_name']} ${s['last_name']}'))),
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.edit_outlined,
-                                    size: 20),
-                                tooltip: 'Edit',
-                                onPressed: () => _openEdit(s),
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.delete_outline,
-                                    size: 20,
-                                    color: Colors.redAccent),
-                                tooltip: 'Delete',
-                                onPressed: () => _confirmDelete(
-                                    context, s['sid'] as String),
-                              ),
-                            ],
-                          ),
-                        );
-                      },
+              ? const Center(child: Text('No students found'))
+              : ListView.builder(
+            itemCount: _students.length,
+            itemBuilder: (_, i) {
+              final s = _students[i] as Map<String, dynamic>;
+              return ListTile(
+                title: Text(
+                    '${s['first_name']} ${s['last_name']}'),
+                subtitle:
+                Text(s['sid'] as String? ?? ''),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.phone_outlined,
+                          size: 20),
+                      tooltip: 'Phones',
+                      onPressed: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (_) => StudentPhonesPage(
+                                  sid: s['sid'] as String,
+                                  studentName:
+                                  '${s['first_name']} ${s['last_name']}'))),
                     ),
+                    IconButton(
+                      icon: const Icon(Icons.edit_outlined,
+                          size: 20),
+                      tooltip: 'Edit',
+                      onPressed: () => _openEdit(s),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.delete_outline,
+                          size: 20,
+                          color: Colors.redAccent),
+                      tooltip: 'Delete',
+                      onPressed: () => _confirmDelete(
+                          context, s['sid'] as String),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
         ),
       ]),
     );
@@ -635,45 +639,45 @@ class _StudentPhonesPageState extends State<StudentPhonesPage> {
       body: _loading
           ? const PhoneListSkeleton()
           : _phones.isEmpty
-              ? const Center(child: Text('No phones registered'))
-              : ListView.builder(
-                  itemCount: _phones.length,
-                  itemBuilder: (_, i) {
-                    final p   = _phones[i] as Map<String, dynamic>;
-                    final pid = p['pid'].toString();
-                    return Card(
-                      margin: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 5),
-                      child: ListTile(
-                        title: Text(p['model'] as String? ?? 'Unknown'),
-                        subtitle: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('IMEI: ${p['imei'] ?? '—'}'),
-                            Text('Cond: ${p['cond'] ?? '—'}'),
-                          ],
-                        ),
-                        isThreeLine: true,
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            IconButton(
-                              icon: const Icon(Icons.edit_outlined,
-                                  size: 20),
-                              onPressed: () => _openEdit(p),
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.delete_outline,
-                                  size: 20, color: Colors.redAccent),
-                              onPressed: () =>
-                                  _confirmDelete(context, pid),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                ),
+          ? const Center(child: Text('No phones registered'))
+          : ListView.builder(
+        itemCount: _phones.length,
+        itemBuilder: (_, i) {
+          final p   = _phones[i] as Map<String, dynamic>;
+          final pid = p['pid'].toString();
+          return Card(
+            margin: const EdgeInsets.symmetric(
+                horizontal: 12, vertical: 5),
+            child: ListTile(
+              title: Text(p['model'] as String? ?? 'Unknown'),
+              subtitle: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('IMEI: ${p['imei'] ?? '—'}'),
+                  Text('Cond: ${p['cond'] ?? '—'}'),
+                ],
+              ),
+              isThreeLine: true,
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.edit_outlined,
+                        size: 20),
+                    onPressed: () => _openEdit(p),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.delete_outline,
+                        size: 20, color: Colors.redAccent),
+                    onPressed: () =>
+                        _confirmDelete(context, pid),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
     );
   }
 
@@ -710,10 +714,10 @@ class EditStudentPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(
-            title: Text(student == null ? 'Add Student' : 'Edit Student')),
-        body: const Center(child: Text('Student form goes here')),
-      );
+    appBar: AppBar(
+        title: Text(student == null ? 'Add Student' : 'Edit Student')),
+    body: const Center(child: Text('Student form goes here')),
+  );
 }
 
 // ══════════════════════════════════════════════════════════
@@ -727,28 +731,12 @@ class EditPhonePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-        appBar:
-            AppBar(title: Text(phone == null ? 'Add Phone' : 'Edit Phone')),
-        body: const Center(child: Text('Phone form goes here')),
-      );
-}
-
-// ══════════════════════════════════════════════════════════
-// ACTIVITY REPORT PAGE  (stub — replace with your report widget)
-// ══════════════════════════════════════════════════════════
-
-class ActivityReportPage extends StatelessWidget {
-  const ActivityReportPage({super.key});
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(title: const Text('Activity Report')),
-        body: const Center(child: Text('Report view goes here')),
-      );
+    appBar:
+    AppBar(title: Text(phone == null ? 'Add Phone' : 'Edit Phone')),
+    body: const Center(child: Text('Phone form goes here')),
+  );
 }
 
 // ══════════════════════════════════════════════════════════
 // DVWBottomSheet — imported from scan_success_page.dart
-// (already defined there; this file imports it via the
-//  shared barrel or direct import — no duplicate needed)
 // ══════════════════════════════════════════════════════════
