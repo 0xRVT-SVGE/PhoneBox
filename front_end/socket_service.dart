@@ -29,6 +29,10 @@ class SocketService {
   IO.Socket? socket;
   bool isConnected   = false;
   bool _isConnecting = false;
+  // F5: request full alarm status only on the very first connect.
+  // On reconnects the server will replay any active alarm via alarm_triggered;
+  // re-requesting would race with live events and may push a stale snapshot.
+  bool _firstConnect = true;
 
   // ── Typed broadcast streams ───────────────────────────────────────────────
   // Broadcast: multiple widgets can subscribe simultaneously.
@@ -136,7 +140,12 @@ class SocketService {
       isConnected   = true;
       _isConnecting = false;
       requestStatus();
-      requestAlarmStatus();
+      // F5: alarm status only needed on first connect; on reconnect the server
+      // re-sends alarm_triggered automatically if an alarm is still active.
+      if (_firstConnect) {
+        _firstConnect = false;
+        requestAlarmStatus();
+      }
     });
 
     socket!.onDisconnect((_) {
@@ -245,13 +254,6 @@ class SocketService {
   void adminForceClose({bool safe = true}) =>
       _emit('admin_force_close_session', {'safe': safe});
   void adminCancelStep() => _emit('admin_cancel_step', {});
-
-  // ── Backward-compat stubs ─────────────────────────────────────────────────
-  // Widgets now own their subscriptions and cancel them in dispose().
-  // These are kept so any remaining old call-sites compile without errors.
-  // @deprecated — remove once all call-sites have been migrated to streams.
-  void clearDvwCallbacks()   {}
-  void clearAdminCallbacks() {}
 
   // ── Teardown ──────────────────────────────────────────────────────────────
 

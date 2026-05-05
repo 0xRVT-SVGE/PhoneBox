@@ -1,13 +1,12 @@
 // report_page.dart
-import 'dart:convert';
+import 'dart:typed_data';
+import 'package:flutter/foundation.dart'; // compute()
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
-
-const String _baseUrl = "http://localhost:5000";
+import 'api_service.dart';
 
 final _dtFmt  = DateFormat("dd/MM/yyyy HH:mm");
 final _hdrFmt = DateFormat("dd/MM/yyyy HH:mm:ss");
@@ -20,6 +19,15 @@ String _fmt(String? iso) {
     return iso;
   }
 }
+
+// ══════════════════════════════════════════════════════════
+// F1: top-level adapter required by compute() — must be a
+// top-level function, not a closure over instance state.
+// Delegates to the static PDF builder on _ReportPageState.
+// ══════════════════════════════════════════════════════════
+
+Future<Uint8List> _buildPdfIsolate(Map<String, dynamic> params) =>
+    _ReportPageState._buildPdfStatic(params);
 
 // ══════════════════════════════════════════════════════════
 // REPORT PAGE
@@ -87,25 +95,43 @@ class _ReportPageState extends State<ReportPage> {
     setState(() { _loading = true; _errorMsg = null; });
 
     try {
-      final uri = Uri.parse(
-          "$_baseUrl/api/phones/activity"
-          "?from=${Uri.encodeQueryComponent(_fromDt.toIso8601String())}"
-          "&to=${Uri.encodeQueryComponent(_toDt.toIso8601String())}");
-
-      final res = await http.get(uri).timeout(const Duration(seconds: 20));
-      if (res.statusCode != 200) {
-        final body = jsonDecode(res.body);
-        setState(() => _errorMsg = body['message'] ?? 'Server error ${res.statusCode}');
+      // F2: use ApiService singleton Dio — reuses keep-alive connection pool
+      // instead of opening a new TCP socket for every report.
+      final response = await ApiService.getActivityReport(_fromDt, _toDt);
+      if (response == null) {
+        setState(() => _errorMsg = 'Request failed or timed out.');
         return;
       }
-      final body = jsonDecode(res.body);
-      final data = body['data'] as Map<String, dynamic>;
+      if (response['status'] != 'success') {
+        setState(() => _errorMsg = response['message'] ?? 'Server error');
+        return;
+      }
 
-      final doc = _buildPdf(data);
+      final data = response['data'] as Map<String, dynamic>;
+
+      // F1: build PDF in a background isolate — eliminates UI jank on large
+      // reports (500+ records can take 200–600ms on a mid-range tablet).
+      // All state the builder needs is serialized into a plain Map so it can
+      // cross the isolate boundary via SendPort.
+      final params = <String, dynamic>{
+        'data':              data,
+        'stressEnabled':    _stressEnabled,
+        'stressStartHour':  _stressStart.hour,
+        'stressStartMin':   _stressStart.minute,
+        'stressEndHour':    _stressEnd.hour,
+        'stressEndMin':     _stressEnd.minute,
+        'fromDtIso':        _fromDt.toIso8601String(),
+        'toDtIso':          _toDt.toIso8601String(),
+        // Pre-format time labels here — BuildContext can't cross isolate boundary
+        'stressStartLabel': _stressStart.format(context),
+        'stressEndLabel':   _stressEnd.format(context),
+      };
+
+      final bytes = await compute(_buildPdfIsolate, params);
       if (!mounted) return;
 
       await Printing.layoutPdf(
-        onLayout: (_) async => doc.save(),
+        onLayout: (_) async => bytes,
         name: 'PhoneActivity_${DateFormat("yyyyMMdd_HHmm").format(_fromDt)}.pdf',
       );
     } catch (e) {
@@ -129,7 +155,20 @@ class _ReportPageState extends State<ReportPage> {
   // NotoSans TTF as a Flutter asset and load with pw.Font.ttf().
   // ══════════════════════════════════════════════════════════
 
-  pw.Document _buildPdf(Map<String, dynamic> data) {
+  // F1: static — callable from top-level _buildPdfIsolate via compute().
+  // All state arrives in [params]; no instance variables are read.
+  static Future<Uint8List> _buildPdfStatic(Map<String, dynamic> params) async {
+    final data           = params['data']            as Map<String, dynamic>;
+    final stressEnabled  = params['stressEnabled']   as bool;
+    final stressStartH   = params['stressStartHour'] as int;
+    final stressStartM   = params['stressStartMin']  as int;
+    final stressEndH     = params['stressEndHour']   as int;
+    final stressEndM     = params['stressEndMin']    as int;
+    final fromDt         = DateTime.parse(params['fromDtIso']       as String);
+    final toDt           = DateTime.parse(params['toDtIso']         as String);
+    final stressStartLbl = params['stressStartLabel'] as String;
+    final stressEndLbl   = params['stressEndLabel']   as String;
+
     final doc = pw.Document();
 
     // ── Fonts (synchronous, no network, no assets) ────────────────────────
@@ -149,12 +188,12 @@ class _ReportPageState extends State<ReportPage> {
 
     // ── Stress helpers ────────────────────────────────────────────────────
     bool isStressed(String? isoTs) {
-      if (!_stressEnabled || isoTs == null) return false;
+      if (!stressEnabled || isoTs == null) return false;
       final dt = DateTime.tryParse(isoTs)?.toLocal();
       if (dt == null) return false;
       final m = dt.hour * 60 + dt.minute;
-      final s = _stressStart.hour * 60 + _stressStart.minute;
-      final e = _stressEnd.hour   * 60 + _stressEnd.minute;
+      final s = stressStartH * 60 + stressStartM;
+      final e = stressEndH   * 60 + stressEndM;
       return m < s || m > e;
     }
 
@@ -408,9 +447,9 @@ class _ReportPageState extends State<ReportPage> {
             ),
             pw.SizedBox(height: 4),
             pw.Text(
-                'Period: ${_dtFmt.format(_fromDt)}  to  ${_dtFmt.format(_toDt)}',
+                'Period: ${_dtFmt.format(fromDt)}  to  ${_dtFmt.format(toDt)}',
                 style: pw.TextStyle(font: font, fontSize: 9)),
-            if (_stressEnabled) ...[
+            if (stressEnabled) ...[
               pw.SizedBox(height: 2),
               pw.RichText(
                 text: pw.TextSpan(children: [
@@ -418,8 +457,7 @@ class _ReportPageState extends State<ReportPage> {
                       text: 'Normal hours: ',
                       style: pw.TextStyle(font: font, fontSize: 9)),
                   pw.TextSpan(
-                      text: '${_stressStart.format(context)}'
-                            '  ->  ${_stressEnd.format(context)}',
+                      text: '$stressStartLbl  ->  $stressEndLbl',
                       style: pw.TextStyle(font: fontB, fontSize: 9)),
                   pw.TextSpan(
                       text:
@@ -472,7 +510,7 @@ class _ReportPageState extends State<ReportPage> {
       ),
     );
 
-    return doc;
+    return doc.save();
   }
 
   // ══════════════════════════════════════════════════════════

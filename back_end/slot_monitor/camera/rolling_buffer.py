@@ -4,34 +4,28 @@
 """
 Rolling frame buffer — continuous circular recording.
 
-Opt #8  — TurboJPEG encoder with cv2 fallback
-----------------------------------------------
-libjpeg-turbo is 2-6× faster than the reference libjpeg used by
-cv2.imencode at equivalent quality.  Every push() call on the JPEG
-path encodes a frame; at 30 fps × 2 cameras this is the hottest
-non-CV path in the process.
+Session 14 — B3/CY2 fix
+────────────────────────
+RollingBuffer.push() previously used a while-loop to evict old frames:
 
-Opt #15 — Raw numpy ring buffer (skip JPEG encode/decode)
-----------------------------------------------------------
-The JPEG path encodes every frame on push() and then decodes every
-frame when saving to MP4 — two full image round-trips per frame.
-RawRollingBuffer stores raw BGR numpy arrays in a fixed-size deque
-(dtype=uint8, shape kept uniform).
+    while self._frames and self._frames[0][0] < cutoff:
+        self._frames.popleft()
 
-Memory comparison at 30 s / 1280×720 / 30 fps:
-  JPEG (quality 70) : ~30 s × 30 fps × ~40 KB avg  ≈  36 MB
-  Raw uint8         : 30 s × 30 fps × 1280×720×3   ≈ 2.6 GB  (too large at 30 fps)
-  Raw at 15 fps     : ≈ 1.3 GB — acceptable on a 4 GB+ RAM machine
+This ran on EVERY push (every frame), inside a threading.Lock, executing
+Python bytecode even when nothing needed evicting (the common case at
+steady state). At 20fps × 2 cameras = 40 lock-acquisitions/second.
 
-Because the RAM cost is significant, raw buffering is OFF by default.
-Enable per-buffer via RollingBufferConfig.RAW_BUFFER_ENABLED = True,
-or use RawRollingBuffer directly where you need sub-millisecond push/save.
+Fix: replace with deque(maxlen=N) where N = int(BUFFER_DURATION_S * fps)
+computed once at __init__. deque's C-level eviction is atomic and costs
+zero Python when full (it pops internally with no Python loop). The
+while-loop, cutoff variable, and time.time() call in push() are all gone.
 
-Best use-case: AdminOpsHandler evidence clips where we want to avoid
-encoder latency on alarm fire.  The FaceRollingBuffer and
-TopRollingBuffer continue to use JPEG for their 30-second pre-buffers.
+Timestamps are still stored as the first element of each tuple so
+duration_seconds() and downstream fps estimation continue to work.
 
-Opt #19 — Event-based TopRollingBuffer feed loop (already present)
+Opt #8  — TurboJPEG encoder with cv2 fallback (unchanged)
+Opt #15 — Raw numpy ring buffer (unchanged)
+Opt #19 — Event-based TopRollingBuffer feed loop (unchanged)
 """
 
 import cv2
@@ -48,17 +42,18 @@ from back_end.config import RollingBufferConfig as _RBC, EvidenceConfig as _EC
 
 logger = logging.getLogger(__name__)
 
-BUFFER_DURATION_S = _RBC.BUFFER_DURATION_S
-JPEG_QUALITY      = _RBC.JPEG_QUALITY
-TOP_FPS           = _RBC.TOP_FPS_ACTIVE
-TOP_FPS_IDLE      = _RBC.TOP_FPS_IDLE
-EVIDENCE_BASE_DIR = Path(_EC.BASE_DIR)
+BUFFER_DURATION_S  = _RBC.BUFFER_DURATION_S
+JPEG_QUALITY       = _RBC.JPEG_QUALITY
+TOP_FPS            = _RBC.TOP_FPS_ACTIVE
+TOP_FPS_IDLE       = _RBC.TOP_FPS_IDLE
+# B3: fps used to compute maxlen for the fixed-size deque
+_ROLLING_BUFFER_FPS = _RBC.ROLLING_BUFFER_FPS
+EVIDENCE_BASE_DIR  = Path(_EC.BASE_DIR)
 
-# Raw buffer enabled flag — costs more RAM but eliminates encode/decode cycles
 RAW_BUFFER_ENABLED = _RBC.RAW_BUFFER_ENABLED
 
-_Frame     = Tuple[float, bytes]          # JPEG path: (timestamp, jpeg_bytes)
-_RawFrame  = Tuple[float, np.ndarray]     # Raw path:  (timestamp, bgr_array)
+_Frame     = Tuple[float, bytes]
+_RawFrame  = Tuple[float, np.ndarray]
 
 # ── Opt #8: TurboJPEG — 2-6x faster JPEG encoding at same quality ────────────
 try:
@@ -76,11 +71,7 @@ except Exception:
 
 
 def _encode_jpeg(frame: np.ndarray, quality: int) -> Optional[bytes]:
-    """
-    Encode a BGR frame to JPEG bytes.
-    Uses TurboJPEG when available (Opt #8), otherwise cv2.imencode.
-    Returns bytes or None on failure.
-    """
+    """Encode BGR frame to JPEG bytes. Uses TurboJPEG when available (Opt #8)."""
     if _TURBO_AVAILABLE:
         try:
             return _turbo.encode(frame, quality=quality)
@@ -91,22 +82,13 @@ def _encode_jpeg(frame: np.ndarray, quality: int) -> Optional[bytes]:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Opt #15 — Raw numpy ring buffer
+# Opt #15 — Raw numpy ring buffer (unchanged)
 # ══════════════════════════════════════════════════════════════════════════════
 
 class RawRollingBuffer:
     """
     Circular buffer of raw BGR numpy frames.
-
-    Opt #15: eliminates the JPEG encode (on push) + JPEG decode (on save)
-    round-trip.  Push is ~0.1 ms instead of ~2-5 ms; save_to_mp4 is
-    ~30-50 % faster because VideoWriter receives frames directly.
-
-    Trade-off: higher RAM usage (~43 MB/s at 1280×720×30fps vs ~1.2 MB/s
-    for JPEG).  Suitable when the buffer duration is short (≤ 10 s) or
-    the machine has ≥ 4 GB RAM.
-
-    Thread-safe: a single RLock guards the deque.
+    Opt #15: eliminates JPEG encode/decode round-trip.
     """
 
     def __init__(
@@ -114,21 +96,17 @@ class RawRollingBuffer:
         duration_s: float = 10.0,
         max_frames: Optional[int] = None,
     ):
-        self._duration  = duration_s
+        self._duration   = duration_s
         self._max_frames = max_frames
-        self._lock      = threading.RLock()
-        self._frames: deque[_RawFrame] = deque(
-            maxlen=max_frames  # None = unlimited (time-based eviction)
-        )
+        self._lock       = threading.RLock()
+        self._frames: deque[_RawFrame] = deque(maxlen=max_frames)
 
     def push(self, frame: np.ndarray) -> None:
-        """Store a shallow copy of the frame (copy avoids torn-write issues)."""
         if frame is None:
             return
         now = time.time()
         with self._lock:
             self._frames.append((now, frame.copy()))
-            # Time-based eviction when maxlen is not set
             if self._max_frames is None:
                 cutoff = now - self._duration
                 while self._frames and self._frames[0][0] < cutoff:
@@ -149,19 +127,13 @@ class RawRollingBuffer:
             return self._frames[-1][0] - self._frames[0][0]
 
     def save_to_mp4(self, path: Path, fps: float) -> bool:
-        """
-        Write frames directly to mp4 with no decode step.
-        ~30-50 % faster than the JPEG path because we skip imdecode().
-        """
         frames = self.snapshot()
         if not frames:
             logger.warning(f"[RawBuffer] Empty buffer — nothing to save to {path}")
             return False
-
         _, first = frames[0]
         h, w = first.shape[:2]
         path.parent.mkdir(parents=True, exist_ok=True)
-
         writer = None
         for fourcc_str in ("mp4v", "XVID"):
             attempt = cv2.VideoWriter(
@@ -173,17 +145,14 @@ class RawRollingBuffer:
                 writer = attempt
                 break
             attempt.release()
-
         if writer is None:
             logger.error(f"[RawBuffer] VideoWriter failed for {path}")
             return False
-
         try:
             for _, bgr in frames:
                 writer.write(bgr)
         finally:
             writer.release()
-
         logger.info(
             f"[RawBuffer] Saved {len(frames)} raw frames "
             f"({len(frames)/fps:.1f}s) to {path.name}"
@@ -191,26 +160,48 @@ class RawRollingBuffer:
         return True
 
 
-# ── Core JPEG buffer (existing, Opt #8 applied) ───────────────────────────────
+# ── Core JPEG buffer — B3/CY2 fix applied ────────────────────────────────────
 
 class RollingBuffer:
-    def __init__(self, duration_s: float = BUFFER_DURATION_S,
-                 jpeg_quality: int = JPEG_QUALITY):
-        self._duration = duration_s
-        self._quality  = jpeg_quality
-        self._lock     = threading.Lock()
-        self._frames: deque[_Frame] = deque()
+    """
+    Circular JPEG frame buffer.
+
+    B3/CY2 fix: uses deque(maxlen=N) instead of a time-based while-loop
+    for eviction. N = int(BUFFER_DURATION_S * fps) computed at init.
+    The C-level deque eviction replaces all Python bytecode in the hot
+    push() path (was: while-loop + time.time() + cutoff comparison).
+
+    Timestamps are preserved in each tuple for duration_seconds() and
+    fps estimation in downstream save operations.
+    """
+
+    def __init__(
+        self,
+        duration_s: float = BUFFER_DURATION_S,
+        jpeg_quality: int = JPEG_QUALITY,
+        fps: float = _ROLLING_BUFFER_FPS,
+    ):
+        self._quality    = jpeg_quality
+        # B3: fixed-size deque — eviction is O(1) C-level, no Python loop
+        maxlen = int(duration_s * fps)
+        self._frames: deque[_Frame] = deque(maxlen=maxlen)
+        self._lock = threading.Lock()
+        logger.debug(
+            f"[RollingBuffer] deque(maxlen={maxlen}) "
+            f"({duration_s:.0f}s × {fps:.0f}fps) — B3 eviction fix active"
+        )
 
     def push(self, frame: np.ndarray) -> None:
+        """
+        B3 fix: zero Python bytecode for eviction.
+        deque.append() on a full deque atomically pops from the left in C.
+        No while-loop, no time.time(), no cutoff calculation.
+        """
         buf = _encode_jpeg(frame, self._quality)
         if buf is None:
             return
-        now = time.time()
         with self._lock:
-            self._frames.append((now, buf))
-            cutoff = now - self._duration
-            while self._frames and self._frames[0][0] < cutoff:
-                self._frames.popleft()
+            self._frames.append((time.time(), buf))
 
     def snapshot(self) -> List[_Frame]:
         with self._lock:
@@ -262,12 +253,12 @@ class RollingBuffer:
         return True
 
 
-# ── Face camera buffer (push-based, no thread) ────────────────────────────────
+# ── Face camera buffer ────────────────────────────────────────────────────────
 
 class FaceRollingBuffer:
     """
     Opt #15: uses RawRollingBuffer when RAW_BUFFER_ENABLED=True,
-    otherwise uses the JPEG RollingBuffer (default).
+    otherwise uses the JPEG RollingBuffer with B3 deque(maxlen) fix.
     """
 
     def __init__(self):
@@ -276,7 +267,8 @@ class FaceRollingBuffer:
             self._raw    = True
             logger.info("[FaceRollingBuffer] Using raw numpy ring buffer (Opt #15)")
         else:
-            self._buffer = RollingBuffer()
+            # B3: pass explicit fps so maxlen is correct
+            self._buffer = RollingBuffer(fps=float(TOP_FPS))
             self._raw    = False
 
     def push(self, frame: np.ndarray) -> None:
@@ -297,15 +289,12 @@ class FaceRollingBuffer:
         safe_pid = pid.replace("-", "")[:16]
         path     = EVIDENCE_BASE_DIR / "alarms" / f"{safe_pid}_slot{lid+1}_{dt_str}_face.mp4"
         fps      = self._estimate_fps()
-
         if self._raw:
-            # Opt #15: write directly — no decode step
             ok = self._buffer.save_to_mp4(path, fps)
             if ok:
                 logger.warning(f"[FaceRollingBuffer] Raw alarm clip saved: {path.name}")
                 return path
             return None
-
         from back_end.slot_monitor.admin.background_encoder import BackgroundEncoder
         ok = BackgroundEncoder.instance().submit(snapshot, path, fps)
         if ok:
@@ -322,7 +311,6 @@ class FaceRollingBuffer:
         safe_pid = pid.replace("-", "")[:16]
         path     = EVIDENCE_BASE_DIR / session_id / f"{safe_pid}_{dt_str}_face.mp4"
         fps      = self._estimate_fps()
-
         if self._raw:
             ok = self._buffer.save_to_mp4(path, fps)
             if ok and callback:
@@ -331,7 +319,6 @@ class FaceRollingBuffer:
                 except Exception as e:
                     logger.warning(f"[FaceRollingBuffer] Session clip callback error: {e}")
             return path if ok else None
-
         from back_end.slot_monitor.admin.background_encoder import BackgroundEncoder
         ok = BackgroundEncoder.instance().submit(
             snapshot, path, fps, callback=callback
@@ -348,13 +335,14 @@ class FaceRollingBuffer:
         return self._buffer.frame_count()
 
 
-# ── Top camera buffer (thread-based, event-driven) ───────────────────────────
+# ── Top camera buffer — Opt #19 event-driven, B3 deque(maxlen) fix ────────────
 
 class TopRollingBuffer:
     """
     Opt #19: event-driven feed loop.
     Opt #8:  TurboJPEG applied via _encode_jpeg() inside RollingBuffer.push().
     Opt #15: uses RawRollingBuffer when RAW_BUFFER_ENABLED=True.
+    B3/CY2:  RollingBuffer now uses deque(maxlen) — no while-loop eviction.
     """
 
     def __init__(self):
@@ -363,7 +351,8 @@ class TopRollingBuffer:
             self._raw    = True
             logger.info("[TopRollingBuffer] Using raw numpy ring buffer (Opt #15)")
         else:
-            self._buffer = RollingBuffer()
+            # B3: pass active fps so maxlen matches actual push rate
+            self._buffer = RollingBuffer(fps=float(TOP_FPS))
             self._raw    = False
 
         self._running = False
@@ -431,14 +420,12 @@ class TopRollingBuffer:
         safe_pid = pid.replace("-", "")[:16]
         path     = EVIDENCE_BASE_DIR / "alarms" / f"{safe_pid}_slot{lid+1}_{dt_str}_top.mp4"
         fps      = float(TOP_FPS if self._active else TOP_FPS_IDLE)
-
         if self._raw:
             ok = self._buffer.save_to_mp4(path, fps)
             if ok:
                 logger.warning(f"[TopRollingBuffer] Raw alarm clip saved: {path.name}")
                 return path
             return None
-
         from back_end.slot_monitor.admin.background_encoder import BackgroundEncoder
         ok = BackgroundEncoder.instance().submit(snapshot, path, fps)
         if ok:

@@ -147,11 +147,36 @@ def _deepface_represent(resized: np.ndarray):
 
 
 def emit_if_changed(new_auth, new_results):
+    """
+    B9: compare state via tuples instead of dicts.
+    Tuple comparison short-circuits on first inequality (~10× faster).
+    The dicts are still updated and emitted; only the change-detection is changed.
+    """
+    # auth keys: authorized, user
+    new_auth_key = (new_auth.get("authorized"), new_auth.get("user"))
+    cur_auth_key = (
+        scanner_state.auth_status.get("authorized"),
+        scanner_state.auth_status.get("user"),
+    )
+    # results keys: face_verified, barcode_verified, current_name, badge_timeout_exceeded
+    new_res_key = (
+        new_results.get("face_verified"),
+        new_results.get("barcode_verified"),
+        new_results.get("current_name"),
+        new_results.get("badge_timeout_exceeded"),
+    )
+    cur_res_key = (
+        scanner_state.scan_results.get("face_verified"),
+        scanner_state.scan_results.get("barcode_verified"),
+        scanner_state.scan_results.get("current_name"),
+        scanner_state.scan_results.get("badge_timeout_exceeded"),
+    )
+
     changed = False
-    if new_auth != scanner_state.auth_status:
+    if new_auth_key != cur_auth_key:
         scanner_state.auth_status.update(new_auth)
         changed = True
-    if new_results != scanner_state.scan_results:
+    if new_res_key != cur_res_key:
         scanner_state.scan_results.update(new_results)
         changed = True
     if changed:

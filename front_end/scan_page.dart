@@ -30,6 +30,9 @@ class _ScanPageState extends State<ScanPage> {
   bool _webrtcConnected = false;
   bool _alarmPageOpen   = false;
   bool _isReconnecting  = false;
+  // C2: guard against double Navigator.push when two authorized=true events
+  // arrive before the first ScanSuccessPage navigation completes.
+  bool _navigating      = false;
 
   final socketService = SocketService();
 
@@ -94,13 +97,15 @@ class _ScanPageState extends State<ScanPage> {
       final barcodeOk   = data["barcode_verified"]       ?? false;
       final currentName = data["current_name"]           ?? "Idle";
 
-      if (auth) {
+      if (auth && !_navigating) {
+        // C2: set guard before pushing — cleared when ScanSuccessPage pops
+        _navigating = true;
         Navigator.push(
           context,
           MaterialPageRoute(
             builder: (_) => ScanSuccessPage(sid: user, studentName: currentName),
           ),
-        );
+        ).then((_) => _navigating = false);
         scanning   = false;
         scanStatus = "Idle";
       } else if (timeout) {

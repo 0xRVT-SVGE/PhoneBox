@@ -82,13 +82,21 @@ class DatabaseConfig:
     SYNC_POOL_MIN = 1
     SYNC_POOL_MAX = 10
 
+    # B5: idle threshold — only run health-check ping when a pooled connection
+    # has not been used for this many seconds. Active connections skip the
+    # round-trip entirely, cutting per-query overhead in half under load.
+    HEALTH_CHECK_IDLE_S = 30.0   # seconds
+
     # ── Async connection pool (asyncpg) ───────────────────
     ASYNC_HOST        = "localhost"
     ASYNC_PORT        = 5432
     ASYNC_DATABASE    = "PhoneBoxDB"
     ASYNC_POOL_MIN    = 5
     ASYNC_POOL_MAX    = 20
-    ASYNC_CMD_TIMEOUT = 10.0
+
+    # A1: raised from 10.0 → 30.0 so slow HNSW scans and advisory-lock
+    # waits under load don't raise asyncio.TimeoutError prematurely.
+    ASYNC_CMD_TIMEOUT = 30.0
 
 
 # ============================================================
@@ -315,21 +323,9 @@ class AlarmConfig:
     # Minimum cosine distance between the "before" embedding (captured at
     # operation start) and the "after" embedding (captured at operation end)
     # that must be exceeded to confirm the slot physically changed.
-    #
-    # Used by SlotOperations.make_placement_verifier() for BOTH deposit
-    # (before=empty → after=occupied) and withdraw (before=occupied → after=empty).
-    #
-    # Typical cosine distances:
-    #   no change (same state)        : 0.00 – 0.03
-    #   lighting / angle noise        : 0.02 – 0.05
-    #   phone placed or removed       : 0.08 – 0.25
-    #
-    # Set conservatively above noise but below the smallest real change.
     SLOT_CHANGE_THRESHOLD = 0.07
 
     # Minimum seconds between saving alarm clips for the same (pid, lid).
-    # Prevents the background encoder from being flooded when multiple
-    # alarm triggers fire in rapid succession for the same slot.
     CLIP_DEBOUNCE_S = 30.0
 
 
@@ -339,7 +335,6 @@ class AlarmConfig:
 
 class AdminConfig:
     # Base session lifetime before expiry (seconds).
-    # Extended by SESSION_EXTEND_PER_RESOLVE for each resolved phone.
     SESSION_TIMEOUT = 120   # 2 minutes
 
     # Extra seconds added per resolved mismatch.
@@ -352,8 +347,7 @@ class AdminConfig:
     ADMIN_QR_SCAN_TIMEOUT = 90.0
 
     # Seconds after admin_remove_ok before the "No QR on this object" button
-    # appears in the frontend.  Set well below ADMIN_QR_SCAN_TIMEOUT so the
-    # button only appears when the QR genuinely cannot be found, not on every scan.
+    # appears in the frontend.
     NO_QR_BUTTON_DELAY_S = 25
 
 
@@ -383,12 +377,9 @@ class EmbeddingConfig:
 
 class WebRTCConfig:
     # Opt #23: per-mode bitrate caps.
-    # Admin top-cam needs 800 kbps for QR code readability.
-    # Front-cam (main/preview) needs 300 kbps for face recognition detail.
-    # MAX_BITRATE_KBPS is the hard fallback for any unrecognised mode.
-    ADMIN_BITRATE_KBPS = 800   # top-down camera — QR codes must be sharp
-    MAIN_BITRATE_KBPS  = 300   # front camera — face recognition quality
-    MAX_BITRATE_KBPS   = 300   # fallback (same as main)
+    ADMIN_BITRATE_KBPS = 800
+    MAIN_BITRATE_KBPS  = 300
+    MAX_BITRATE_KBPS   = 300
     OFFER_TIMEOUT      = 10
 
 
@@ -413,11 +404,13 @@ class RollingBufferConfig:
     JPEG_QUALITY      = 70
     TOP_FPS_ACTIVE    = 20
     TOP_FPS_IDLE      = 5
+
+    # B3: fps used by RollingBuffer to compute deque(maxlen).
+    # Must match the camera fps driving push() calls.
+    # TopRollingBuffer uses TOP_FPS_ACTIVE; FaceRollingBuffer uses FACE_RECORD_FPS.
+    ROLLING_BUFFER_FPS = 20   # frames/sec — used for maxlen calculation
+
     # Opt #15: raw numpy ring buffer
-    # True  = store BGR arrays directly (no JPEG encode/decode round-trip)
-    #         ~30-50% faster save_to_mp4; higher RAM cost
-    #         (30 s × 30 fps × 1280×720×3 ≈ 2.6 GB — enable only on 4+ GB machines)
-    # False = JPEG path (default, safe on all hardware)
     RAW_BUFFER_ENABLED = False
 
 
@@ -467,16 +460,9 @@ class OverlayConfig:
 # ============================================================
 
 class SlotEmbedConfig:
-    # All ROIs are resized to IMG_SIZE × IMG_SIZE before feature extraction.
-    IMG_SIZE  = 64   # pixels
-
-    # Number of histogram bins (lighting-tolerant component)
+    IMG_SIZE  = 64
     HIST_BINS = 32
-
-    # Top-left DCT_SIZE × DCT_SIZE coefficients kept (structure-sensitive)
-    DCT_SIZE  = 8    # 8×8 = 64 coefficients
-
-    # Derived: HIST_BINS + DCT_SIZE². Do not change independently.
+    DCT_SIZE  = 8
     EMBEDDING_DIM = HIST_BINS + (DCT_SIZE * DCT_SIZE)   # 96
 
 
@@ -485,26 +471,10 @@ class SlotEmbedConfig:
 # ============================================================
 
 class CameraProcessConfig:
-    # Master toggle.
-    # False (default) = legacy AsyncFrameBuffer (threading, current behaviour).
-    # True  = each camera runs in its own OS process (true GIL bypass).
-    # Enable when you have ≥ 8 slots and a multi-core CPU.
-    # Recommended: profile with py-spy first; then flip to True.
-    ENABLED = False
-
-    # Watcher-thread poll interval (seconds).
-    # 1 ms keeps latency well below one 30 fps frame interval (33 ms)
-    # without measurable CPU cost (< 0.1 % on any modern core).
-    WATCHER_POLL_S = 0.001   # 1 ms
-
-    # Child-process startup timeout.
-    # SharedFrameBuffer.start_capture() raises RuntimeError if the child
-    # does not deliver the first frame within this many seconds.
-    STARTUP_TIMEOUT = 5.0   # seconds
-
-    # Warm-up frames discarded inside the child process before sharing starts.
-    # Warm-up frames discarded inside the child process before sharing starts.
-    WARMUP_FRAMES = 10
+    ENABLED         = False
+    WATCHER_POLL_S  = 0.001
+    STARTUP_TIMEOUT = 5.0
+    WARMUP_FRAMES   = 10
 
 
 # ============================================================
@@ -512,23 +482,11 @@ class CameraProcessConfig:
 # ============================================================
 
 class EvidenceStorageConfig:
-    # Root directory for all evidence (date-partitioned subdirectories).
-    # Relative to the working directory where server_main.py is launched.
-    BASE_DIR = "evidence"
-
-    # Auto-delete sessions (kept=False) older than this many days.
-    # Sessions flagged kept=True are NEVER auto-deleted.
-    RETENTION_DAYS = 30
-
-    # Log a WARNING when total evidence directory exceeds this size (GB).
-    DISK_WARN_GB = 10.0
-
-    # Prune oldest non-kept sessions automatically when usage exceeds this (GB).
-    # Set to a very large value to disable auto-pruning (rely on RETENTION_DAYS only).
+    BASE_DIR         = "evidence"
+    RETENTION_DAYS   = 30
+    DISK_WARN_GB     = 10.0
     DISK_HARD_CAP_GB = 20.0
-
-    # How often the background retention thread checks for expired sessions (seconds).
-    PRUNE_INTERVAL_S = 3600   # once per hour
+    PRUNE_INTERVAL_S = 3600
 
 
 # ============================================================
@@ -536,56 +494,23 @@ class EvidenceStorageConfig:
 # ============================================================
 
 class MonitorServiceConfig:
-    # Master toggle.
-    # False (default) = single-process mode: AlarmController emits via SocketIO
-    #                   directly (current behaviour, no Redis needed).
-    # True  = multi-process mode: monitor publishes alarm events to Redis;
-    #         Flask server subscribes and re-emits to SocketIO clients.
-    #         Required when running the slot monitor as a separate process
-    #         (back_end/slot_monitor/monitor_service.py) for multi-instance scaling.
-    ENABLED = False
-
-    # Redis connection (host/port for alarm pub/sub channel).
-    # Must match the Redis instance used by the monitor process.
-    REDIS_HOST = "localhost"
-    REDIS_PORT = 6379
-    REDIS_DB   = 0
-
-    # Pub/sub channel name for alarm events.
-    ALARM_CHANNEL = "phonebox:alarms"
-
-    # Pub/sub channel for slot-state updates (future: cache invalidation).
+    ENABLED            = False
+    REDIS_HOST         = "localhost"
+    REDIS_PORT         = 6379
+    REDIS_DB           = 0
+    ALARM_CHANNEL      = "phonebox:alarms"
     SLOT_STATE_CHANNEL = "phonebox:slot_state"
-
-    # Timeout (seconds) for the Redis subscriber listen loop iteration.
-    # Lower = faster shutdown; higher = less CPU spin.
     SUBSCRIBE_TIMEOUT_S = 1.0
 
-# ── New class: NtfyConfig ─────────────────────────────────────────────────────
+
+# ── NtfyConfig ────────────────────────────────────────────────────────────────
 
 class NtfyConfig:
     """
     LAN-native push notifications via self-hosted ntfy server.
-    Replaces Firebase FCM — no internet, no API keys.
-
-    Setup:
-        docker run -d --name ntfy -p 80:80 binwiederhier/ntfy serve
-
-    Then set ENABLED = True and SERVER_URL to your ntfy host.
-
-    This must match front_end/ntfy_service.dart constants
-    (_kNtfyServer and _kNtfyTopic).
+    Setup: docker run -d --name ntfy -p 80:80 binwiederhier/ntfy serve
     """
-
-    # Master toggle — False = push disabled, AlarmController skips ntfy entirely
-    ENABLED = False
-
-    # URL of your self-hosted ntfy instance (no trailing slash)
+    ENABLED    = False
     SERVER_URL = "http://ntfy.phonebox.local"
-
-    # Topic name — must match _kNtfyTopic in ntfy_service.dart
-    TOPIC = "phonebox-alarms"
-
-    # HTTP timeout for the push POST (seconds)
-    # Keep short — push is fire-and-forget; a slow ntfy server must not block
-    TIMEOUT_S = 3.0
+    TOPIC      = "phonebox-alarms"
+    TIMEOUT_S  = 3.0

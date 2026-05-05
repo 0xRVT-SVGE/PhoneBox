@@ -52,39 +52,34 @@ class PhoneCardSkeleton extends StatelessWidget {
   const PhoneCardSkeleton({super.key});
 
   @override
-  Widget build(BuildContext context) => Shimmer.fromColors(
-        baseColor:      _kBaseColor,
-        highlightColor: _kHighlightColor,
-        child: Card(
-          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          color:  const Color(0xFF1C1C1E),
-          child:  Padding(
-            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 14),
-            child: Row(children: [
-              // Left: text lines
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const _ShimmerBox(width: 140, height: 14),
-                    const SizedBox(height: 8),
-                    const _ShimmerBox(width: 100, height: 11),
-                    const SizedBox(height: 6),
-                    const _ShimmerBox(width: 80,  height: 11),
-                    const SizedBox(height: 6),
-                    const _ShimmerBox(width: 60,  height: 11),
-                  ],
-                ),
+  // F3: no Shimmer here — the parent list wraps all cards in one controller.
+  Widget build(BuildContext context) => Card(
+        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        color:  const Color(0xFF1C1C1E),
+        child:  Padding(
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 14),
+          child: Row(children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const _ShimmerBox(width: 140, height: 14),
+                  const SizedBox(height: 8),
+                  const _ShimmerBox(width: 100, height: 11),
+                  const SizedBox(height: 6),
+                  const _ShimmerBox(width: 80,  height: 11),
+                  const SizedBox(height: 6),
+                  const _ShimmerBox(width: 60,  height: 11),
+                ],
               ),
-              const SizedBox(width: 12),
-              // Right: two action button placeholders
-              Column(children: const [
-                _ShimmerBox(width: 80, height: 36, borderRadius: 8),
-                SizedBox(height: 8),
-                _ShimmerBox(width: 80, height: 36, borderRadius: 8),
-              ]),
+            ),
+            const SizedBox(width: 12),
+            Column(children: const [
+              _ShimmerBox(width: 80, height: 36, borderRadius: 8),
+              SizedBox(height: 8),
+              _ShimmerBox(width: 80, height: 36, borderRadius: 8),
             ]),
-          ),
+          ]),
         ),
       );
 }
@@ -97,9 +92,14 @@ class PhoneListSkeleton extends StatelessWidget {
   const PhoneListSkeleton({super.key, this.count = 4});
 
   @override
-  Widget build(BuildContext context) => ListView.builder(
-        itemCount:   count,
-        itemBuilder: (_, __) => const PhoneCardSkeleton(),
+  // F3: one Shimmer wraps all cards — single animation controller, N cards.
+  Widget build(BuildContext context) => Shimmer.fromColors(
+        baseColor:      _kBaseColor,
+        highlightColor: _kHighlightColor,
+        child: ListView.builder(
+          itemCount:   count,
+          itemBuilder: (_, __) => const PhoneCardSkeleton(),
+        ),
       );
 }
 
@@ -110,26 +110,23 @@ class StudentCardSkeleton extends StatelessWidget {
   const StudentCardSkeleton({super.key});
 
   @override
-  Widget build(BuildContext context) => Shimmer.fromColors(
-        baseColor:      _kBaseColor,
-        highlightColor: _kHighlightColor,
-        child: Card(
-          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          color:  const Color(0xFF1C1C1E),
-          child:  ListTile(
-            title:    const _ShimmerBox(width: 120, height: 13),
-            subtitle: Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child:   const _ShimmerBox(width: 80, height: 11),
-            ),
-            trailing: Row(mainAxisSize: MainAxisSize.min, children: const [
-              _ShimmerBox(width: 32, height: 32, borderRadius: 16),
-              SizedBox(width: 6),
-              _ShimmerBox(width: 32, height: 32, borderRadius: 16),
-              SizedBox(width: 6),
-              _ShimmerBox(width: 32, height: 32, borderRadius: 16),
-            ]),
+  // F3: no Shimmer here — StudentListSkeleton wraps all cards in one controller.
+  Widget build(BuildContext context) => Card(
+        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        color:  const Color(0xFF1C1C1E),
+        child:  ListTile(
+          title:    const _ShimmerBox(width: 120, height: 13),
+          subtitle: Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child:   const _ShimmerBox(width: 80, height: 11),
           ),
+          trailing: Row(mainAxisSize: MainAxisSize.min, children: const [
+            _ShimmerBox(width: 32, height: 32, borderRadius: 16),
+            SizedBox(width: 6),
+            _ShimmerBox(width: 32, height: 32, borderRadius: 16),
+            SizedBox(width: 6),
+            _ShimmerBox(width: 32, height: 32, borderRadius: 16),
+          ]),
         ),
       );
 }
@@ -142,9 +139,14 @@ class StudentListSkeleton extends StatelessWidget {
   const StudentListSkeleton({super.key, this.count = 6});
 
   @override
-  Widget build(BuildContext context) => ListView.builder(
-        itemCount:   count,
-        itemBuilder: (_, __) => const StudentCardSkeleton(),
+  // F3: single parent Shimmer for all student cards.
+  Widget build(BuildContext context) => Shimmer.fromColors(
+        baseColor:      _kBaseColor,
+        highlightColor: _kHighlightColor,
+        child: ListView.builder(
+          itemCount:   count,
+          itemBuilder: (_, __) => const StudentCardSkeleton(),
+        ),
       );
 }
 

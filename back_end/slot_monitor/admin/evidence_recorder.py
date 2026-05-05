@@ -350,12 +350,13 @@ class PhoneRecorder:
         """Phase 2: live capture from top_camera. Starts immediately."""
         from back_end.slot_monitor.camera.top_camera import top_camera
 
-        writer_ready = False
-        interval     = 1.0 / RECORD_FPS
+        writer_ready  = False
+        interval      = 1.0 / RECORD_FPS
+        # B7: absolute deadline — advances by exactly `interval` each frame so
+        # slow frames self-correct instead of accumulating timing drift.
+        next_deadline = time.time() + interval
 
         while self._running:
-            loop_start = time.time()
-
             got = top_camera.wait_for_frame(timeout=0.2)
             if not got:
                 continue
@@ -376,10 +377,13 @@ class PhoneRecorder:
             self._writer.write(frame)
             self._frame_count += 1
 
-            elapsed = time.time() - loop_start
-            sleep   = interval - elapsed
-            if sleep > 0:
-                time.sleep(sleep)
+            # B7: sleep only the remaining time to the absolute deadline.
+            # If a frame was slow, sleep_time will be ≤ 0 and we skip the sleep,
+            # letting the next frame execute immediately to recover fps.
+            now = time.time()
+            if next_deadline > now:
+                time.sleep(next_deadline - now)
+            next_deadline += interval
 
     def _init_writer(self, width: int, height: int) -> bool:
         """Try XVID first (fastest encode), fall back to mp4v."""

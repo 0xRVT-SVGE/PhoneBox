@@ -68,6 +68,10 @@ pcs_main: set[RTCPeerConnection] = set()
 pcs_preview: set[RTCPeerConnection] = set()
 pcs_admin: set[RTCPeerConnection] = set()
 
+# C1: all pcs set mutations happen on the async-loop thread only.
+# The Flask route submits a coroutine rather than touching the sets directly.
+# (No threading.Lock needed — single-writer rule enforced by design.)
+
 # Dedicated async loop — owned by this module
 async_loop = asyncio.new_event_loop()
 _async_thread: threading.Thread = None
@@ -492,12 +496,27 @@ def take_photo():
 
 @webrtc_bp.route("/cancel/<mode>", methods=["POST"])
 def cancel_connection(mode):
-    pcs = _pcs_for_mode(mode)
+    """
+    C1 fix: set mutations moved into a coroutine executed on the async loop
+    thread.  Previously, pcs.discard() was called directly from the Flask
+    thread while on_state_change() mutated the same set from the async loop
+    thread — a data race under concurrent connections.
+    """
     if mode == "preview":
         scanner_state.stop_preview()
-    for pc in list(pcs):
-        asyncio.run_coroutine_threadsafe(pc.close(), async_loop)
-        pcs.discard(pc)
+
+    async def _cancel_on_loop():
+        pcs = _pcs_for_mode(mode)
+        for pc in list(pcs):          # snapshot before mutating
+            pcs.discard(pc)           # async-loop thread owns the set
+            await pc.close()
+
+    try:
+        future = asyncio.run_coroutine_threadsafe(_cancel_on_loop(), async_loop)
+        future.result(timeout=5.0)
+    except Exception as exc:
+        logger.warning(f"[WebRTC] cancel_connection({mode}) error: {exc}")
+
     return jsonify({"status": "success"})
 
 

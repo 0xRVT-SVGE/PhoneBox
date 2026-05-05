@@ -201,16 +201,17 @@ class _AlarmPageState extends State<AlarmPage>
   }
 
   void _maybeAutoPop({Duration delay = const Duration(milliseconds: 800)}) {
-    final adminEngaged = _resolutionInProgress ||
-        _loading ||
-        _authenticated ||
-        _passwordController.text.trim().isNotEmpty;
-    if (!adminEngaged) {
-      _autoPop?.cancel();
-      _autoPop = Timer(delay, () {
-        if (mounted) Navigator.of(context).pop();
-      });
-    }
+    // C3: cancel any pending timer and reschedule unconditionally.
+    // The guard is evaluated INSIDE the callback (when the timer fires),
+    // not here at schedule time — so typing within the delay window is safe.
+    _autoPop?.cancel();
+    _autoPop = Timer(delay, () {
+      final adminEngaged = _resolutionInProgress ||
+          _loading ||
+          _authenticated ||
+          _passwordController.text.trim().isNotEmpty;
+      if (!adminEngaged && mounted) Navigator.of(context).pop();
+    });
   }
 
   // ── Auth ──────────────────────────────────────────────────────────────────

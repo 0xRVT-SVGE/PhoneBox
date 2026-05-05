@@ -130,12 +130,16 @@ class ApiService {
   /// [maxRetries] how many attempts before giving up (default 5).
   /// [retryDelay] base delay between attempts — doubles each retry.
   ///
+  /// F4: base delay is 300ms for LAN (was 2s → 62s total).
+  /// 300ms base: 0.3+0.6+1.2+2.4+4.8 = 9.3s total — still enough for a
+  /// server restart but 6× faster recovery than the old 2s base.
+  ///
   /// Returns the answer SDP string, or null if all attempts fail.
   static Future<String?> sendOffer(
     String offerSDP, {
     String mode = 'main',
     int maxRetries = 5,
-    Duration retryDelay = const Duration(seconds: 2),
+    Duration retryDelay = const Duration(milliseconds: 300), // F4: was Duration(seconds: 2)
   }) async {
     assert(
       ['main', 'preview', 'admin'].contains(mode),
@@ -242,4 +246,29 @@ class ApiService {
   static Future<bool> cancelPreview() => cancelConnection('preview');
   static Future<bool> cancelMain()    => cancelConnection('main');
   static Future<bool> cancelAdmin()   => cancelConnection('admin');
+
+  // ====================== REPORTS ======================
+
+  /// F2: fetch activity report using the singleton Dio instance.
+  /// Uses the keep-alive connection pool instead of opening a new TCP socket
+  /// per report (was raw http.get() in report_page.dart).
+  static Future<Map<String, dynamic>?> getActivityReport(
+    DateTime from,
+    DateTime to,
+  ) async {
+    try {
+      final res = await _dio.get(
+        '/api/phones/activity',
+        queryParameters: {
+          'from': from.toIso8601String(),
+          'to':   to.toIso8601String(),
+        },
+        options: Options(receiveTimeout: const Duration(seconds: 20)),
+      );
+      if (res.statusCode == 200) return res.data as Map<String, dynamic>?;
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
 }
