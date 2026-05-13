@@ -13,7 +13,6 @@ Shutdown ownership: scanner_loop calls stop_scan() when it exits.
 """
 
 import json
-import re
 import time
 import threading
 import logging
@@ -41,7 +40,6 @@ _executor  = ThreadPoolExecutor(max_workers=1)
 _scan_start_event = threading.Event()
 _scan_stop_event  = threading.Event()
 
-_PG_ARRAY_SPLIT_RE = re.compile(r",\s*")
 _resize_scale: float | None = None
 
 # ── Opt #3: ONNX face embedder (graceful fallback if unavailable) ─────────────
@@ -85,8 +83,10 @@ def parse_pg_array(embed_value):
                 clean = embed_value.strip("{}").strip()
                 if not clean:
                     return None
+                # CY3: PostgreSQL arrays use "," with no surrounding whitespace;
+                # plain split(',') avoids the regex engine on every cache miss.
                 return np.array(
-                    list(map(float, _PG_ARRAY_SPLIT_RE.split(clean))),
+                    [float(s) for s in clean.split(',')],
                     dtype=np.float32,
                 )
         except Exception:

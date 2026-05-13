@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
+import 'api_service.dart';
 
 // ============================================================
 // Opt #28 — Typed SocketIO event bus
@@ -128,8 +129,12 @@ class SocketService {
     if (isConnected || _isConnecting) return;
     _isConnecting = true;
 
+    // A3 (extended): same dart-define as ApiService.baseUrl so both HTTP and
+    // WebSocket always point at the same server.
+    // Dev:        flutter run                                    → localhost:5000
+    // Production: flutter build apk --dart-define=API_BASE_URL=http://192.168.x.x:5000
     socket = IO.io(
-      'http://localhost:5000',
+      ApiService.baseUrl,
       <String, dynamic>{
         'transports': ['websocket'],
         'autoConnect': true,

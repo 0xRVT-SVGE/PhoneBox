@@ -5,6 +5,7 @@ import 'socket_service.dart';
 import 'admin_menu.dart';
 import 'auth.dart';
 import 'api_service.dart';
+import 'offline_op_queue.dart';
 import 'scan_success_page.dart';
 import 'alarm_page.dart';
 
@@ -44,6 +45,9 @@ class _ScanPageState extends State<ScanPage> {
     super.initState();
     _initRenderer();
     _connectSocket();
+    // F6: open the SQLite DB now so every subsequent enqueue/pendingOps call
+    // hits an already-open handle instead of paying openDatabase() overhead.
+    OfflineOpQueue.instance.open();
   }
 
   Future<void> _initRenderer() async {

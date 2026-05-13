@@ -16,16 +16,13 @@ dependencies:
   # Opt #29: Dio — persistent connection pool, auto JSON, typed errors
   dio: ^5.4.3
 
-  # http kept for report_page.dart which makes its own raw HTTP calls
-  http: ^1.2.2
-
   flutter_html: ^3.0.0
 
   # WebRTC
   flutter_webrtc: ^1.2.0
 
-  # Socket.IO
-  socket_io_client: ^2.0.0-beta.4-nullsafety.0
+  # Socket.IO — stable release (was beta.4-nullsafety.0 from 2019 era)
+  socket_io_client: ^2.0.3
 
   # PDF & Printing
   pdf: ^3.10.8

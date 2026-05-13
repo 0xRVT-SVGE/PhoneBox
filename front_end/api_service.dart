@@ -10,7 +10,13 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 // ─────────────────────────────────────────────────────────────────────────────
 
 class ApiService {
-  static const String baseUrl = "http://localhost:5000";
+  // A3: driven by --dart-define=API_BASE_URL=http://192.168.x.x:5000 at build
+  // time. Falls back to localhost:5000 for the dev emulator / desktop build.
+  // Usage: flutter run --dart-define=API_BASE_URL=http://192.168.1.50:5000
+  static const String baseUrl = String.fromEnvironment(
+    'API_BASE_URL',
+    defaultValue: 'http://localhost:5000',
+  );
 
   static final Dio _dio = Dio(
     BaseOptions(

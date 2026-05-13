@@ -389,13 +389,17 @@ class AdminOpsHandler:
             pass
 
         self._recorder = EvidenceRecorder(session.session_id)
-        try:
-            self._recorder.start()
-        except Exception as e:
-            logger.warning(
-                f"[AdminSession] EvidenceRecorder.start() failed: {e}."
-            )
-            self._recorder = None
+        # B11: EvidenceRecorder.start() does a DB INSERT (evidence session record).
+        # The record doesn't need to exist before admin_session_opened is emitted;
+        # fire it in a daemon thread so the SocketIO handler returns faster.
+        _rec_ref = self._recorder
+        def _start_recorder():
+            try:
+                _rec_ref.start()
+            except Exception as e:
+                logger.warning(f"[AdminSession] EvidenceRecorder.start() failed: {e}.")
+                self._recorder = None
+        threading.Thread(target=_start_recorder, daemon=True, name="RecorderStart").start()
 
         for lid in initial_mismatches.values():
             self._pause_slot(lid)
@@ -495,10 +499,6 @@ class AdminOpsHandler:
         session.in_transit_from_lid      = from_lid
         session.in_transit_pid           = None
         session.in_transit_qr_confirmed  = False
-
-        pid_at_lid = SlotMonitorDB.get_pid_for_lid(from_lid)
-        session.visited_pids.add(pid_at_lid if pid_at_lid else f"unknown-{from_lid}")
-
         self._start_clip(pid=f"pending-lid{from_lid}", lid=from_lid)
         self._refresh_overlay(session, source_lid=from_lid, dest_lid=None)
 
@@ -552,6 +552,13 @@ class AdminOpsHandler:
         ).start()
 
     def _scan_qr_background(self, session, client_id: str) -> None:
+        # B8: visited_pids audit lookup moved here from handle_remove_phone so
+        # the SocketIO handler returns immediately after emitting admin_remove_ok.
+        from_lid = session.in_transit_from_lid
+        if from_lid is not None:
+            pid_hint = SlotMonitorDB.get_pid_for_lid(from_lid)
+            session.visited_pids.add(pid_hint if pid_hint else f"unknown-{from_lid}")
+
         cancel_event = threading.Event()
         session._qr_scan_cancel = cancel_event
 
@@ -1122,6 +1129,18 @@ class AdminOpsHandler:
             })
             return
 
+        client_id = request.sid
+        # B8: all DB calls, recorder teardown, and the final emit move to a
+        # worker thread — the SocketIO handler returns after validation.
+        threading.Thread(
+            target=self._do_close_bg,
+            args=(session, client_id),
+            daemon=True,
+            name="SessionClose",
+        ).start()
+
+    def _do_close_bg(self, session, client_id: str) -> None:
+        """Teardown work for handle_session_close — runs off the handler thread."""
         warnings = []
         if session.has_phone_in_hand():
             msg = (
@@ -1185,11 +1204,15 @@ class AdminOpsHandler:
 
         summary = admin_ctx.close().summary()
         self.alarm.unsilence()
-        emit("admin_session_closed", {
-            "summary":       summary,
-            "warnings":      warnings,
-            "evidence_kept": evidence_kept,
-        })
+        self.socketio.emit(
+            "admin_session_closed",
+            {
+                "summary":       summary,
+                "warnings":      warnings,
+                "evidence_kept": evidence_kept,
+            },
+            to=client_id, namespace="/",
+        )
 
     # ── FORCE CLOSE SESSION ───────────────────────────────
 
@@ -1224,6 +1247,17 @@ class AdminOpsHandler:
                 f"[AdminSession] {session.session_id} — UNSAFE force-close"
             )
 
+        client_id = request.sid
+        # B8: DB calls + recorder teardown + final emit moved to a worker thread.
+        threading.Thread(
+            target=self._do_force_close_bg,
+            args=(session, client_id, safe),
+            daemon=True,
+            name="ForceClose",
+        ).start()
+
+    def _do_force_close_bg(self, session, client_id: str, safe: bool) -> None:
+        """Teardown work for handle_force_close_session — runs off the handler thread."""
         if session.placement_cancel_event is not None:
             session.placement_cancel_event.set()
         cancel_ev = getattr(session, "_qr_scan_cancel", None)

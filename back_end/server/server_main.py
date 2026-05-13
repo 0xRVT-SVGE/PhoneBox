@@ -23,6 +23,7 @@ Shutdown model:
     → op_ctx cleanup → slot_monitor.join() → os._exit(0)
 """
 
+import argparse
 import logging
 import os
 import signal
@@ -181,6 +182,18 @@ def on_set_camera(data):
 # MAIN
 # ============================================================
 
+# A5: --skip-calibration lets the server restart without blocking on the
+# interactive ROI calibration windows. ROI files must already exist from
+# a previous calibration run. Use --recalibrate to force re-calibration.
+_parser = argparse.ArgumentParser(prog="server_main", add_help=False)
+_parser.add_argument(
+    "--skip-calibration", action="store_true",
+    help="Skip interactive ROI calibration; use existing rois_*.json files.",
+)
+_args, _ = _parser.parse_known_args()
+_SKIP_CALIBRATION = _args.skip_calibration
+
+
 if __name__ == "__main__":
     logger.info("=" * 60)
     logger.info("PHONE BOX SERVER — STARTING")
@@ -286,8 +299,14 @@ if __name__ == "__main__":
             f"Defaulting to {num_lids} for calibration."
         )
 
-    from back_end.slot_monitor.tools.roi_calibration import run_calibration
-    run_calibration(num_lids)     # blocks until operator confirms both windows
+    if _SKIP_CALIBRATION:
+        logger.info(
+            "A5: --skip-calibration set — skipping interactive ROI calibration. "
+            "Using existing rois_bottom.json / rois_top.json."
+        )
+    else:
+        from back_end.slot_monitor.tools.roi_calibration import run_calibration
+        run_calibration(num_lids)   # blocks until operator confirms both windows
 
     # 7. Slot monitor (reads rois_bottom.json written by step 6)
     slot_monitor = get_slot_monitor()

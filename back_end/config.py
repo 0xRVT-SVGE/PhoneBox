@@ -75,10 +75,14 @@ class CameraConfig:
 # ============================================================
 
 class DatabaseConfig:
+    _HOST = os.environ.get("PHONEBOX_DB_HOST", "localhost")
+    _PORT = int(os.environ.get("PHONEBOX_DB_PORT", "5432"))
+    _NAME = os.environ.get("PHONEBOX_DB_NAME", "PhoneBoxDB")
+
     # ── Synchronous connection pool (psycopg2) ────────────
-    SYNC_HOST     = "localhost"
-    SYNC_PORT     = 5432
-    SYNC_DATABASE = "PhoneBoxDB"
+    SYNC_HOST     = _HOST
+    SYNC_PORT     = _PORT
+    SYNC_DATABASE = _NAME
     SYNC_POOL_MIN = 1
     SYNC_POOL_MAX = 10
 
@@ -88,9 +92,9 @@ class DatabaseConfig:
     HEALTH_CHECK_IDLE_S = 30.0   # seconds
 
     # ── Async connection pool (asyncpg) ───────────────────
-    ASYNC_HOST        = "localhost"
-    ASYNC_PORT        = 5432
-    ASYNC_DATABASE    = "PhoneBoxDB"
+    ASYNC_HOST        = _HOST
+    ASYNC_PORT        = _PORT
+    ASYNC_DATABASE    = _NAME
     ASYNC_POOL_MIN    = 5
     ASYNC_POOL_MAX    = 20
 
@@ -104,8 +108,8 @@ class DatabaseConfig:
 # ============================================================
 
 class ServerConfig:
-    HOST = "0.0.0.0"
-    PORT = 5000
+    HOST = os.environ.get("PHONEBOX_HOST", "0.0.0.0")
+    PORT = int(os.environ.get("PHONEBOX_PORT", "5000"))
 
     # Debug flags for scanner_loop
     DEBUG_ROI    = True   # Draw ROI rectangle on front-camera feed
@@ -494,9 +498,9 @@ class EvidenceStorageConfig:
 # ============================================================
 
 class MonitorServiceConfig:
-    ENABLED            = False
-    REDIS_HOST         = "localhost"
-    REDIS_PORT         = 6379
+    ENABLED            = os.environ.get("PHONEBOX_REDIS_ENABLED", "0") == "1"
+    REDIS_HOST         = os.environ.get("PHONEBOX_REDIS_HOST", "localhost")
+    REDIS_PORT         = int(os.environ.get("PHONEBOX_REDIS_PORT", "6379"))
     REDIS_DB           = 0
     ALARM_CHANNEL      = "phonebox:alarms"
     SLOT_STATE_CHANNEL = "phonebox:slot_state"

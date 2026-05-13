@@ -219,9 +219,10 @@ class Slot:
         )
 
 
-# ══════════════════════════════════════════════════════════
-# generate_grid_rois — loads from rois_bottom.json
-# ══════════════════════════════════════════════════════════
+# B10: cache keyed by (num_lids, file_mtime) — avoids re-reading JSON on every
+# call. mtime key ensures the cache busts automatically after recalibration.
+_rois_cache: dict = {}
+
 
 def generate_grid_rois(
     frame_width:  int,
@@ -239,6 +240,15 @@ def generate_grid_rois(
     """
     if num_lids is None:
         num_lids = rows * cols
+
+    # B10: fast path — return cached result if the JSON file hasn't changed.
+    try:
+        mtime = os.path.getmtime(ROI_FILE_BOTTOM) if os.path.exists(ROI_FILE_BOTTOM) else 0.0
+    except OSError:
+        mtime = 0.0
+    cache_key = (num_lids, mtime)
+    if cache_key in _rois_cache:
+        return _rois_cache[cache_key]
 
     def _default() -> list:
         rois      = []
@@ -289,4 +299,6 @@ def generate_grid_rois(
             f"ROI count mismatch: expected {num_lids}, got {len(rois_list)}"
         )
 
-    return {i: tuple(r) for i, r in enumerate(rois_list)}
+    result = {i: tuple(r) for i, r in enumerate(rois_list)}
+    _rois_cache[cache_key] = result
+    return result

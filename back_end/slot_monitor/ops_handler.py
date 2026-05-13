@@ -91,8 +91,66 @@ class DVWSocketHandler:
                 to=client_id, namespace="/",
             )
             return
+        # B8: DB lid lookup + camera/overlay setup run in a worker thread so
+        # the SocketIO handler returns immediately without blocking the pool.
+        threading.Thread(
+            target=self._start_deposit,
+            args=(client_id, str(pid)),
+            daemon=True,
+            name=f"Deposit-setup-{str(pid)[:8]}",
+        ).start()
 
-        pid = str(pid)
+    # ══════════════════════════════════════════════════════
+    # WITHDRAW
+    # ══════════════════════════════════════════════════════
+
+    def handle_withdraw(self, data: dict):
+        client_id = request.sid
+        pid = data.get("pid")
+        if not pid:
+            self.socketio.emit(
+                "operation_error",
+                {"status": "error", "message": "missing_pid"},
+                to=client_id, namespace="/",
+            )
+            return
+        # B8: DB lid lookup + setup run in a worker thread.
+        threading.Thread(
+            target=self._start_withdraw,
+            args=(client_id, str(pid)),
+            daemon=True,
+            name=f"Withdraw-setup-{str(pid)[:8]}",
+        ).start()
+
+    # ══════════════════════════════════════════════════════
+    # VERIFY
+    # ══════════════════════════════════════════════════════
+
+    def handle_verify(self, data: dict):
+        client_id    = request.sid
+        pid          = data.get("pid")
+        original_lid = data.get("original_lid")
+        if not pid or original_lid is None:
+            self.socketio.emit(
+                "operation_error",
+                {"status": "error", "message": "missing_parameters"},
+                to=client_id, namespace="/",
+            )
+            return
+        # B8: both DB lid lookups run in a worker thread.
+        threading.Thread(
+            target=self._start_verify,
+            args=(client_id, str(pid), int(original_lid)),
+            daemon=True,
+            name=f"Verify-setup-{str(pid)[:8]}",
+        ).start()
+
+    # ══════════════════════════════════════════════════════
+    # SETUP WORKERS  (B8 — run in their own threads)
+    # ══════════════════════════════════════════════════════
+
+    def _start_deposit(self, client_id: str, pid: str) -> None:
+        """Full deposit setup — DB lookup + camera/overlay — off the handler thread."""
         lid = SlotMonitorDB.get_next_free_lid()
         if lid is None:
             self.socketio.emit(
@@ -121,11 +179,7 @@ class DVWSocketHandler:
             raw = top_camera.get_raw_frame()
             op.background_frame = raw if raw is not None else top_camera.get_frame()
 
-        # ── Show destination ROI on the top-camera feed immediately ──────────
-        # This allows the DVWBottomSheet (admin video mode) to display the
-        # slot guide from the very first frame, not just after tracking starts.
         self._set_dvw_overlay(source_lid=None, dest_lid=lid)
-
         self.socketio.emit(
             "deposit_waiting_for_qr",
             {
@@ -140,30 +194,10 @@ class DVWSocketHandler:
             },
             to=client_id, namespace="/",
         )
+        self._scan_and_dispatch(client_id)
 
-        threading.Thread(
-            target=self._scan_and_dispatch,
-            args=(client_id,),
-            daemon=True,
-            name=f"QRScan-deposit-{pid[:8]}",
-        ).start()
-
-    # ══════════════════════════════════════════════════════
-    # WITHDRAW
-    # ══════════════════════════════════════════════════════
-
-    def handle_withdraw(self, data: dict):
-        client_id = request.sid
-        pid = data.get("pid")
-        if not pid:
-            self.socketio.emit(
-                "operation_error",
-                {"status": "error", "message": "missing_pid"},
-                to=client_id, namespace="/",
-            )
-            return
-
-        pid = str(pid)
+    def _start_withdraw(self, client_id: str, pid: str) -> None:
+        """Full withdraw setup — DB lookup + verifier — off the handler thread."""
         lid = SlotMonitorDB.get_lid_for_pid(pid)
         if lid is None:
             self.socketio.emit(
@@ -185,20 +219,15 @@ class DVWSocketHandler:
             self._restore_slot(lid, is_occupied=True)
             return
 
-        # Create withdrawal verifier NOW — phone is still in the slot, so
-        # the before-snapshot correctly captures the "occupied" state.
+        # Verifier snapshots the slot while the phone is still inside.
         op = op_ctx.get(client_id)
         if op is not None:
             try:
                 op.verify_fn = self.slot_ops.make_placement_verifier(lid)
             except Exception as exc:
-                logger.warning(
-                    f"[DVW] Withdraw verifier creation failed LID={lid}: {exc}"
-                )
+                logger.warning(f"[DVW] Withdraw verifier failed LID={lid}: {exc}")
 
-        # ── Show source ROI on the top-camera feed immediately ───────────────
         self._set_dvw_overlay(source_lid=lid, dest_lid=None)
-
         self.socketio.emit(
             "withdraw_waiting_for_action",
             {
@@ -213,43 +242,15 @@ class DVWSocketHandler:
             },
             to=client_id, namespace="/",
         )
+        self._scan_and_dispatch(client_id)
 
-        threading.Thread(
-            target=self._scan_and_dispatch,
-            args=(client_id,),
-            daemon=True,
-            name=f"QRScan-withdraw-{pid[:8]}",
-        ).start()
-
-    # ══════════════════════════════════════════════════════
-    # VERIFY
-    # ══════════════════════════════════════════════════════
-
-    def handle_verify(self, data: dict):
-        client_id    = request.sid
-        pid          = data.get("pid")
-        original_lid = data.get("original_lid")
-
-        if not pid or original_lid is None:
-            self.socketio.emit(
-                "operation_error",
-                {"status": "error", "message": "missing_parameters"},
-                to=client_id, namespace="/",
-            )
-            return
-
-        pid          = str(pid)
-        original_lid = int(original_lid)
-
+    def _start_verify(self, client_id: str, pid: str, original_lid: int) -> None:
+        """Full verify setup — two DB lookups + slot pause — off the handler thread."""
         target_lid = SlotMonitorDB.get_lid_for_pid(pid)
         if target_lid is None:
             self.socketio.emit(
                 "operation_error",
-                {
-                    "status":  "error",
-                    "message": "phone_not_registered_to_any_slot",
-                    "pid":     pid,
-                },
+                {"status": "error", "message": "phone_not_registered_to_any_slot", "pid": pid},
                 to=client_id, namespace="/",
             )
             return
@@ -276,10 +277,7 @@ class DVWSocketHandler:
             self._pause_slot(target_lid)
 
         try:
-            op_ctx.start(
-                client_id, "verify",
-                pid=pid, lid=target_lid, original_lid=original_lid,
-            )
+            op_ctx.start(client_id, "verify", pid=pid, lid=target_lid, original_lid=original_lid)
         except RuntimeError:
             self.socketio.emit(
                 "operation_error",
@@ -292,10 +290,7 @@ class DVWSocketHandler:
             return
 
         same_slot = (target_lid == original_lid)
-
-        # ── Show source + destination ROIs immediately ───────────────────────
         self._set_dvw_overlay(source_lid=original_lid, dest_lid=target_lid)
-
         self.socketio.emit(
             "verify_waiting_for_action",
             {
@@ -316,6 +311,7 @@ class DVWSocketHandler:
             },
             to=client_id, namespace="/",
         )
+        # No scan dispatch here — verify waits for handle_qr_scanned event.
 
     # ══════════════════════════════════════════════════════
     # QR SCANNED  (verify only)
