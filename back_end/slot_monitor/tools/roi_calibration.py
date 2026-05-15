@@ -7,9 +7,16 @@ ROI Calibration Tool
 Runs at server startup to let the operator verify and adjust the slot
 ROI rectangles for BOTH cameras before monitoring begins.
 
+Calibration files are saved PER BOX using the box slug, e.g.:
+  rois_bottom_year_1.json   (bottom camera, box whose slug is "year_1")
+  rois_top_year_1.json      (top camera,    box whose slug is "year_1")
+
+This lets multiple cabinets share the same tools/ directory without
+overwriting each other's calibration.
+
 Two separate frozen-frame editors are shown one after the other:
-  1. Bottom camera  (camera index 1)  → rois_bottom.json
-  2. Top-down camera (camera index 2)  → rois_top.json
+  1. Bottom camera  (camera index 1)  → rois_bottom_{slug}.json
+  2. Top-down camera (camera index 2)  → rois_top_{slug}.json
 
 Controls
 ────────────────────────────────────────────────────────────
@@ -45,9 +52,14 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-_TOOLS_DIR      = os.path.dirname(os.path.abspath(__file__))
-ROI_FILE_BOTTOM = os.path.join(_TOOLS_DIR, "rois_bottom.json")
-ROI_FILE_TOP    = os.path.join(_TOOLS_DIR, "rois_top.json")
+_TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def _roi_paths(box_slug: str):
+    """Return (bottom_path, top_path) for a given box slug."""
+    bottom = os.path.join(_TOOLS_DIR, f"rois_bottom_{box_slug}.json")
+    top    = os.path.join(_TOOLS_DIR, f"rois_top_{box_slug}.json")
+    return bottom, top
 
 _RESIZE_MARGIN = 12
 _LABEL_OFFSET  = 18
@@ -65,7 +77,15 @@ _BORDER        = 2
 # ══════════════════════════════════════════════════════════
 
 def _capture_frame(camera_index: int, warmup: int = 20) -> Optional[np.ndarray]:
-    cap = cv2.VideoCapture(camera_index)
+    # Pick the backend that matches this camera's role.
+    if camera_index == _CC.BOTTOM_CAM_INDEX:
+        backend = _CC.resolve_backend(_CC.BOTTOM_CAM_BACKEND)
+    elif camera_index == _CC.TOP_CAM_INDEX:
+        backend = _CC.resolve_backend(_CC.TOP_CAM_BACKEND)
+    else:
+        import cv2 as _cv2_local
+        backend = _cv2_local.CAP_ANY
+    cap = cv2.VideoCapture(camera_index, backend)
     if not cap.isOpened():
         logger.warning(f"[ROI Calibration] Cannot open camera {camera_index}")
         return None
@@ -384,20 +404,34 @@ class _ROIEditor:
 #from back_end.camera_manager import cam_mgr
 from back_end.config import CameraConfig as _CC
 
-def run_calibration(num_lids: int) -> None:
+def run_calibration(num_lids: int, box_slug: str = "") -> None:
     """
     Show two sequential frozen-frame ROI editors and save results.
 
     Args:
-        num_lids: Total number of storage slots (from DB via get_num_lid()).
+        num_lids:  Total number of storage slots for this box.
+        box_slug:  Box identifier (PHONEBOX_BOX_SLUG).  Used to derive
+                   per-box ROI filenames, e.g. rois_bottom_year_1.json.
+                   Falls back to ServerConfig.BOX_SLUG when empty.
     """
     if num_lids < 1:
         logger.warning("[ROI Calibration] num_lids < 1 — skipping.")
         return
 
+    if not box_slug:
+        from back_end.config import ServerConfig as _SVC
+        box_slug = _SVC.BOX_SLUG or "box_1"
+
+    roi_file_bottom, roi_file_top = _roi_paths(box_slug)
+    logger.info(
+        f"[ROI Calibration] Box slug={box_slug!r}  "
+        f"bottom={os.path.basename(roi_file_bottom)}  "
+        f"top={os.path.basename(roi_file_top)}"
+    )
+
     cameras = [
-        {"index": _CC.BOTTOM_CAM_INDEX, "name": "BOTTOM CAMERA Slot monitoring", "file": ROI_FILE_BOTTOM},
-        {"index": _CC.TOP_CAM_INDEX, "name": "TOP-DOWN CAMERA Admin / evidence", "file": ROI_FILE_TOP},
+        {"index": _CC.BOTTOM_CAM_INDEX, "name": f"BOTTOM CAMERA [{box_slug}]", "file": roi_file_bottom},
+        {"index": _CC.TOP_CAM_INDEX,    "name": f"TOP-DOWN CAMERA [{box_slug}]", "file": roi_file_top},
     ]
 
     for cam in cameras:
@@ -432,7 +466,55 @@ def run_calibration(num_lids: int) -> None:
         confirmed = [_clamp(r, fw, fh) for r in confirmed]
         _save_rois(cam["file"], confirmed)
 
-    logger.info("[ROI Calibration] Complete.")
+    logger.info(f"[ROI Calibration] Complete for box {box_slug!r}.")
+
+
+# ══════════════════════════════════════════════════════════
+# DB helper — resolve num_lids for a box slug
+# ══════════════════════════════════════════════════════════
+
+def _query_num_lids(box_slug: str) -> Optional[int]:
+    """
+    Query the database for the number of locations belonging to box_slug.
+    Returns None if the DB is unreachable or the slug is not found.
+    """
+    try:
+        from back_end.Database.db import get_conn, put_conn
+        conn = get_conn()
+        try:
+            with conn.cursor() as cur:
+                # Resolve slug → box_id
+                cur.execute(
+                    "SELECT box_id FROM boxes WHERE box_slug = %s;",
+                    (box_slug,),
+                )
+                row = cur.fetchone()
+                if not row:
+                    logger.warning(
+                        f"[ROI Calibration] Box slug {box_slug!r} not found in "
+                        "boxes table — is the slug correct?"
+                    )
+                    return None
+                box_id = row[0]
+                # Count locations for this box
+                cur.execute(
+                    "SELECT COUNT(*) FROM locations WHERE box_id = %s;",
+                    (box_id,),
+                )
+                count_row = cur.fetchone()
+                count = int(count_row[0]) if count_row else 0
+                if count == 0:
+                    logger.warning(
+                        f"[ROI Calibration] No locations found for box_id={box_id} "
+                        f"(slug={box_slug!r}). Seed the locations table first."
+                    )
+                    return None
+                return count
+        finally:
+            put_conn(conn)
+    except Exception as exc:
+        logger.warning(f"[ROI Calibration] DB query failed: {exc}")
+        return None
 
 
 # ══════════════════════════════════════════════════════════
@@ -442,5 +524,27 @@ def run_calibration(num_lids: int) -> None:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s - %(levelname)s - %(message)s")
-    n = int(sys.argv[1]) if len(sys.argv) > 1 else 4
-    run_calibration(n)
+    from back_end.config import ServerConfig as _SVC
+    _slug = os.getenv("PHONEBOX_BOX_SLUG", "") or _SVC.BOX_SLUG or "box_1"
+
+    if len(sys.argv) > 1:
+        # Explicit override wins — useful for testing without DB
+        n = int(sys.argv[1])
+        print(f"Running standalone ROI calibration: box={_slug!r}, {n} lids (CLI override).")
+    else:
+        # Query the DB for the real slot count for this box
+        n = _query_num_lids(_slug)
+        if n is None:
+            n = _SVC.FALLBACK_NUM_LIDS
+            print(
+                f"⚠  Could not resolve slot count from DB for box={_slug!r}.\n"
+                f"   Falling back to FALLBACK_NUM_LIDS={n}.\n"
+                f"   To fix: ensure PHONEBOX_BOX_SLUG is set and the boxes/locations "
+                f"tables are seeded."
+            )
+        else:
+            print(f"Running standalone ROI calibration: box={_slug!r}, {n} lids (from DB).")
+
+    print(f"  Override: python roi_calibration.py <num_lids>")
+    print(f"  Override box: set PHONEBOX_BOX_SLUG env var")
+    run_calibration(n, box_slug=_slug)

@@ -13,18 +13,20 @@ def create_student(data):
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                        INSERT INTO students (sid, last_name, first_name, embed)
-                        VALUES (%s, %s, %s, %s)
+                        INSERT INTO students (sid, last_name, first_name, embed, year_group)
+                        VALUES (%s, %s, %s, %s, %s)
                         RETURNING sid;
                         """, (data["sid"],
                               data.get("last_name"),
                               data["first_name"],
-                              data["embed"]
+                              data["embed"],
+                              data.get("year_group"),   # None = unrestricted
                               ))
             sid = cur.fetchone()[0]
             conn.commit()
 
-            logger.info(f"Created student {sid}: {data.get('first_name')} {data.get('last_name')}")
+            logger.info(f"Created student {sid}: {data.get('first_name')} {data.get('last_name')} "
+                        f"(year_group={data.get('year_group')})")
             return {"status": "success", "data": {"sid": sid}}, 201
     except Exception as e:
         conn.rollback()
@@ -72,7 +74,11 @@ def update_student(sid, data):
                         SET sid        = COALESCE(%s, sid),
                             last_name  = COALESCE(%s, last_name),
                             first_name = COALESCE(%s, first_name),
-                            embed      = COALESCE(%s, embed)
+                            embed      = COALESCE(%s, embed),
+                            year_group = CASE
+                                WHEN %s IS NULL THEN year_group
+                                ELSE %s
+                            END
                         WHERE sid = %s
                         RETURNING sid;
                         """, (
@@ -80,6 +86,9 @@ def update_student(sid, data):
                             data.get("last_name"),
                             data.get("first_name"),
                             data.get("embed"),
+                            # year_group: pass an int to set, omit/None to leave unchanged
+                            data.get("year_group"),
+                            data.get("year_group"),
                             sid
                         ))
 

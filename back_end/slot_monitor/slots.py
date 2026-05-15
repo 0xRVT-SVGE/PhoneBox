@@ -12,7 +12,7 @@ import time
 import logging
 import numpy as np
 from collections import deque
-from typing import Optional, Tuple, Dict
+from typing import Optional, Tuple, Dict, List
 from back_end.slot_monitor.slot_embed import compute_embedding, embedding_distance
 from back_end.config import SlotMonitorConfig as _SMC
 
@@ -21,7 +21,17 @@ logger = logging.getLogger(__name__)
 _TOOLS_DIR      = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "tools"
 )
-ROI_FILE_BOTTOM = os.path.join(_TOOLS_DIR, "rois_bottom.json")
+
+# ROI file is named per box so multiple server processes on the same machine
+# each have their own calibration file.  E.g. rois_bottom_year_1.json.
+# Falls back to the legacy name when BOX_SLUG is not set (single-box deploy).
+def _roi_file_bottom() -> str:
+    from back_end.config import ServerConfig as _SVC
+    slug = getattr(_SVC, "BOX_SLUG", None) or "box_1"
+    return os.path.join(_TOOLS_DIR, f"rois_bottom_{slug}.json")
+
+ROI_FILE_BOTTOM = _roi_file_bottom()
+
 
 _CY_UD_AVAILABLE = False
 try:
@@ -232,21 +242,30 @@ def generate_grid_rois(
     spacing:      int = 0,
     num_lids:     Optional[int] = None,
     frame:        Optional[np.ndarray] = None,
+    lid_list:     Optional[List[int]] = None,
 ) -> Dict[int, Tuple[int, int, int, int]]:
     """
-    Load bottom-camera ROIs from rois_bottom.json.
+    Load bottom-camera ROIs from the box-specific rois_bottom_{slug}.json.
     Falls back to an auto-generated equal-area grid if the file is missing
     or has the wrong number of entries.
+
+    lid_list: ordered list of actual DB lid values for this box.
+              When provided, ROI dict keys are real lid values (e.g. 30-59
+              for Box 2) instead of enumeration indices.  Pass the result
+              of AsyncSlotMonitorDB.get_box_lids().
     """
     if num_lids is None:
-        num_lids = rows * cols
+        num_lids = len(lid_list) if lid_list else rows * cols
 
     # B10: fast path — return cached result if the JSON file hasn't changed.
+    # Cache key includes the first lid so two boxes with the same slot count
+    # but different lid ranges don't collide.
+    first_lid = lid_list[0] if lid_list else 0
     try:
         mtime = os.path.getmtime(ROI_FILE_BOTTOM) if os.path.exists(ROI_FILE_BOTTOM) else 0.0
     except OSError:
         mtime = 0.0
-    cache_key = (num_lids, mtime)
+    cache_key = (num_lids, first_lid, mtime)
     if cache_key in _rois_cache:
         return _rois_cache[cache_key]
 
@@ -299,6 +318,12 @@ def generate_grid_rois(
             f"ROI count mismatch: expected {num_lids}, got {len(rois_list)}"
         )
 
-    result = {i: tuple(r) for i, r in enumerate(rois_list)}
+    # Map ROI entries to actual lid values.
+    # lid_list MUST be provided for any box whose lids don't start at 0.
+    if lid_list and len(lid_list) == len(rois_list):
+        result = {lid: tuple(r) for lid, r in zip(lid_list, rois_list)}
+    else:
+        # Backward-compatible fallback (single-box / Box 1 where lid starts at 0)
+        result = {i: tuple(r) for i, r in enumerate(rois_list)}
     _rois_cache[cache_key] = result
     return result

@@ -15,7 +15,7 @@ def handle_response(res):
 
 
 # --- CRUD ---
-@phones_bp.route("/", methods=["GET"])
+@phones_bp.route("", methods=["GET"], strict_slashes=False)
 def route_list_phones():
     """List all phones with storage status"""
     return handle_response(list_phones())
@@ -27,7 +27,7 @@ def route_get_phones(sid):
     return handle_response(get_phones(sid))
 
 
-@phones_bp.route("/", methods=["POST"])
+@phones_bp.route("", methods=["POST"], strict_slashes=False)
 def route_create_phone():
     """Create a new phone (not stored)"""
     data = request.get_json(force=True)

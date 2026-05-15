@@ -178,13 +178,16 @@ def main() -> None:
 
 
 def _check_roi_file() -> None:
-    """Warn if rois_bottom.json is missing (monitor will use auto-grid fallback)."""
-    roi_path = Path("back_end/slot_monitor/tools/rois_bottom.json")
+    """Warn if the box-specific rois_bottom_{slug}.json is missing."""
+    from back_end.config import ServerConfig as _SVC
+    slug     = getattr(_SVC, "BOX_SLUG", "") or "box_1"
+    roi_name = f"rois_bottom_{slug}.json"
+    roi_path = Path(__file__).resolve().parent / "tools" / roi_name
     if not roi_path.exists():
         logger.warning(
-            "[MonitorService] rois_bottom.json not found — auto-grid will be used.\n"
-            "Run the server once with PHONEBOX_DEV=1 to generate calibration files,\n"
-            f"then copy them to {roi_path.parent}/"
+            f"[MonitorService] {roi_name} not found — auto-grid will be used.\n"
+            f"Run roi_calibration.py with PHONEBOX_BOX_SLUG={slug!r} to generate it,\n"
+            f"then ensure it is at {roi_path}"
         )
 
 

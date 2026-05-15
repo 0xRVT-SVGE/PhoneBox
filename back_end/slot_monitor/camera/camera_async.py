@@ -48,9 +48,10 @@ class AsyncFrameBuffer:
     def start_capture(
         self,
         camera_id: int = 0,
-        width:  int = 1920,
-        height: int = 1080,
-        fps:    int = 30,
+        width:     int = 1920,
+        height:    int = 1080,
+        fps:       int = 30,
+        backend:   int = 0,          # cv2.CAP_ANY — use CameraConfig.resolve_backend()
     ):
         if self._loop is None:
             raise RuntimeError(
@@ -63,7 +64,7 @@ class AsyncFrameBuffer:
         self._running = True
         self._capture_thread = threading.Thread(
             target=self._capture_loop,
-            args=(camera_id, width, height, fps),
+            args=(camera_id, width, height, fps, backend),
             daemon=True,
             name="AsyncCameraCapture",
         )
@@ -84,8 +85,9 @@ class AsyncFrameBuffer:
 
         logger.info(f"Async camera {camera_id} started ({width}x{height} @ {fps}fps)")
 
-    def _capture_loop(self, camera_id: int, width: int, height: int, fps: int):
-        cap = cv2.VideoCapture(camera_id)
+    def _capture_loop(self, camera_id: int, width: int, height: int, fps: int,
+                      backend: int = 0):
+        cap = cv2.VideoCapture(camera_id, backend)
 
         if not cap.isOpened():
             logger.error(f"Failed to open camera {camera_id}")

@@ -11,6 +11,7 @@ from flask_cors import CORS
 from flask_socketio import SocketIO
 from back_end.Database.API.students_API import students_bp
 from back_end.Database.API.phones_API import phones_bp
+from back_end.server.embed_handler import embed_bp
 from back_end.Database.logging_config import setup_logging
 from back_end.config import (
     CameraConfig         as _CC,
@@ -55,7 +56,8 @@ def create_app(stop_event: threading.Event = None):
         )
 
     app.register_blueprint(students_bp, url_prefix="/api/students")
-    app.register_blueprint(phones_bp, url_prefix="/api/phones")
+    app.register_blueprint(phones_bp,   url_prefix="/api/phones")
+    app.register_blueprint(embed_bp,    url_prefix="/api/embed")
     logger.info("API blueprints registered")
 
     socketio = SocketIO(

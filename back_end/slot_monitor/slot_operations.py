@@ -154,6 +154,7 @@ class SlotOperations:
     # ── Deposit ───────────────────────────────────────────────────────────────
 
     def deposit_phone_db(self, pid: str, lid: int) -> Dict:
+        from back_end.slot_monitor.db_interface import _BOX_ID
         conn = get_conn()
         try:
             with conn.cursor() as cur:
@@ -163,8 +164,8 @@ class SlotOperations:
                             "message": f"Location {lid} temporarily locked — retry"}
 
                 cur.execute("""
-                    INSERT INTO phone_storage (pid, lid, stored_at)
-                    SELECT %s, %s, NOW()
+                    INSERT INTO phone_storage (pid, lid, box_id, stored_at)
+                    SELECT %s, %s, %s, NOW()
                     WHERE
                         EXISTS     (SELECT 1 FROM phones WHERE pid = %s)
                         AND NOT EXISTS (SELECT 1 FROM phone_storage
@@ -172,7 +173,7 @@ class SlotOperations:
                         AND NOT EXISTS (SELECT 1 FROM phone_storage
                                         WHERE lid = %s AND retrieved_at IS NULL)
                     RETURNING id;
-                """, (pid, lid, pid, pid, lid))
+                """, (pid, lid, _BOX_ID, pid, pid, lid))
                 row = cur.fetchone()
 
                 if row is None:
@@ -195,7 +196,7 @@ class SlotOperations:
                 storage_id = row[0]
                 conn.commit()
 
-            logger.info(f"[SlotOps] Deposit: PID={pid} LID={lid} id={storage_id}")
+            logger.info(f"[SlotOps] Deposit: PID={pid} LID={lid} box_id={_BOX_ID} id={storage_id}")
             self._invalidate_async_cache(lid)
             return {"status": "success", "message": "Deposit recorded",
                     "pid": pid, "lid": lid, "storage_id": storage_id}
@@ -309,14 +310,18 @@ class SlotOperations:
             put_conn(conn)
 
     def get_empty_locations(self, limit: int = 10) -> Dict:
+        """Return free slots in THIS box only."""
+        from back_end.slot_monitor.db_interface import _BOX_ID
         conn = get_conn()
         try:
             with conn.cursor() as cur:
                 cur.execute("""
                     SELECT l.lid, l.x, l.y FROM locations l
                     LEFT JOIN phone_storage ps ON l.lid=ps.lid AND ps.retrieved_at IS NULL
-                    WHERE ps.pid IS NULL ORDER BY l.lid LIMIT %s;
-                """, (limit,))
+                    WHERE ps.pid IS NULL
+                      AND l.box_id = %s
+                    ORDER BY l.lid LIMIT %s;
+                """, (_BOX_ID, limit))
                 rows = cur.fetchall()
             return {
                 "status":    "success",

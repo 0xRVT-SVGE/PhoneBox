@@ -63,10 +63,13 @@ def process_frame(frame, timestamp, scanning=False, debug=True):
     preview_active = scanner_state.preview_requested.is_set()
     photo_taken    = scanner_state.photo_taken_event.is_set()
 
-    needs_raw = scanning or (preview_active and not photo_taken)
-    rframe    = frame.copy() if needs_raw else None
+    # Always take one raw copy — used by the scanner worker queue, the WebRTC
+    # preview track, and the new HTTP /api/embed/preview endpoint.
+    # One copy() at ~30 fps: ~1.5 MB/s at 640×480 BGR — negligible.
+    rframe = frame.copy()
+    scanner_state.set_rframe(rframe)
 
-    if scanning and rframe is not None:
+    if scanning:
         if scanner_state.task_queue.full():
             try:
                 scanner_state.task_queue.get_nowait()
@@ -74,9 +77,9 @@ def process_frame(frame, timestamp, scanning=False, debug=True):
                 pass
         scanner_state.task_queue.put((rframe, roi_coords, timestamp))
 
-    if preview_active and not photo_taken and rframe is not None:
-        scanner_state.set_rframe(rframe)
+    if preview_active and not photo_taken:
         scanner_state._preview_frame_event.set()
+
 
     if debug:
         cv2.rectangle(
@@ -126,7 +129,7 @@ def scanner_loop(stop_event: threading.Event, debugwindow=True, debugroi=True):
     Owns scan_worker shutdown: when the loop exits for any reason
     (stop_event set or 'q' pressed) it stops the scan worker before returning.
     """
-    cap = cv2.VideoCapture(_CC.FRONT_CAM_INDEX)
+    cap = cv2.VideoCapture(_CC.FRONT_CAM_INDEX, _CC.resolve_backend(_CC.FRONT_CAM_BACKEND))
     cap.set(cv2.CAP_PROP_FRAME_WIDTH,  _CC.FRONT_CAM_WIDTH)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, _CC.FRONT_CAM_HEIGHT)
 

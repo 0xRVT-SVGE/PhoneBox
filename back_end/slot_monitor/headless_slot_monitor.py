@@ -142,8 +142,9 @@ class HeadlessSlotMonitor:
     async def _setup_camera(self):
         logger.info("Setting up camera...")
         logger.info(
-            "[SlotMonitor] camera backend: %s",
+            "[SlotMonitor] camera backend: %s (capture: %s)",
             "multi-process (Opt #1)" if _USING_PROCESS else "threading (default)",
+            _CC.BOTTOM_CAM_BACKEND,
         )
         self.frame_buffer = _FrameBufferClass()
 
@@ -154,6 +155,7 @@ class HeadlessSlotMonitor:
             width     = self.camera_width,
             height    = self.camera_height,
             fps       = self.camera_fps,
+            backend   = _CC.resolve_backend(_CC.BOTTOM_CAM_BACKEND),
         )
 
         self.camera = AsyncCameraCapture(
@@ -174,16 +176,28 @@ class HeadlessSlotMonitor:
             self.grid_rows, self.grid_cols = rows, cols
             logger.info(f"Auto grid: {rows}x{cols} for {num_lids} slots")
 
+        # Fetch actual lid values so ROI dict is keyed by real DB lids.
+        # For Box 1 (lids 0-29) this is equivalent to enumerate; for Box 2+
+        # (e.g. lids 30-59) it prevents a silent lid-key mismatch.
+        box_lids = await self.db.get_box_lids()
+        if not box_lids:
+            raise RuntimeError(
+                f"No locations found for box_id={self.db._box_id}. "
+                "Run migrations/0001_multi_box.sql and populate the locations table."
+            )
+
         self.rois = generate_grid_rois(
             frame_width  = self.camera_width,
             frame_height = self.camera_height,
             rows         = self.grid_rows,
             cols         = self.grid_cols,
             spacing      = _SMC.GRID_SPACING,
-            num_lids     = await self.db.get_num_lid(),
+            num_lids     = len(box_lids),
             frame        = frame,
+            lid_list     = box_lids,
         )
-        logger.info(f"Camera ready — {len(self.rois)} ROIs generated")
+        logger.info(f"Camera ready — {len(self.rois)} ROIs generated (lids {box_lids[0]}-{box_lids[-1]})")
+
 
     async def _check_baselines(self):
         logger.info("Checking baselines...")
@@ -240,6 +254,10 @@ class HeadlessSlotMonitor:
 
         for lid, baseline in baselines.items():
             if lid not in self.rois:
+                logger.warning(
+                    f"  Slot {lid}: baseline in DB but no ROI — skipping "
+                    "(re-run roi_calibration to fix)"
+                )
                 continue
             is_occupied     = lid in occupied_lids
             self.slots[lid] = Slot(
@@ -248,20 +266,22 @@ class HeadlessSlotMonitor:
                 baseline_emb = baseline,
                 is_occupied  = is_occupied,
             )
-            pid_info = (
-                f" (PID: {occupied_lids[lid]})" if is_occupied else ""
-            )
+            pid_info = f" (PID: {occupied_lids[lid]})" if is_occupied else ""
             logger.info(
                 f"  Slot {lid}: {'OCCUPIED' if is_occupied else 'EMPTY'}{pid_info}"
             )
 
-        logger.info(f"Initialized {len(self.slots)} slots")
+        logger.info(f"Initialized {len(self.slots)} / {len(self.rois)} slots")
+
+        if not self.slots:
+            raise RuntimeError(
+                f"No calibrated baselines found for box_id={self.db._box_id}. "
+                "Run embed_calibration.py (with PHONEBOX_BOX_SLUG set correctly) "
+                "before starting the monitor."
+            )
 
     async def _create_workers(self):
         logger.info(f"Creating {self.num_workers} workers...")
-        if not self.slots:
-            raise RuntimeError("No slots initialized")
-
         self.alarm = AlarmController()
         if self.socketio:
             self.alarm.set_socketio(self.socketio)

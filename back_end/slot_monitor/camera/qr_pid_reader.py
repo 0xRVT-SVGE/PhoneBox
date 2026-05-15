@@ -32,6 +32,7 @@ import threading
 import time
 from typing import Optional, TYPE_CHECKING
 import cv2
+from back_end.config import CameraConfig as _CC
 from back_end.slot_monitor.db_interface import SlotMonitorDB
 
 if TYPE_CHECKING:
@@ -103,7 +104,7 @@ def read_pid_from_camera(
     camera_index: int = 0,
     timeout_sec: float = 15.0,
 ) -> Optional[str]:
-    cap = cv2.VideoCapture(camera_index)
+    cap = cv2.VideoCapture(camera_index, _CC.resolve_backend(_CC.TOP_CAM_BACKEND))
     if not cap.isOpened():
         logger.error(f"Camera {camera_index} not available")
         raise RuntimeError(f"Camera {camera_index} not available")

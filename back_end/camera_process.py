@@ -88,6 +88,7 @@ def _capture_worker(
     height:      int,
     fps:         int,
     warmup:      int,
+    backend:     int = 0,     # cv2.CAP_ANY — passed from start_capture()
 ) -> None:
     """
     Capture loop running in a child OS process.
@@ -107,7 +108,7 @@ def _capture_worker(
     shm = _shm.SharedMemory(name=shm_name)
     buf = np.ndarray(frame_shape, dtype=np.dtype(frame_dtype), buffer=shm.buf)
 
-    cap = cv2.VideoCapture(camera_id)
+    cap = cv2.VideoCapture(camera_id, backend)
     if not cap.isOpened():
         logger.error(f"[CameraProcess] Child: cannot open camera {camera_id}")
         shm.close()
@@ -209,6 +210,7 @@ class SharedFrameBuffer:
         width:     int = 1280,
         height:    int = 720,
         fps:       int = 30,
+        backend:   int = 0,     # cv2.CAP_ANY — use CameraConfig.resolve_backend()
     ) -> None:
         """
         Spawn child process and wait for first frame.
@@ -254,6 +256,7 @@ class SharedFrameBuffer:
                 height,
                 fps,
                 _CPC.WARMUP_FRAMES,
+                backend,
             ),
             daemon=True,
             name=f"CameraProcess-cam{camera_id}",

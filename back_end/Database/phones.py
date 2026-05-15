@@ -32,8 +32,9 @@ def create_phone(data):
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                        INSERT INTO phones (sid, model, imei, cond, admin_note, stud_note)
-                        VALUES (%s, %s, %s, %s, %s, %s)
+                        INSERT INTO phones (sid, model, imei, cond, admin_note, stud_note,
+                                            phone_size, allowed_box_slugs)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                         RETURNING pid;
                         """, (
                             data["sid"],
@@ -41,7 +42,9 @@ def create_phone(data):
                             data["imei"],
                             data.get("cond"),
                             data.get("admin_note"),
-                            data.get("stud_note")
+                            data.get("stud_note"),
+                            data.get("phone_size", "standard"),
+                            data.get("allowed_box_slugs"),   # None = no restriction
                         ))
             pid = cur.fetchone()[0]
             conn.commit()
@@ -142,11 +145,17 @@ def update_phone(pid, data):
         with conn.cursor() as cur:
             cur.execute("""
                         UPDATE phones
-                        SET model      = COALESCE(%s, model),
-                            imei       = COALESCE(%s, imei),
-                            cond       = COALESCE(%s, cond),
-                            admin_note = COALESCE(%s, admin_note),
-                            stud_note  = COALESCE(%s, stud_note)
+                        SET model              = COALESCE(%s, model),
+                            imei               = COALESCE(%s, imei),
+                            cond               = COALESCE(%s, cond),
+                            admin_note         = COALESCE(%s, admin_note),
+                            stud_note          = COALESCE(%s, stud_note),
+                            phone_size         = COALESCE(%s, phone_size),
+                            allowed_box_slugs  = CASE
+                                WHEN %s IS NULL THEN allowed_box_slugs
+                                WHEN %s = '{}' THEN NULL
+                                ELSE %s
+                            END
                         WHERE pid = %s;
                         """, (
                             data.get("model"),
@@ -154,6 +163,11 @@ def update_phone(pid, data):
                             data.get("cond"),
                             data.get("admin_note"),
                             data.get("stud_note"),
+                            data.get("phone_size"),
+                            # allowed_box_slugs: pass list to set, [] to clear to NULL, omit to leave unchanged
+                            data.get("allowed_box_slugs"),
+                            data.get("allowed_box_slugs"),
+                            data.get("allowed_box_slugs"),
                             pid
                         ))
 

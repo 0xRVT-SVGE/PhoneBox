@@ -230,6 +230,51 @@ class ApiService {
     );
   }
 
+  // ====================== EMBED CAPTURE (HTTP, no WebRTC) ======================
+
+  /// GET /api/embed/preview
+  ///
+  /// Returns a JPEG snapshot of the current front-camera frame as raw bytes,
+  /// suitable for Image.memory().  No face detection — fast, call at ~3 fps.
+  ///
+  /// Returns null if the camera is unavailable or the request fails.
+  static Future<Uint8List?> embedPreview() async {
+    try {
+      final res = await _dio.get<List<int>>(
+        '/api/embed/preview',
+        options: Options(
+          responseType:   ResponseType.bytes,
+          receiveTimeout: const Duration(seconds: 3),
+          headers: {'Cache-Control': 'no-store'},
+        ),
+      );
+      if (res.statusCode == 200 && res.data != null) {
+        return Uint8List.fromList(res.data!);
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// POST /api/embed/capture
+  ///
+  /// Grabs the current front-camera frame, runs face detection, and returns:
+  ///   embed        : List<double>  — 128-d L2-normalised embedding vector
+  ///   preview_jpeg : String?       — base64 JPEG of the captured frame
+  ///
+  /// Returns null on network failure.  On face-detection failure the server
+  /// returns a 422 with {status:"error", message:"No face detected"}; callers
+  /// should check the returned map's 'status' field.
+  static Future<Map<String, dynamic>?> captureEmbed() async {
+    try {
+      final res = await _dio.post<Map<String, dynamic>>(
+        '/api/embed/capture',
+        options: Options(receiveTimeout: const Duration(seconds: 15)),
+      );
+      if (res.data != null) return res.data;
+    } catch (_) {}
+    return null;
+  }
+
   static Future<Map<String, dynamic>?> takePhoto() async {
     final res = await _dio.post('/webrtc/take_photo');
     if (res.statusCode != 200) return null;

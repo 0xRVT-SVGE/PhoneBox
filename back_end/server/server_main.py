@@ -47,6 +47,7 @@ from back_end.slot_monitor.services.operation_context import op_ctx
 logger = logging.getLogger(__name__)
 
 from back_end.config import ServerConfig as _SVC
+import back_end.slot_monitor.db_interface as _db_iface
 
 DEBUG_ROI    = _SVC.DEBUG_ROI
 DEBUG_WINDOW = _SVC.DEBUG_WINDOW
@@ -91,6 +92,37 @@ def _shutdown(sig, frame):
 
     logger.info("All modules stopped — exiting")
     os._exit(0)
+
+
+# ============================================================
+# BOX IDENTITY — resolved once at startup
+# ============================================================
+
+def _resolve_box_id(slug: str) -> int:
+    """
+    Look up the box_id for the given slug in the boxes table.
+    Raises RuntimeError if the slug is not found — we want a
+    loud early failure rather than silently operating on the
+    wrong box's data.
+    """
+    from back_end.Database.db import get_conn, put_conn
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT box_id FROM boxes WHERE box_slug = %s;",
+                (slug,),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise RuntimeError(
+                    f"Unknown BOX_SLUG={slug!r}. "
+                    "Run migrations/0001_multi_box.sql and INSERT the box "
+                    "into the boxes table before starting the server."
+                )
+            return int(row[0])
+    finally:
+        put_conn(conn)
 
 
 # ============================================================
@@ -199,6 +231,11 @@ if __name__ == "__main__":
     logger.info("PHONE BOX SERVER — STARTING")
     logger.info("=" * 60)
 
+    # 0. Resolve box identity — fail fast if BOX_SLUG not in DB.
+    _box_id = _resolve_box_id(_SVC.BOX_SLUG)
+    _db_iface.set_box_id(_box_id)          # thread the box_id into all DB queries
+    logger.info(f"Box identity: slug={_SVC.BOX_SLUG!r}, box_id={_box_id}")
+
     # 1. Scan worker
     threading.Thread(target=scan_worker, daemon=True, name="ScanWorker").start()
     logger.info("Scan worker started")
@@ -228,12 +265,18 @@ if __name__ == "__main__":
                  # Opt #16: fall back to warming DeepFace/TensorFlow
         try:
              from deepface import DeepFace
+             try:
+                 import tensorflow as _tf
+                 _tf.get_logger().setLevel("ERROR")
+             except Exception:
+                 pass
              dummy = np.zeros((160, 160, 3), dtype=np.uint8)
              DeepFace.represent(img_path=dummy, model_name="SFace",
                                 detector_backend="opencv", enforce_detection=False)
              logger.info("Face embedder: DeepFace (TF) pre-warmed")
         except Exception as e:
              logger.warning(f"DeepFace pre-warm failed (non-fatal): {e}")
+
 
     threading.Thread(target=_prewarm_deepface, daemon=True, name="DeepFacePrewarm").start()
     # Opt #17: pre-warm BackgroundEncoder — starts its daemon worker thread
@@ -280,33 +323,53 @@ if __name__ == "__main__":
     #    don't depend on the async slot monitor being up yet.
     #    Falls back to 4 if the DB is unreachable (calibration still runs).
     num_lids = _SVC.FALLBACK_NUM_LIDS
+    box_lids: list[int] = []          # actual lid values for this box
     try:
         from back_end.Database.db import get_conn, put_conn
         conn = get_conn()
         try:
             with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT COALESCE(MAX(lid), 0) + 1 FROM locations;"
-                )
-                row = cur.fetchone()
-                num_lids = int(row[0]) if row and row[0] else 4
+                # Multi-box aware: fetch the real lid values for this box.
+                # Falls back to global MAX(lid)+1 if boxes table not yet migrated.
+                cur.execute("""
+                    SELECT lid FROM locations
+                    WHERE box_id = %s
+                    ORDER BY lid;
+                """, (_box_id,))
+                rows = cur.fetchall()
+                if rows:
+                    box_lids = [r[0] for r in rows]
+                    num_lids = len(box_lids)
+                else:
+                    # Fallback: no locations row for this box yet (pre-migration
+                    # or new box not yet seeded). Use configured fallback rather
+                    # than MAX(lid)+1 which would count slots from OTHER boxes.
+                    num_lids = _SVC.FALLBACK_NUM_LIDS
+                    logger.warning(
+                        f"No locations found for box_id={_box_id}. "
+                        f"Using FALLBACK_NUM_LIDS={num_lids} for calibration. "
+                        "Run DBQuery.sql and seed the locations table for this box."
+                    )
         finally:
             put_conn(conn)
-        logger.info(f"ROI calibration: {num_lids} lids from DB")
+        logger.info(
+            f"ROI calibration: {num_lids} lids for box_id={_box_id} "
+            f"(lids {box_lids[0]}–{box_lids[-1] if box_lids else '?'})"
+        )
     except Exception as e:
         logger.warning(
-            f"Could not fetch num_lids from DB ({e}). "
+            f"Could not fetch lids from DB ({e}). "
             f"Defaulting to {num_lids} for calibration."
         )
 
     if _SKIP_CALIBRATION:
         logger.info(
-            "A5: --skip-calibration set — skipping interactive ROI calibration. "
-            "Using existing rois_bottom.json / rois_top.json."
+            f"A5: --skip-calibration set — skipping interactive ROI calibration. "
+            f"Using existing rois_bottom_{_SVC.BOX_SLUG}.json / rois_top_{_SVC.BOX_SLUG}.json."
         )
     else:
         from back_end.slot_monitor.tools.roi_calibration import run_calibration
-        run_calibration(num_lids)   # blocks until operator confirms both windows
+        run_calibration(num_lids, box_slug=_SVC.BOX_SLUG)   # blocks until operator confirms both windows
 
     # 7. Slot monitor (reads rois_bottom.json written by step 6)
     slot_monitor = get_slot_monitor()

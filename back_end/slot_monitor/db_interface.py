@@ -57,6 +57,19 @@ def _vec_str(emb: np.ndarray) -> str:
 #                           and SlotOperations)
 # ============================================================
 
+# ── Box identity (set once at startup by server_main._resolve_box_id) ────────
+# Default of 1 matches the seed row in migrations/0001_multi_box.sql, so
+# single-box deployments that haven't set PHONEBOX_BOX_SLUG continue to work.
+_BOX_ID: int = 1
+
+
+def set_box_id(box_id: int) -> None:
+    """Called by server_main at startup after resolving PHONEBOX_BOX_SLUG."""
+    global _BOX_ID
+    _BOX_ID = box_id
+    logger.info(f"[DB] Box identity set: box_id={box_id}")
+
+
 # Opt #36: lazy one-time check for embedding_vec column
 _PGVECTOR_COL_EXISTS: Optional[bool] = None
 
@@ -93,15 +106,20 @@ class SlotMonitorDB:
 
     @staticmethod
     def fetch_occupied_slots() -> List[Tuple[int, str]]:
+        """Return (lid, pid) pairs for active storage rows in THIS box only."""
         conn = get_conn()
         try:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT lid, pid FROM phone_storage
-                    WHERE retrieved_at IS NULL ORDER BY lid;
-                """)
+                    SELECT ps.lid, ps.pid
+                    FROM phone_storage ps
+                    JOIN locations l ON l.lid = ps.lid
+                    WHERE ps.retrieved_at IS NULL
+                      AND l.box_id = %s
+                    ORDER BY ps.lid;
+                """, (_BOX_ID,))
                 rows = cur.fetchall()
-                logger.info(f"Fetched {len(rows)} occupied slots from DB")
+                logger.info(f"Fetched {len(rows)} occupied slots from DB (box_id={_BOX_ID})")
                 return rows
         except Exception as e:
             logger.error(f"Failed to fetch occupied slots: {e}")
@@ -111,21 +129,23 @@ class SlotMonitorDB:
 
     @staticmethod
     def fetch_all_baselines() -> Dict[int, np.ndarray]:
+        """Fetch baselines for THIS box only."""
         conn = get_conn()
         try:
             with conn.cursor() as cur:
                 cur.execute("""
                     SELECT lid, embedding FROM slot_baselines
-                    WHERE embedding IS NOT NULL
+                    WHERE box_id = %s
+                      AND embedding IS NOT NULL
                       AND embedding != '\\x00'::bytea
                     ORDER BY lid;
-                """)
+                """, (_BOX_ID,))
                 rows = cur.fetchall()
                 baselines = {}
                 for lid, emb_bytes in rows:
                     if emb_bytes:
                         baselines[lid] = embedding_from_bytes(emb_bytes)
-                logger.info(f"Fetched {len(baselines)} baselines from DB")
+                logger.info(f"Fetched {len(baselines)} baselines from DB (box_id={_BOX_ID})")
                 return baselines
         except Exception as e:
             logger.error(f"Failed to fetch baselines: {e}")
@@ -150,31 +170,34 @@ class SlotMonitorDB:
                     try:
                         cur.execute("""
                             INSERT INTO slot_baselines
-                                (lid, embedding, embedding_vec, calibrated_at)
-                            VALUES (%s, %s, %s::vector(96), NOW())
+                                (lid, embedding, embedding_vec, box_id, calibrated_at)
+                            VALUES (%s, %s, %s::vector(96), %s, NOW())
                             ON CONFLICT (lid) DO UPDATE SET
                                 embedding     = EXCLUDED.embedding,
                                 embedding_vec = EXCLUDED.embedding_vec,
+                                box_id        = EXCLUDED.box_id,
                                 calibrated_at = NOW()
-                        """, (lid, emb_bytes, _vec_str(embedding)))
+                        """, (lid, emb_bytes, _vec_str(embedding), _BOX_ID))
                     except Exception:
                         conn.rollback()
                         # Column exists in schema but type cast failed — fall back
                         cur.execute("""
-                            INSERT INTO slot_baselines (lid, embedding, calibrated_at)
-                            VALUES (%s, %s, NOW())
+                            INSERT INTO slot_baselines (lid, embedding, box_id, calibrated_at)
+                            VALUES (%s, %s, %s, NOW())
                             ON CONFLICT (lid) DO UPDATE SET
                                 embedding     = EXCLUDED.embedding,
+                                box_id        = EXCLUDED.box_id,
                                 calibrated_at = NOW()
-                        """, (lid, emb_bytes))
+                        """, (lid, emb_bytes, _BOX_ID))
                 else:
                     cur.execute("""
-                        INSERT INTO slot_baselines (lid, embedding, calibrated_at)
-                        VALUES (%s, %s, NOW())
+                        INSERT INTO slot_baselines (lid, embedding, box_id, calibrated_at)
+                        VALUES (%s, %s, %s, NOW())
                         ON CONFLICT (lid) DO UPDATE SET
                             embedding     = EXCLUDED.embedding,
+                            box_id        = EXCLUDED.box_id,
                             calibrated_at = NOW()
-                    """, (lid, emb_bytes))
+                    """, (lid, emb_bytes, _BOX_ID))
                 conn.commit()
                 logger.debug(f"Saved baseline for slot {lid} (vector={use_vector})")
         except Exception as e:
@@ -218,12 +241,17 @@ class SlotMonitorDB:
 
     @staticmethod
     def count_stored_phones() -> Optional[int]:
+        """Count phones currently stored in THIS box only."""
         conn = get_conn()
         try:
             with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT COUNT(*) FROM phone_storage WHERE retrieved_at IS NULL;"
-                )
+                cur.execute("""
+                    SELECT COUNT(*)
+                    FROM phone_storage ps
+                    JOIN locations l ON l.lid = ps.lid
+                    WHERE ps.retrieved_at IS NULL
+                      AND l.box_id = %s;
+                """, (_BOX_ID,))
                 row = cur.fetchone()
                 return int(row[0]) if row else 0
         except Exception as e:
@@ -265,6 +293,7 @@ class SlotMonitorDB:
 
     @staticmethod
     def get_next_free_lid() -> Optional[int]:
+        """Return the first free slot lid in THIS box."""
         conn = get_conn()
         try:
             with conn.cursor() as cur:
@@ -273,8 +302,9 @@ class SlotMonitorDB:
                     LEFT JOIN phone_storage ps
                            ON l.lid = ps.lid AND ps.retrieved_at IS NULL
                     WHERE ps.pid IS NULL
+                      AND l.box_id = %s
                     ORDER BY l.lid LIMIT 1;
-                """)
+                """, (_BOX_ID,))
                 row = cur.fetchone()
                 return row[0] if row else None
         except Exception as e:
@@ -378,6 +408,10 @@ class AsyncSlotMonitorDB:
         # Opt #25: dedicated connection for LISTEN/NOTIFY
         self._listen_conn: Optional[asyncpg.Connection] = None
 
+        # Box identity: set in connect() after server_main calls set_box_id().
+        # Placeholder ensures safe default for single-box deployments.
+        self._box_id: int = 1
+
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
     async def connect(self):
@@ -399,6 +433,10 @@ class AsyncSlotMonitorDB:
             f"AsyncPG pool created: {self.min_pool_size}-{self.max_pool_size} "
             f"connections to {self.host}:{self.port}/{self.database}"
         )
+
+        # Latch the box_id now (set_box_id() has already been called by server_main)
+        self._box_id = _BOX_ID
+        logger.info(f"[AsyncDB] box_id={self._box_id}")
 
         # Opt #36: detect vector column once
         self._pgvector_ready = await self._detect_pgvector()
@@ -494,7 +532,7 @@ class AsyncSlotMonitorDB:
     # ── Baseline operations ───────────────────────────────────────────────────
 
     async def save_baseline(self, lid: int, embedding: np.ndarray):
-        """Opt #36: write BYTEA + vector(96) with graceful BYTEA fallback."""
+        """Opt #36: write BYTEA + vector(96) + box_id with graceful BYTEA fallback."""
         self._require_pool()
         emb_bytes = embedding_to_bytes(embedding)
 
@@ -503,14 +541,15 @@ class AsyncSlotMonitorDB:
                 await self._pool.execute(
                     """
                     INSERT INTO slot_baselines
-                        (lid, embedding, embedding_vec, calibrated_at)
-                    VALUES ($1, $2, $3::vector(96), NOW())
+                        (lid, embedding, embedding_vec, box_id, calibrated_at)
+                    VALUES ($1, $2, $3::vector(96), $4, NOW())
                     ON CONFLICT (lid) DO UPDATE SET
                         embedding     = EXCLUDED.embedding,
                         embedding_vec = EXCLUDED.embedding_vec,
+                        box_id        = EXCLUDED.box_id,
                         calibrated_at = EXCLUDED.calibrated_at
                     """,
-                    lid, emb_bytes, _vec_str(embedding),
+                    lid, emb_bytes, _vec_str(embedding), self._box_id,
                 )
                 return
             except Exception:
@@ -518,13 +557,14 @@ class AsyncSlotMonitorDB:
 
         await self._pool.execute(
             """
-            INSERT INTO slot_baselines (lid, embedding, calibrated_at)
-            VALUES ($1, $2, NOW())
+            INSERT INTO slot_baselines (lid, embedding, box_id, calibrated_at)
+            VALUES ($1, $2, $3, NOW())
             ON CONFLICT (lid) DO UPDATE SET
                 embedding     = EXCLUDED.embedding,
+                box_id        = EXCLUDED.box_id,
                 calibrated_at = EXCLUDED.calibrated_at
             """,
-            lid, emb_bytes,
+            lid, emb_bytes, self._box_id,
         )
 
     async def fetch_baseline(self, lid: int) -> Optional[np.ndarray]:
@@ -535,19 +575,23 @@ class AsyncSlotMonitorDB:
         return embedding_from_bytes(row["embedding"]) if row else None
 
     async def fetch_all_baselines(self) -> Dict[int, np.ndarray]:
+        """Fetch baselines for THIS box only."""
         self._require_pool()
         rows = await self._pool.fetch(
             """
             SELECT lid, embedding FROM slot_baselines
-            WHERE embedding IS NOT NULL AND embedding != '\\x00'::bytea
+            WHERE box_id = $1
+              AND embedding IS NOT NULL
+              AND embedding != '\\x00'::bytea
             ORDER BY lid
-            """
+            """,
+            self._box_id,
         )
         baselines = {
             row["lid"]: embedding_from_bytes(row["embedding"])
             for row in rows
         }
-        logger.info(f"Fetched {len(baselines)} baselines from DB (async)")
+        logger.info(f"Fetched {len(baselines)} baselines from DB (async, box_id={self._box_id})")
         return baselines
 
     async def delete_baseline(self, lid: int):
@@ -557,16 +601,17 @@ class AsyncSlotMonitorDB:
         )
 
     async def save_baselines_batch(self, baselines: Dict[int, np.ndarray]):
-        """Opt #36: batch write BYTEA + vector(96) with graceful fallback."""
+        """Opt #36: batch write BYTEA + vector(96) + box_id with graceful fallback."""
         self._require_pool()
         if not baselines:
             return
 
-        data_vec = [
-            (lid, embedding_to_bytes(emb), _vec_str(emb))
+        # Include box_id in every row tuple
+        data_vec   = [
+            (lid, embedding_to_bytes(emb), _vec_str(emb), self._box_id)
             for lid, emb in baselines.items()
         ]
-        data_bytes = [(lid, b) for lid, b, _ in data_vec]
+        data_bytes = [(lid, b, self._box_id) for lid, b, _, _bid in data_vec]
 
         async with self._pool.acquire() as conn:
             async with conn.transaction():
@@ -575,18 +620,19 @@ class AsyncSlotMonitorDB:
                         await conn.executemany(
                             """
                             INSERT INTO slot_baselines
-                                (lid, embedding, embedding_vec, calibrated_at)
-                            VALUES ($1, $2, $3::vector(96), NOW())
+                                (lid, embedding, embedding_vec, box_id, calibrated_at)
+                            VALUES ($1, $2, $3::vector(96), $4, NOW())
                             ON CONFLICT (lid) DO UPDATE SET
                                 embedding     = EXCLUDED.embedding,
                                 embedding_vec = EXCLUDED.embedding_vec,
+                                box_id        = EXCLUDED.box_id,
                                 calibrated_at = EXCLUDED.calibrated_at
                             """,
                             data_vec,
                         )
                         logger.info(
                             f"Saved {len(baselines)} baselines batch "
-                            f"(async, vector=True)"
+                            f"(async, vector=True, box_id={self._box_id})"
                         )
                         return
                     except Exception:
@@ -594,47 +640,77 @@ class AsyncSlotMonitorDB:
 
                 await conn.executemany(
                     """
-                    INSERT INTO slot_baselines (lid, embedding, calibrated_at)
-                    VALUES ($1, $2, NOW())
+                    INSERT INTO slot_baselines (lid, embedding, box_id, calibrated_at)
+                    VALUES ($1, $2, $3, NOW())
                     ON CONFLICT (lid) DO UPDATE SET
                         embedding     = EXCLUDED.embedding,
+                        box_id        = EXCLUDED.box_id,
                         calibrated_at = EXCLUDED.calibrated_at
                     """,
                     data_bytes,
                 )
-        logger.info(f"Saved {len(baselines)} baselines batch (async, vector=False)")
+        logger.info(f"Saved {len(baselines)} baselines batch (async, vector=False, box_id={self._box_id})")
 
     # ── Occupancy queries ─────────────────────────────────────────────────────
 
     async def get_num_lid(self) -> int:
+        """Return the count of slots belonging to THIS box."""
         self._require_pool()
-        num_lid = await self._pool.fetchval(
-            "SELECT COALESCE(MAX(lid), 0) + 1 FROM locations;"
+        count = await self._pool.fetchval(
+            "SELECT COUNT(*) FROM locations WHERE box_id = $1;",
+            self._box_id,
         )
-        return num_lid or 1
+        return int(count) if count else 0
+
+    async def get_box_lids(self) -> List[int]:
+        """
+        Return the ordered list of actual lid values for THIS box.
+
+        Critical for multi-box: Box 1 may have lids [0..29], Box 2 [30..59].
+        generate_grid_rois() must use these values as dict keys so that
+        baselines (keyed by actual lid) align with ROI entries.
+        """
+        self._require_pool()
+        rows = await self._pool.fetch(
+            "SELECT lid FROM locations WHERE box_id = $1 ORDER BY lid;",
+            self._box_id,
+        )
+        return [row["lid"] for row in rows]
 
     async def get_next_free_lid(self) -> Optional[int]:
+        """Return the first free slot lid in THIS box (concurrency-safe)."""
         self._require_pool()
         return await self._pool.fetchval(
             """
             SELECT l.lid FROM locations l
-            WHERE NOT EXISTS (
+            WHERE l.box_id = $1
+              AND NOT EXISTS (
                 SELECT 1 FROM phone_storage ps
                 WHERE ps.lid = l.lid AND ps.retrieved_at IS NULL
-            )
+              )
             ORDER BY l.lid
             FOR UPDATE SKIP LOCKED
             LIMIT 1;
-            """
+            """,
+            self._box_id,
         )
 
     async def fetch_occupied_slots(self) -> List[Tuple[int, str]]:
+        """Return (lid, pid) pairs for active storage rows in THIS box only."""
         self._require_pool()
         rows = await self._pool.fetch(
-            "SELECT lid, pid FROM phone_storage WHERE retrieved_at IS NULL ORDER BY lid"
+            """
+            SELECT ps.lid, ps.pid
+            FROM phone_storage ps
+            JOIN locations l ON l.lid = ps.lid
+            WHERE ps.retrieved_at IS NULL
+              AND l.box_id = $1
+            ORDER BY ps.lid
+            """,
+            self._box_id,
         )
         result = [(row["lid"], row["pid"]) for row in rows]
-        logger.info(f"Fetched {len(result)} occupied slots from DB (async)")
+        logger.info(f"Fetched {len(result)} occupied slots from DB (async, box_id={self._box_id})")
         return result
 
     async def get_pid_for_lid(self, lid: int) -> Optional[str]:

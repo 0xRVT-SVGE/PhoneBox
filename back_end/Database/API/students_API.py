@@ -12,7 +12,7 @@ def handle_response(res):
     return jsonify(data), code
 
 # --- CRUD ---
-@students_bp.route("/", methods=["GET"])
+@students_bp.route("", methods=["GET"], strict_slashes=False)
 def api_list_students():
     return handle_response(list_students())
 
@@ -20,10 +20,11 @@ def api_list_students():
 def api_get_student(sid):
     return handle_response(get_student(sid))
 
-@students_bp.route("/", methods=["POST"])
+@students_bp.route("", methods=["POST"], strict_slashes=False)
 def api_create_student():
     data = request.get_json(force=True)
     return handle_response(create_student(data))
+
 
 @students_bp.route("/<sid>", methods=["PUT"])
 def api_update_student(sid):

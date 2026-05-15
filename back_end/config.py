@@ -15,7 +15,7 @@ Usage:
 
 Sections
 --------
-  CameraConfig          Camera indices and resolutions
+  CameraConfig          Camera indices, resolutions, and capture backends
   DatabaseConfig        DB connection parameters and pool sizes
   ServerConfig          Flask / SocketIO host+port, debug flags
   ScannerConfig         Front-camera face+barcode scan worker
@@ -37,6 +37,7 @@ Sections
   OverlayConfig         On-screen draw colours (BGR tuples)
 """
 
+import os
 from pathlib import Path
 
 # ── Repository root (back_end/ is one level below this file) ──────────────
@@ -51,8 +52,8 @@ _MODELS_DIR = _REPO_ROOT / "back_end" / "models"
 class CameraConfig:
     # ── Device indices ────────────────────────────────────
     FRONT_CAM_INDEX  = 0   # scanner_loop.py  — face + barcode
-    TOP_CAM_INDEX    = 2   # top_camera.py    — QR scan + phone tracking
-    BOTTOM_CAM_INDEX = 1   # headless_slot_monitor.py — slot embedding
+    TOP_CAM_INDEX    = 1   # top_camera.py    — QR scan + phone tracking
+    BOTTOM_CAM_INDEX = 2   # headless_slot_monitor.py — slot embedding
 
     # ── Bottom camera (slot monitor) resolution ───────────
     BOTTOM_CAM_WIDTH  = 1280
@@ -68,6 +69,62 @@ class CameraConfig:
 
     # ── Async frame buffer max concurrent subscribers ─────
     ASYNC_FRAME_MAX_SUBSCRIBERS = 100
+
+    # ── cv2.VideoCapture backends ─────────────────────────
+    # Controls the capture API passed as the second argument to
+    # cv2.VideoCapture(index, apiPreference).
+    #
+    # Values:
+    #   "auto"  — let OpenCV choose (cv2.CAP_ANY, default behaviour).
+    #             Works on most systems; use this unless you hit issues.
+    #   "dshow" — Windows DirectShow (cv2.CAP_DSHOW).  Eliminates the
+    #             ~2 s black-frame delay on USB webcams under Windows.
+    #   "msmf"  — Windows Media Foundation (cv2.CAP_MSMF).  Better for
+    #             H.264/MJPEG streams on some Windows drivers.
+    #   "v4l2"  — Video4Linux2 (cv2.CAP_V4L2).  Standard on Linux.
+    #   "gstreamer" — GStreamer pipeline (cv2.CAP_GSTREAMER).
+    #   "ffmpeg"    — FFmpeg backend (cv2.CAP_FFMPEG).
+    #
+    # Each camera can be set independently so you can mix backends
+    # (e.g. DSHOW for the front cam, auto for the others).
+    #
+    # Environment-variable overrides (string, case-insensitive):
+    #   PHONEBOX_CAM_BACKEND_FRONT   e.g. "dshow"
+    #   PHONEBOX_CAM_BACKEND_TOP     e.g. "auto"
+    #   PHONEBOX_CAM_BACKEND_BOTTOM  e.g. "dshow"
+    FRONT_CAM_BACKEND  = os.environ.get("PHONEBOX_CAM_BACKEND_FRONT",  "auto").lower()
+    TOP_CAM_BACKEND    = os.environ.get("PHONEBOX_CAM_BACKEND_TOP",    "auto").lower()
+    BOTTOM_CAM_BACKEND = os.environ.get("PHONEBOX_CAM_BACKEND_BOTTOM", "dshow").lower()
+
+    # ── Backend resolver ──────────────────────────────────
+    # Use CameraConfig.resolve_backend(name) to get the cv2 integer constant.
+    # Import cv2 inside callers (not at config level) to avoid hard dependency.
+    @staticmethod
+    def resolve_backend(name: str) -> int:
+        """
+        Convert a backend name string to its cv2 integer constant.
+
+        Usage in callers::
+
+            import cv2
+            from back_end.config import CameraConfig
+
+            backend = CameraConfig.resolve_backend(CameraConfig.FRONT_CAM_BACKEND)
+            cap = cv2.VideoCapture(CameraConfig.FRONT_CAM_INDEX, backend)
+
+        Returns cv2.CAP_ANY (0) for unknown names so callers always get a
+        valid integer even if cv2 is not imported here.
+        """
+        import cv2  # local import — cv2 may not be installed in all envs
+        _MAP = {
+            "auto":      cv2.CAP_ANY,
+            "dshow":     cv2.CAP_DSHOW,
+            "msmf":      cv2.CAP_MSMF,
+            "v4l2":      cv2.CAP_V4L2,
+            "gstreamer": cv2.CAP_GSTREAMER,
+            "ffmpeg":    cv2.CAP_FFMPEG,
+        }
+        return _MAP.get(name.lower(), cv2.CAP_ANY)
 
 
 # ============================================================
@@ -108,8 +165,12 @@ class DatabaseConfig:
 # ============================================================
 
 class ServerConfig:
-    HOST = os.environ.get("PHONEBOX_HOST", "0.0.0.0")
-    PORT = int(os.environ.get("PHONEBOX_PORT", "5000"))
+    HOST     = os.environ.get("PHONEBOX_HOST",     "0.0.0.0")
+    PORT     = int(os.environ.get("PHONEBOX_PORT", "5000"))
+    # Each physical box declares its slug, which must exist in the boxes table.
+    # Example: PHONEBOX_BOX_SLUG=year_1  (for the Year 1 cabinet)
+    # BOX_ID is resolved at startup by server_main._resolve_box_id().
+    BOX_SLUG = os.environ.get("PHONEBOX_BOX_SLUG", "year_3")
 
     # Debug flags for scanner_loop
     DEBUG_ROI    = True   # Draw ROI rectangle on front-camera feed
@@ -123,7 +184,10 @@ class ServerConfig:
     MONITOR_SETUP_TIMEOUT = 20.0   # seconds
 
     # Fallback num_lids used for ROI calibration when DB is unreachable.
-    FALLBACK_NUM_LIDS = 4
+    # Set this to the actual number of physical slots in the cabinet so that
+    # if the DB is momentarily unreachable at startup the calibration grid
+    # is still drawn correctly.
+    FALLBACK_NUM_LIDS = int(os.getenv("PHONEBOX_NUM_LIDS", "30"))
 
     # API base URL for the student lookup endpoint (scanner_worker)
     STUDENT_API_BASE    = "http://127.0.0.1:5000/api/students"

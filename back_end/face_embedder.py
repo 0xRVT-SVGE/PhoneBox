@@ -46,16 +46,30 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+# ── Suppress TF / oneDNN / absl verbosity BEFORE any TF import ───────────────
+# These must be set before tensorflow is imported anywhere in the process.
+# TF_CPP_MIN_LOG_LEVEL: 0=all, 1=no INFO, 2=no WARNING, 3=no ERROR
+import os as _os
+_os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL",    "3")   # silence C++ TF log
+_os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS",   "0")   # suppress oneDNN notice
+_os.environ.setdefault("GRPC_VERBOSITY",           "ERROR")
+_os.environ.setdefault("ABSL_MIN_LOG_LEVEL",       "3")
+
 # ── onnxruntime availability ──────────────────────────────────────────────────
 try:
     import onnxruntime as _ort
+    # Probe the two APIs we actually call — absent in broken conda builds.
+    if not (hasattr(_ort, "InferenceSession") and callable(_ort.InferenceSession)):
+        raise ImportError("onnxruntime is installed but InferenceSession is missing (broken build)")
+    _ORT_HAS_OPTS = hasattr(_ort, "SessionOptions") and hasattr(_ort, "GraphOptimizationLevel")
     _ORT_AVAILABLE = True
-except ImportError:
+except ImportError as _ort_err:
     _ort = None
     _ORT_AVAILABLE = False
+    _ORT_HAS_OPTS  = False
     logger.info(
-        "[FaceEmbedder] onnxruntime not installed — DeepFace fallback active. "
-        "Install with: pip install onnxruntime  (or onnxruntime-gpu)"
+        f"[FaceEmbedder] onnxruntime unavailable ({_ort_err}) — DeepFace fallback active. "
+        "Fix with: pip install --force-reinstall onnxruntime"
     )
 
 # ── Module-level state (lazy init) ───────────────────────────────────────────
@@ -114,14 +128,19 @@ def _init_session() -> bool:
         return False
 
     try:
-        # Prefer CUDA EP when GPU is available; fall back to CPU silently.
         providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
-        opts = _ort.SessionOptions()
-        opts.inter_op_num_threads = 2
-        opts.intra_op_num_threads = 2
-        opts.graph_optimization_level = _ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 
-        _sess       = _ort.InferenceSession(str(model_path), opts, providers=providers)
+        if _ORT_HAS_OPTS:
+            opts = _ort.SessionOptions()
+            opts.inter_op_num_threads = 2
+            opts.intra_op_num_threads = 2
+            opts.graph_optimization_level = _ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+            _sess = _ort.InferenceSession(str(model_path), opts, providers=providers)
+        else:
+            # Older/stripped onnxruntime build — no SessionOptions, still works.
+            _sess = _ort.InferenceSession(str(model_path), providers=providers)
+            logger.debug("[FaceEmbedder] SessionOptions not available — using default session config")
+
         _input_name = _sess.get_inputs()[0].name
         active_ep   = _sess.get_providers()[0]
 

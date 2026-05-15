@@ -10,8 +10,10 @@ to record the visual embeddings that the slot monitor compares against at
 runtime.
 
 This tool works exclusively with the BOTTOM camera (index 1).
-ROI positions are read from rois_bottom.json written by roi_calibration.py.
-Run roi_calibration.py first if that file does not yet exist.
+ROI positions are read from rois_bottom_{slug}.json written by
+roi_calibration.py, where {slug} is the PHONEBOX_BOX_SLUG env var
+(or "box_1" as default).  Run roi_calibration.py first if that file
+does not yet exist.
 
 Options
 ───────
@@ -31,6 +33,7 @@ import json
 import logging
 import threading
 import time
+import os
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from back_end.config import CameraConfig as _CC, CalibrationConfig as _CAL
@@ -46,8 +49,74 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ── Paths ─────────────────────────────────────────────────
-_TOOLS_DIR      = Path(__file__).parent
-ROI_FILE_BOTTOM = _TOOLS_DIR / "rois_bottom.json"
+_TOOLS_DIR = Path(__file__).parent
+
+
+def _resolve_box_slug() -> str:
+    """Resolve the active box slug from env → config → fallback."""
+    slug = os.getenv("PHONEBOX_BOX_SLUG", "")
+    if not slug:
+        try:
+            from back_end.config import ServerConfig as _SVC
+            slug = getattr(_SVC, "BOX_SLUG", "") or ""
+        except Exception:
+            pass
+    return slug or "box_1"
+
+
+BOX_SLUG        = _resolve_box_slug()
+ROI_FILE_BOTTOM = _TOOLS_DIR / f"rois_bottom_{BOX_SLUG}.json"
+
+
+def _init_box_id(box_slug: str) -> int:
+    """
+    Resolve box_slug → box_id from the DB and call set_box_id() so that
+    all SlotMonitorDB operations in this process use the correct box.
+
+    This is the same call that server_main makes at startup.
+    Without it, _BOX_ID stays at its default of 1 and every baseline
+    written by calibrate_all_slots() goes to box 1.
+
+    Returns the resolved box_id, or 1 if the DB is unavailable (with a
+    loud warning so the operator knows to fix their setup before proceeding).
+    """
+    try:
+        from back_end.Database.db import get_conn, put_conn
+        from back_end.slot_monitor.db_interface import set_box_id
+        conn = get_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT box_id FROM boxes WHERE box_slug = %s;",
+                    (box_slug,),
+                )
+                row = cur.fetchone()
+                if not row:
+                    raise RuntimeError(
+                        f"Box slug {box_slug!r} not found in boxes table. "
+                        "Seed the boxes table or set PHONEBOX_BOX_SLUG correctly."
+                    )
+                box_id = int(row[0])
+                set_box_id(box_id)
+                logger.info(
+                    f"[EmbedCalibration] box_slug={box_slug!r} → box_id={box_id} — "
+                    "SlotMonitorDB scoped to this box."
+                )
+                return box_id
+        finally:
+            put_conn(conn)
+    except Exception as exc:
+        logger.error(
+            f"[EmbedCalibration] Could not resolve box_id for slug={box_slug!r}: {exc}\n"
+            "  All baselines will be written with box_id=1 (WRONG). Fix this before proceeding!"
+        )
+        return 1
+
+
+# Resolve and wire up box identity immediately at module load so every
+# SlotMonitorDB call in this file uses the correct box_id.
+BOX_ID = _init_box_id(BOX_SLUG)
+
 
 # ── Camera ─────────────────────────────────────────────────
 CAMERA_ID     = _CC.BOTTOM_CAM_INDEX
@@ -61,23 +130,24 @@ CAMERA_HEIGHT = _CAL.EMBED_CAM_HEIGHT
 
 def load_rois_from_calibration() -> Dict[int, Tuple[int, int, int, int]]:
     """
-    Load bottom-camera ROIs from rois_bottom.json (written by roi_calibration.py).
+    Load bottom-camera ROIs from rois_bottom_{slug}.json
+    (written by roi_calibration.py).
 
     Raises:
-        FileNotFoundError: if rois_bottom.json does not exist.
+        FileNotFoundError: if the ROI file does not exist.
         ValueError: if the file is malformed.
     """
     if not ROI_FILE_BOTTOM.exists():
         raise FileNotFoundError(
             f"ROI file not found: {ROI_FILE_BOTTOM}\n"
-            f"Run roi_calibration.py first to create it."
+            f"Run roi_calibration.py with PHONEBOX_BOX_SLUG={BOX_SLUG!r} first."
         )
 
     with open(ROI_FILE_BOTTOM, "r") as f:
         data = json.load(f)
 
     if not isinstance(data, list) or len(data) == 0:
-        raise ValueError(f"rois_bottom.json is empty or malformed: {ROI_FILE_BOTTOM}")
+        raise ValueError(f"{ROI_FILE_BOTTOM} is empty or malformed.")
 
     rois: Dict[int, Tuple[int, int, int, int]] = {}
     for i, entry in enumerate(data):
@@ -85,7 +155,7 @@ def load_rois_from_calibration() -> Dict[int, Tuple[int, int, int, int]]:
             raise ValueError(f"ROI entry {i} is not a [x, y, w, h] list: {entry}")
         rois[i] = tuple(int(v) for v in entry)  # type: ignore[assignment]
 
-    logger.info(f"Loaded {len(rois)} ROIs from {ROI_FILE_BOTTOM}")
+    logger.info(f"Loaded {len(rois)} ROIs from {ROI_FILE_BOTTOM} (box={BOX_SLUG!r})")
     return rois
 
 
@@ -126,7 +196,7 @@ class _FrameBuffer:
         logger.info("Camera ready.")
 
     def _loop(self, camera_id: int, width: int, height: int) -> None:
-        cap = cv2.VideoCapture(camera_id)
+        cap = cv2.VideoCapture(camera_id, _CC.resolve_backend(_CC.BOTTOM_CAM_BACKEND))
         if not cap.isOpened():
             logger.error(f"Cannot open camera {camera_id}")
             return
@@ -363,8 +433,9 @@ if __name__ == "__main__":
     print("SLOT BASELINE CALIBRATION")
     print("=" * 70)
     print()
-    print("  ROI source : rois_bottom.json  (run roi_calibration.py first)")
-    print("  Camera     : bottom camera (index 1)")
+    print(f"  Box slug   : {BOX_SLUG!r}  (set PHONEBOX_BOX_SLUG to change)")
+    print(f"  ROI source : {ROI_FILE_BOTTOM}")
+    print( "  Camera     : bottom camera (index 1)")
     print()
     print("  1. Calibrate all slots   (initial setup)")
     print("  2. Recalibrate specific  (maintenance)")
@@ -383,6 +454,45 @@ if __name__ == "__main__":
     except (FileNotFoundError, ValueError) as e:
         print(f"\n✗ {e}")
         raise SystemExit(1)
+
+    # ── Validate ROI count against DB ─────────────────────
+    # Catch the common mistake of using an ROI file from a different box
+    # or a previous calibration run with the wrong slot count.
+    try:
+        from back_end.Database.db import get_conn, put_conn as _put_conn
+        _conn = get_conn()
+        try:
+            with _conn.cursor() as _cur:
+                _cur.execute(
+                    "SELECT box_id FROM boxes WHERE box_slug = %s;", (BOX_SLUG,)
+                )
+                _row = _cur.fetchone()
+                if _row:
+                    _cur.execute(
+                        "SELECT COUNT(*) FROM locations WHERE box_id = %s;",
+                        (_row[0],),
+                    )
+                    _cnt = int(_cur.fetchone()[0])
+                    if _cnt > 0 and _cnt != len(rois):
+                        print(
+                            f"\n⚠  WARNING: ROI file has {len(rois)} entries but "
+                            f"the DB has {_cnt} locations for box={BOX_SLUG!r}.\n"
+                            f"   Run roi_calibration.py first to regenerate the ROI file "
+                            f"with {_cnt} slots.\n"
+                        )
+                        if input("Continue anyway? (yes/no): ").strip().lower() != "yes":
+                            raise SystemExit(0)
+                else:
+                    print(
+                        f"\n⚠  Box slug {BOX_SLUG!r} not found in boxes table.\n"
+                        f"   Check PHONEBOX_BOX_SLUG and ensure the boxes table is seeded.\n"
+                    )
+        finally:
+            _put_conn(_conn)
+    except SystemExit:
+        raise
+    except Exception as _exc:
+        print(f"  (DB validation skipped: {_exc})")
 
     try:
         buf.start(CAMERA_ID, CAMERA_WIDTH, CAMERA_HEIGHT)

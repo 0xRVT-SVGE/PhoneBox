@@ -19,7 +19,6 @@ import logging
 import cv2
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor
-from deepface import DeepFace
 from pyzbar.pyzbar import decode, ZBarSymbol
 import requests
 
@@ -27,6 +26,12 @@ from back_end.scanner_state import scanner_state
 from back_end.config import ScannerConfig as _SC, ServerConfig as _SVC
 
 logger = logging.getLogger(__name__)
+
+# Lazy-loaded DeepFace reference — populated on first fallback call.
+# Keeping it lazy means the TF env-var suppressions in face_embedder.py
+# always fire before TensorFlow is imported.
+_DeepFace = None
+
 
 API_BASE             = _SVC.STUDENT_API_BASE
 SIMILARITY_THRESHOLD = _SC.SIMILARITY_THRESHOLD
@@ -138,7 +143,19 @@ def _deepface_represent(resized: np.ndarray):
         except Exception as exc:
             logger.debug(f"[ScanWorker] ONNX failed, falling back: {exc}")
 
-    return DeepFace.represent(
+    # Lazy DeepFace import — only pays TF load cost on first fallback call.
+    global _DeepFace
+    if _DeepFace is None:
+        from deepface import DeepFace as _df
+        # Silence Python-level TF deprecation warnings after TF has loaded.
+        try:
+            import tensorflow as tf
+            tf.get_logger().setLevel("ERROR")
+        except Exception:
+            pass
+        _DeepFace = _df
+
+    return _DeepFace.represent(
         img_path          = resized,
         model_name        = _SC.FACE_MODEL,
         detector_backend  = _SC.FACE_DETECTOR_BACKEND,

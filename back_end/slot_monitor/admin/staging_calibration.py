@@ -98,7 +98,7 @@ _COL_SEL  = (100, 220, 255)
 # ══════════════════════════════════════════════════════════
 
 def _capture_frame(camera_index: int, warmup: int) -> Optional[np.ndarray]:
-    cap = cv2.VideoCapture(camera_index)
+    cap = cv2.VideoCapture(camera_index, _CC.resolve_backend(_CC.TOP_CAM_BACKEND))
     if not cap.isOpened():
         logger.error(f"Cannot open camera {camera_index}")
         return None
