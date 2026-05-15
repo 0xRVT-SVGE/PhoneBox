@@ -3,5 +3,6 @@
 *.pyd
 build/
 back_end/models/**
+**/*.json
 *.c          # generated C files (large, reproducible from .pyx)
 **/*.c       # also catches nested paths
