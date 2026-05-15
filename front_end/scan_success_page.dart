@@ -92,12 +92,14 @@ class _ScanSuccessPageState extends State<ScanSuccessPage> {
       };
       _topPc!.onConnectionState = (state) async {
         if (_topPageDisposed) return;
-        if (state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
-            state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
+        // Only reconnect on 'failed' — 'disconnected' is transient/recoverable.
+        if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
           _topConnected.value = false;
+          _topPc?.onTrack           = null;
+          _topPc?.onConnectionState = null;
           await _topPc?.close();
           _topPc = null;
-          await Future.delayed(const Duration(seconds: 3));
+          await Future.delayed(const Duration(seconds: 1));
           if (!_topPageDisposed) {
             _topRenderer.srcObject = null;
             _topConnecting = false;

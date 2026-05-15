@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';          // base64Decode for freeze-frame
 import 'dart:typed_data';       // Uint8List
 import 'package:flutter/material.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:phonebox_ui/webrtc_config.dart';
 import 'api_service.dart';
 import 'socket_service.dart';
 import 'scan_success_page.dart';
@@ -71,12 +73,14 @@ class _AdminMenuPageState extends State<AdminMenuPage> {
       };
       _topPc!.onConnectionState = (state) async {
         if (_topPageDisposed) return;
-        if (state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
-            state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
+        // Only reconnect on 'failed' — 'disconnected' is transient/recoverable.
+        if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
           _topConnected.value = false;
+          _topPc?.onTrack           = null;
+          _topPc?.onConnectionState = null;
           await _topPc?.close();
           _topPc = null;
-          await Future.delayed(const Duration(seconds: 3));
+          await Future.delayed(const Duration(seconds: 1));
           if (!_topPageDisposed) {
             _topRenderer.srcObject = null;
             _topConnecting = false;
@@ -1371,4 +1375,4 @@ class _CaptureEmbedPageState extends State<CaptureEmbedPage> {
       ]),
     );
   }
-}
+}

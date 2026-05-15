@@ -621,13 +621,19 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
 
   void _handleConnectionState(RTCPeerConnectionState state) async {
     if (_disposed || _isReconnecting) return;
-    if (state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
-        state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
+    // 'disconnected' is a transient/recoverable WebRTC state — the ICE agent
+    // may self-heal.  Only reconnect on 'failed' (ICE exhausted all candidates).
+    // Reconnecting on 'disconnected' caused the tight 8-10s cancel→reconnect
+    // loop seen in the alarm resolution page logs.
+    if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
       _isReconnecting = true;
       if (mounted) setState(() => _videoConnected = false);
+      _pc?.onTrack           = null;
+      _pc?.onConnectionState = null;
       await _pc?.close();
       _pc = null;
-      await Future.delayed(const Duration(seconds: 2));
+      // 1s debounce — avoids thrashing if 'failed' is emitted multiple times.
+      await Future.delayed(const Duration(seconds: 1));
       if (!_disposed) {
         _renderer.srcObject = null;
         await _startVideo();
@@ -640,7 +646,13 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
     if (_disposed) return;
     try {
       await ApiService.cancelAdmin();
+      if (_disposed) return;                       // may have been disposed during cancelAdmin
       _pc = await createPeerConnection(WebRTCConfig.iceConfig);
+      if (_disposed) {                             // may have been disposed during createPeerConnection
+        await _pc?.close();
+        _pc = null;
+        return;
+      }
       _pc!.onTrack = (event) {
         if (_disposed || !mounted) return;
         if (event.streams.isNotEmpty) {
@@ -653,6 +665,7 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
       _pc!.onConnectionState = _handleConnectionState;
       final offer = await _pc!.createOffer(WebRTCConfig.videoOfferConstraints);
       await _pc!.setLocalDescription(offer);
+      if (_disposed) return;
       final sdp = await ApiService.sendOffer(offer.sdp!, mode: 'admin');
       if (sdp != null && !_disposed) {
         await _pc!.setRemoteDescription(RTCSessionDescription(sdp, 'answer'));
@@ -661,6 +674,7 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
       if (mounted) setState(() => _videoConnected = false);
     }
   }
+
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 

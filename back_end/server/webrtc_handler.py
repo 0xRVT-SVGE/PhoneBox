@@ -376,9 +376,13 @@ async def _handle_offer(offer_sdp, offer_type, mode):
     @pc.on("connectionstatechange")
     async def on_state_change():
         state = pc.connectionState
-        if state == "disconnected":
-            await asyncio.sleep(5)
-        if state in ("closed", "failed", "disconnected"):
+        # 'disconnected' is transient — ICE may self-heal without intervention.
+        # Only clean up on terminal states: 'failed' means ICE has exhausted all
+        # candidates; 'closed' means we explicitly called pc.close() ourselves.
+        # Closing on 'disconnected' caused a continuous cancel→reconnect loop
+        # in the admin resolution page (every ~8-10 s).
+        if state in ("closed", "failed"):
+            logger.debug(f"[WebRTC] {mode!r} connection {state} — cleaning up")
             _pcs_for_mode(mode).discard(pc)
             await pc.close()
 

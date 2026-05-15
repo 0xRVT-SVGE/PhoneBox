@@ -124,12 +124,14 @@ class _AlarmPageState extends State<AlarmPage>
       };
       _adminPc!.onConnectionState = (state) async {
         if (_disposed) return;
-        if (state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
-            state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
+        // Only reconnect on 'failed' — 'disconnected' is transient/recoverable.
+        if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
           if (mounted) setState(() => _adminVideoConnected = false);
+          _adminPc?.onTrack           = null;
+          _adminPc?.onConnectionState = null;
           await _adminPc?.close();
           _adminPc = null;
-          await Future.delayed(const Duration(seconds: 2));
+          await Future.delayed(const Duration(seconds: 1));
           if (!_disposed) {
             _adminRenderer.srcObject = null;
             await _startAdminVideo();
@@ -141,8 +143,7 @@ class _AlarmPageState extends State<AlarmPage>
       final sdp = await ApiService.sendOffer(offer.sdp!, mode: 'admin',
           maxRetries: 1);
       if (sdp != null && !_disposed) {
-        await _adminPc!
-            .setRemoteDescription(RTCSessionDescription(sdp, 'answer'));
+        await _adminPc!.setRemoteDescription(RTCSessionDescription(sdp, 'answer'));
       }
     } catch (_) {
       if (mounted) setState(() => _adminVideoConnected = false);

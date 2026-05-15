@@ -142,8 +142,8 @@ class _ScanPageState extends State<ScanPage> {
 
       _peerConnection!.onConnectionState = (state) async {
         if (viewDisposed || _isReconnecting) return;
-        if (state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
-            state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
+        // Only reconnect on 'failed' — 'disconnected' is transient/recoverable.
+        if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
           // AlarmPage is borrowing the renderer — don't restart underneath it
           if (_alarmPageOpen) {
             if (mounted) setState(() => _webrtcConnected = false);
@@ -156,9 +156,11 @@ class _ScanPageState extends State<ScanPage> {
               _webrtcConnected = false;
             });
           }
+          _peerConnection?.onTrack           = null;
+          _peerConnection?.onConnectionState = null;
           await _peerConnection?.close();
           _peerConnection = null;
-          await Future.delayed(const Duration(seconds: 2));
+          await Future.delayed(const Duration(seconds: 1));
           if (!viewDisposed && !_alarmPageOpen) {
             _remoteRenderer.srcObject = null;
             await _startWebRTC();

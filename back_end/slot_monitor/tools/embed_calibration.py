@@ -33,7 +33,6 @@ import json
 import logging
 import threading
 import time
-import os
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from back_end.config import CameraConfig as _CC, CalibrationConfig as _CAL
@@ -526,4 +525,4 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\nInterrupted.")
     finally:
-        buf.stop()
+        buf.stop()
