@@ -45,8 +45,7 @@ import logging
 import threading
 import time
 from typing import Callable, Optional
-from back_end.camera_manager import cam_mgr
-from back_end.config import CameraConfig
+from Backup.back_end.config import CameraConfig
 
 import numpy as np
 
@@ -85,7 +84,7 @@ class TopCamera:
         self._thread.start()
         logger.info(f"[TopCamera] Started on camera index {CAMERA_INDEX}")
         try:
-            from back_end.slot_monitor.camera.rolling_buffer import top_rolling_buffer
+            from Backup.back_end.slot_monitor.camera.rolling_buffer import top_rolling_buffer
             top_rolling_buffer.start()
         except Exception as e:
             logger.warning(f"[TopCamera] Could not start top_rolling_buffer: {e}")
@@ -99,7 +98,7 @@ class TopCamera:
             self._thread.join(timeout=3.0)
         logger.info("[TopCamera] Stopped")
         try:
-            from back_end.slot_monitor.camera.rolling_buffer import top_rolling_buffer
+            from Backup.back_end.slot_monitor.camera.rolling_buffer import top_rolling_buffer
             top_rolling_buffer.stop()
         except Exception as e:
             logger.warning(f"[TopCamera] Could not stop top_rolling_buffer: {e}")

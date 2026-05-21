@@ -3,9 +3,9 @@ import asyncio
 import cv2
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor
-from back_end.scanner_state import scanner_state
-from back_end.scanner_worker import _deepface_represent, l2_normalize
-from back_end.config import ScannerConfig as _SC, EmbeddingConfig as _EC
+from Backup.back_end.scanner_state import scanner_state
+from Backup.back_end.scanner_worker import _deepface_represent, l2_normalize
+from Backup.back_end.config import ScannerConfig as _SC, EmbeddingConfig as _EC
 
 _embedding_executor = ThreadPoolExecutor(max_workers=_EC.MAX_WORKERS)
 

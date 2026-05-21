@@ -1,299 +1,236 @@
 -- ============================================================
 -- PhoneBox — Complete Database Schema  (single authoritative file)
--- Sessions 1-6 optimizations included.
---
--- Optimizations embedded:
---   Opt #25  LISTEN/NOTIFY trigger for Python cache invalidation
---   Opt #35  Partial unique indexes on phone_storage (active-record lookups)
---   Opt #36a pgvector vector(96) column on slot_baselines + HNSW index
---   Opt #36b pg_trgm GIN indexes on student names (fast ILIKE search)
---   Opt #36c stored_at index on phone_storage (activity-report range queries)
---
--- IMPORTANT — vector migration:
---   The embedding_vec column starts NULL. Python (db_interface.py) writes
---   both BYTEA and vector(96) on every save_baseline() call. There is NO
---   PL/pgSQL bytea→float conversion here — that approach produces wrong
---   IEEE-754 values. Migration of existing rows is done by Python:
---   run `recalibrate_all` or wait for the next natural baseline save.
---
--- Run order: top to bottom, once, against an empty PhoneBoxDB.
+-- Sessions 1-6 optimisations + Multi-Box (Option B) fully baked in.
+-- Run once against an EMPTY PhoneBoxDB:
 --   psql -d PhoneBoxDB -f DBQuery.sql
 -- ============================================================
 
-
--- ============================================================
--- EXTENSIONS
--- ============================================================
-
--- Opt #36a: pgvector — native vector type + HNSW/IVFFlat ANN indexes
 CREATE EXTENSION IF NOT EXISTS vector;
-
--- Opt #36b: pg_trgm — GIN trigram indexes for fast ILIKE '%query%'
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
+-- ── BOXES ─────────────────────────────────────────────────────────────────────
+CREATE TABLE boxes (
+    box_id             SERIAL       PRIMARY KEY,
+    box_slug           TEXT         NOT NULL UNIQUE,
+    box_name           TEXT         NOT NULL,
+    max_slots          INT          NOT NULL DEFAULT 30,
+    accept_year_groups SMALLINT[]   DEFAULT NULL,
+    created_at         TIMESTAMPTZ  DEFAULT NOW()
+);
+COMMENT ON TABLE  boxes          IS 'Registry of physical phone-storage cabinets.';
+COMMENT ON COLUMN boxes.box_slug IS 'Matches PHONEBOX_BOX_SLUG env var on the server.';
+COMMENT ON COLUMN boxes.accept_year_groups IS 'NULL=any student. {1}=year 1 only.';
 
--- ============================================================
--- STUDENTS
--- ============================================================
+INSERT INTO boxes (box_id, box_slug, box_name, max_slots, accept_year_groups)
+VALUES (1, 'box_1', 'Default Box', 30, NULL);
+SELECT setval('boxes_box_id_seq', GREATEST(1, (SELECT MAX(box_id) FROM boxes)));
 
+-- ── STUDENTS ──────────────────────────────────────────────────────────────────
 CREATE TABLE students (
-    sid         CHAR(5)       PRIMARY KEY
-                              CHECK (sid ~ '^E[0-9]{4}$' AND char_length(sid) = 5),
-    last_name   VARCHAR(40)   NOT NULL,
-    first_name  VARCHAR(80)   NOT NULL,
-    embed       FLOAT8[]      NOT NULL,
-    created_at  TIMESTAMPTZ   DEFAULT NOW(),
-    modified_at TIMESTAMPTZ   DEFAULT NOW()
+    sid         CHAR(5)      PRIMARY KEY
+                             CHECK (sid ~ '^E[0-9]{4}$' AND char_length(sid) = 5),
+    last_name   VARCHAR(40)  NOT NULL,
+    first_name  VARCHAR(80)  NOT NULL,
+    embed       FLOAT8[]     NOT NULL,
+    year_group  SMALLINT     DEFAULT NULL
+                             CHECK (year_group IS NULL OR year_group BETWEEN 1 AND 10),
+    created_at  TIMESTAMPTZ  DEFAULT NOW(),
+    modified_at TIMESTAMPTZ  DEFAULT NOW()
 );
+COMMENT ON TABLE  students            IS 'Registered students with face embedding.';
+COMMENT ON COLUMN students.year_group IS 'Academic year group (1-10). NULL = unrestricted.';
 
--- Opt #36b: trigram GIN indexes — turns seq-scan ILIKE into indexed lookup
-CREATE INDEX idx_students_fname_trgm
-    ON students USING gin(first_name gin_trgm_ops);
-CREATE INDEX idx_students_lname_trgm
-    ON students USING gin(last_name gin_trgm_ops);
+-- Opt #36b trigram GIN indexes
+CREATE INDEX idx_students_fname_trgm ON students USING gin(first_name gin_trgm_ops);
+CREATE INDEX idx_students_lname_trgm ON students USING gin(last_name  gin_trgm_ops);
 
-
--- ============================================================
--- LOCATIONS  (static physical slot grid)
--- ============================================================
-
+-- ── LOCATIONS ─────────────────────────────────────────────────────────────────
 CREATE TABLE locations (
-    lid  SERIAL    PRIMARY KEY,
-    x    SMALLINT  NOT NULL CHECK (x BETWEEN 1 AND 500),
-    y    SMALLINT  NOT NULL CHECK (y BETWEEN 1 AND 500),
-    UNIQUE (x, y)
+    lid    SERIAL   PRIMARY KEY,
+    box_id INT      NOT NULL DEFAULT 1 REFERENCES boxes(box_id),
+    x      SMALLINT NOT NULL CHECK (x BETWEEN 1 AND 500),
+    y      SMALLINT NOT NULL CHECK (y BETWEEN 1 AND 500),
+    UNIQUE (box_id, x, y)
 );
-
--- Reset sequence to start at 0
 ALTER SEQUENCE locations_lid_seq MINVALUE 0 START 0 RESTART 0;
+COMMENT ON TABLE  locations        IS 'Static physical slot grid, scoped per box.';
+COMMENT ON COLUMN locations.box_id IS 'Which physical cabinet this slot belongs to.';
 
--- Pre-populate grid (run once during hardware setup):
--- INSERT INTO locations (x, y)
--- SELECT x, y FROM generate_series(1, 10) x, generate_series(1, 10) y;
+CREATE INDEX idx_locations_box ON locations(box_id);
 
-
--- ============================================================
--- PHONES
--- ============================================================
-
+-- ── PHONES ────────────────────────────────────────────────────────────────────
 CREATE TABLE phones (
-    pid         UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
-    sid         CHAR(5)       NOT NULL
-                              REFERENCES students(sid)
-                              ON UPDATE CASCADE ON DELETE CASCADE,
-    model       VARCHAR(50)   NOT NULL,
-    imei        VARCHAR(20)   UNIQUE NOT NULL,
-    cond        VARCHAR(30)
-                              CHECK (cond IN ('New','Good','Fair','Damaged','Broken')
-                                     OR cond IS NULL),
-    admin_note  TEXT,
-    stud_note   TEXT,
-    created_at  TIMESTAMPTZ   DEFAULT NOW(),
-    modified_at TIMESTAMPTZ   DEFAULT NOW()
+    pid               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    sid               CHAR(5)     NOT NULL REFERENCES students(sid)
+                                  ON UPDATE CASCADE ON DELETE CASCADE,
+    model             VARCHAR(50) NOT NULL,
+    imei              VARCHAR(20) UNIQUE NOT NULL,
+    cond              VARCHAR(30) CHECK (cond IN ('New','Good','Fair','Damaged','Broken') OR cond IS NULL),
+    phone_size        TEXT        NOT NULL DEFAULT 'standard'
+                                  CHECK (phone_size IN ('standard','large')),
+    allowed_box_slugs TEXT[]      DEFAULT NULL,
+    admin_note        TEXT,
+    stud_note         TEXT,
+    created_at        TIMESTAMPTZ DEFAULT NOW(),
+    modified_at       TIMESTAMPTZ DEFAULT NOW()
 );
+COMMENT ON TABLE  phones                   IS 'Student phones (not tied to a slot directly).';
+COMMENT ON COLUMN phones.phone_size        IS '''standard'' or ''large''. Set at registration.';
+COMMENT ON COLUMN phones.allowed_box_slugs IS 'NULL=any box. Non-null=deposit rejected elsewhere.';
 
-CREATE INDEX idx_phones_sid  ON phones(sid);
-CREATE INDEX idx_phones_imei ON phones(imei);
+CREATE INDEX idx_phones_sid           ON phones(sid);
+CREATE INDEX idx_phones_imei          ON phones(imei);
+CREATE INDEX idx_phones_allowed_slugs ON phones USING GIN(allowed_box_slugs);
 
-
--- ============================================================
--- PHONE STORAGE  (which phone is in which slot right now)
--- ============================================================
-
+-- ── PHONE STORAGE ─────────────────────────────────────────────────────────────
 CREATE TABLE phone_storage (
-    id           SERIAL       PRIMARY KEY,
-    pid          UUID         NOT NULL REFERENCES phones(pid) ON DELETE CASCADE,
-    lid          INT          NOT NULL REFERENCES locations(lid) ON DELETE CASCADE,
-    stored_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    id           SERIAL      PRIMARY KEY,
+    pid          UUID        NOT NULL REFERENCES phones(pid)    ON DELETE CASCADE,
+    lid          INT         NOT NULL REFERENCES locations(lid) ON DELETE CASCADE,
+    box_id       INT         REFERENCES boxes(box_id),
+    stored_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     retrieved_at TIMESTAMPTZ,
     CONSTRAINT chk_retrieval_after_storage
         CHECK (retrieved_at IS NULL OR retrieved_at > stored_at)
 );
+COMMENT ON TABLE  phone_storage              IS 'Active + historical slot assignments. 1-month retention on retrieved rows.';
+COMMENT ON COLUMN phone_storage.retrieved_at IS 'NULL=currently stored. NOT NULL=retrieved.';
+COMMENT ON COLUMN phone_storage.lid          IS 'Auto-assigned to first empty slot in the box when NULL on INSERT.';
+COMMENT ON COLUMN phone_storage.box_id       IS 'Denormalised from locations.box_id at deposit time.';
 
--- Opt #35: partial unique indexes — O(1) active-record constraint checks
--- These replace full-table scans on the hot deposit/withdraw paths.
-CREATE UNIQUE INDEX uniq_active_phone_storage
-    ON phone_storage(pid)
-    WHERE retrieved_at IS NULL;
+-- Opt #35 partial unique indexes
+CREATE UNIQUE INDEX uniq_active_phone_storage ON phone_storage(pid) WHERE retrieved_at IS NULL;
+CREATE UNIQUE INDEX uniq_active_location      ON phone_storage(lid) WHERE retrieved_at IS NULL;
+COMMENT ON INDEX uniq_active_phone_storage IS 'Opt #35: prevents double-deposit of same phone.';
+COMMENT ON INDEX uniq_active_location      IS 'Opt #35: prevents two phones in one slot.';
 
-CREATE UNIQUE INDEX uniq_active_location
-    ON phone_storage(lid)
-    WHERE retrieved_at IS NULL;
+CREATE INDEX idx_phone_storage_pid        ON phone_storage(pid);
+CREATE INDEX idx_phone_storage_lid        ON phone_storage(lid);
+CREATE INDEX idx_phone_storage_active     ON phone_storage(pid, lid)  WHERE retrieved_at IS NULL;
+CREATE INDEX idx_phone_storage_retrieved  ON phone_storage(retrieved_at) WHERE retrieved_at IS NOT NULL;
+CREATE INDEX idx_phone_storage_box        ON phone_storage(box_id);
+CREATE INDEX idx_phone_storage_box_active ON phone_storage(box_id)    WHERE retrieved_at IS NULL;
+-- Opt #36c date-range scans
+CREATE INDEX idx_phone_storage_stored_at  ON phone_storage(stored_at);
 
--- General access patterns
-CREATE INDEX idx_phone_storage_pid       ON phone_storage(pid);
-CREATE INDEX idx_phone_storage_lid       ON phone_storage(lid);
-CREATE INDEX idx_phone_storage_active    ON phone_storage(pid, lid)
-    WHERE retrieved_at IS NULL;
-CREATE INDEX idx_phone_storage_retrieved ON phone_storage(retrieved_at)
-    WHERE retrieved_at IS NOT NULL;
-
--- Opt #36c: date-range scans for activity report (stored_at OR retrieved_at)
-CREATE INDEX idx_phone_storage_stored_at ON phone_storage(stored_at);
-
-
--- ============================================================
--- PHONE OPERATION AUDIT LOG  (1 month retention)
--- ============================================================
-
+-- ── PHONE OPERATIONS AUDIT LOG ────────────────────────────────────────────────
 CREATE TABLE phone_operations (
-    id        SERIAL       PRIMARY KEY,
-    pid       UUID         NOT NULL REFERENCES phones(pid) ON DELETE CASCADE,
-    operation VARCHAR(20)  NOT NULL CHECK (operation IN ('INSERT','UPDATE','DELETE')),
+    id        SERIAL      PRIMARY KEY,
+    pid       UUID        NOT NULL REFERENCES phones(pid) ON DELETE CASCADE,
+    operation VARCHAR(20) NOT NULL CHECK (operation IN ('INSERT','UPDATE','DELETE')),
     old_data  JSONB,
     new_data  JSONB,
-    timestamp TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-
+COMMENT ON TABLE phone_operations IS 'Audit log for phones table. 1-month retention.';
 CREATE INDEX idx_phone_operations_pid_ts ON phone_operations(pid, timestamp DESC);
 CREATE INDEX idx_phone_operations_ts     ON phone_operations(timestamp DESC);
 
-
--- ============================================================
--- SLOT BASELINES  (visual embeddings for each physical slot)
---
--- Dual-column design (Opt #36a):
---   embedding     BYTEA      — always written; used by all DB reads
---   embedding_vec vector(96) — written by Python when pgvector is active;
---                              starts NULL, fills in on first save_baseline()
---
--- The Python layer (db_interface.py) handles IEEE-754 byte conversion
--- correctly via numpy. No PL/pgSQL float decoding is attempted here.
--- ============================================================
-
+-- ── SLOT BASELINES ────────────────────────────────────────────────────────────
 CREATE TABLE slot_baselines (
     lid           INT         PRIMARY KEY REFERENCES locations(lid) ON DELETE CASCADE,
+    box_id        INT         NOT NULL DEFAULT 1 REFERENCES boxes(box_id),
     embedding     BYTEA       NOT NULL,
-    embedding_vec vector(96),           -- NULL until first post-migration save
+    embedding_vec vector(96),
     calibrated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+COMMENT ON TABLE  slot_baselines               IS 'Per-slot visual embedding. embedding=BYTEA always written; embedding_vec=vector(96) written by Python.';
+COMMENT ON COLUMN slot_baselines.box_id        IS 'Denormalised from locations.box_id for fast per-box baseline queries.';
+COMMENT ON COLUMN slot_baselines.embedding_vec IS 'Opt #36a vector. NULL until Python writes it. HNSW index covers only non-NULL rows.';
 
--- Opt #36a: HNSW approximate-nearest-neighbour index for cosine search.
--- Partial: only indexes rows that have been migrated to vector(96).
--- m=16, ef_construction=64 are proven defaults for 96-dim embeddings.
+CREATE INDEX idx_slot_baselines_box ON slot_baselines(box_id);
+-- Opt #36a HNSW ANN index
 CREATE INDEX idx_slot_baselines_hnsw
     ON slot_baselines USING hnsw (embedding_vec vector_cosine_ops)
     WITH (m = 16, ef_construction = 64)
     WHERE embedding_vec IS NOT NULL;
+COMMENT ON INDEX idx_slot_baselines_hnsw IS 'Opt #36a: HNSW cosine ANN on 96-dim embeddings.';
 
-
--- ============================================================
--- EVIDENCE SYSTEM
--- ============================================================
-
--- One row per admin resolution session
+-- ── EVIDENCE SYSTEM ───────────────────────────────────────────────────────────
 CREATE TABLE evidence_sessions (
-    id         SERIAL        PRIMARY KEY,
-    session_id VARCHAR(8)    NOT NULL UNIQUE,   -- secrets.token_hex(4)
-    opened_at  TIMESTAMPTZ   NOT NULL,
+    id         SERIAL      PRIMARY KEY,
+    session_id VARCHAR(8)  NOT NULL UNIQUE,
+    opened_at  TIMESTAMPTZ NOT NULL,
     closed_at  TIMESTAMPTZ,
-    -- Outcome values:
-    --   'clean'       — all mismatches resolved, no anomalies
-    --   'flagged'     — no_qr_found / declare_missing / warnings at close
-    --   'force_closed'— session timed out or manually force-closed
     outcome    VARCHAR(20),
     warnings   JSONB,
-    kept       BOOLEAN       NOT NULL DEFAULT FALSE
+    kept       BOOLEAN     NOT NULL DEFAULT FALSE
 );
+COMMENT ON TABLE evidence_sessions IS 'One row per admin resolution session.';
+CREATE INDEX idx_evidence_sessions_kept ON evidence_sessions(kept) WHERE kept = TRUE;
 
-CREATE INDEX idx_evidence_sessions_kept
-    ON evidence_sessions(kept)
-    WHERE kept = TRUE;
-
--- One row per captured event / video clip within a session
 CREATE TABLE evidence_items (
-    id          SERIAL       PRIMARY KEY,
-    session_id  VARCHAR(8)   NOT NULL
-                             REFERENCES evidence_sessions(session_id)
-                             ON DELETE CASCADE,
-    captured_at TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    -- Event values: 'session_start','remove_phone','qr_scanned','no_qr_found',
-    --   'stage_phone','unstage_phone','place_phone','declare_missing',
-    --   'needs_deposit','session_close','video_clip'
-    event_type  VARCHAR(50)  NOT NULL,
+    id          SERIAL      PRIMARY KEY,
+    session_id  VARCHAR(8)  NOT NULL REFERENCES evidence_sessions(session_id) ON DELETE CASCADE,
+    captured_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    event_type  VARCHAR(50) NOT NULL,
     lid         INTEGER,
-    -- pid is VARCHAR not UUID: during admin resolution the pid may be
-    -- 'pending-lid{N}' or 'unknown-{N}' before QR is confirmed.
-    -- Application code uses the real UUID once confirmed.
     pid         VARCHAR(50),
     photo_path  VARCHAR(500),
     metadata    JSONB
 );
-
+COMMENT ON TABLE  evidence_items     IS 'One row per video clip / event within a session.';
+COMMENT ON COLUMN evidence_items.pid IS 'VARCHAR not UUID: may be "pending-lid{N}" before QR scan.';
 CREATE INDEX idx_evidence_items_session ON evidence_items(session_id);
 CREATE INDEX idx_evidence_items_event   ON evidence_items(event_type);
 
+-- ── FUNCTIONS ─────────────────────────────────────────────────────────────────
 
--- ============================================================
--- FUNCTIONS
--- ============================================================
-
--- Keep modified_at current on every UPDATE
 CREATE OR REPLACE FUNCTION update_modified_column()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
-BEGIN
-    NEW.modified_at = NOW();
-    RETURN NEW;
-END;
+BEGIN NEW.modified_at = NOW(); RETURN NEW; END;
 $$;
 
--- Guarantee phones always get a UUID pid (safety net)
 CREATE OR REPLACE FUNCTION phones_defaults()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN
-    IF NEW.pid IS NULL THEN
-        NEW.pid := gen_random_uuid();
-    END IF;
+    IF NEW.pid IS NULL THEN NEW.pid := gen_random_uuid(); END IF;
     RETURN NEW;
 END;
 $$;
 
--- Append row to audit log on every phones change
 CREATE OR REPLACE FUNCTION log_phone_operation()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
-DECLARE
-    op_type  VARCHAR(20);
-    old_json JSONB;
-    new_json JSONB;
+DECLARE op_type VARCHAR(20); old_json JSONB; new_json JSONB;
 BEGIN
     CASE TG_OP
         WHEN 'INSERT' THEN op_type := 'INSERT'; old_json := NULL;          new_json := to_jsonb(NEW);
         WHEN 'UPDATE' THEN op_type := 'UPDATE'; old_json := to_jsonb(OLD); new_json := to_jsonb(NEW);
         WHEN 'DELETE' THEN op_type := 'DELETE'; old_json := to_jsonb(OLD); new_json := NULL;
     END CASE;
-
     INSERT INTO phone_operations(pid, operation, old_data, new_data, timestamp)
     VALUES (COALESCE(NEW.pid, OLD.pid), op_type, old_json, new_json, NOW());
-
     RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
 END;
 $$;
 
--- Auto-assign the first empty lid when lid IS NULL on INSERT
+-- Multi-box-aware auto slot assignment (safety net; Python always passes lid)
 CREATE OR REPLACE FUNCTION auto_assign_location()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN
     IF NEW.lid IS NULL THEN
+        IF NEW.box_id IS NULL THEN
+            RAISE EXCEPTION 'phone_storage: cannot auto-assign lid — box_id must be set';
+        END IF;
         SELECT l.lid INTO NEW.lid
         FROM   locations l
-        WHERE  NOT EXISTS (
-            SELECT 1 FROM phone_storage ps
-            WHERE  ps.lid = l.lid AND ps.retrieved_at IS NULL
-        )
-        ORDER BY l.lid
-        LIMIT 1;
-
+        WHERE  l.box_id = NEW.box_id
+          AND  NOT EXISTS (
+                   SELECT 1 FROM phone_storage ps
+                   WHERE ps.lid = l.lid AND ps.retrieved_at IS NULL
+               )
+        ORDER BY l.lid LIMIT 1
+        FOR UPDATE SKIP LOCKED;
         IF NEW.lid IS NULL THEN
-            RAISE EXCEPTION 'No empty locations available for phone storage';
+            RAISE EXCEPTION 'No empty locations available in box_id=%', NEW.box_id;
         END IF;
     END IF;
     RETURN NEW;
 END;
 $$;
+COMMENT ON FUNCTION auto_assign_location() IS 'Assigns first free slot in NEW.box_id when NEW.lid IS NULL. Multi-box aware.';
 
--- Opt #25: broadcast lid via LISTEN/NOTIFY after every phone_storage change.
--- Python AsyncSlotMonitorDB listens on 'phonebox_storage_change' and
--- invalidates its in-process pid→lid cache immediately, without polling.
+-- Opt #25 LISTEN/NOTIFY
 CREATE OR REPLACE FUNCTION notify_storage_change()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN
@@ -301,156 +238,123 @@ BEGIN
         'phonebox_storage_change',
         CASE WHEN TG_OP = 'DELETE' THEN OLD.lid::text ELSE NEW.lid::text END
     );
-    RETURN NULL;   -- AFTER trigger; return value ignored
+    RETURN NULL;
 END;
 $$;
 
--- Delete log rows and completed storage rows older than 1 month.
--- Schedule weekly via pg_cron or cron + psql.
 CREATE OR REPLACE FUNCTION cleanup_old_logs()
 RETURNS TABLE(deleted_phone_ops INT, deleted_storage INT)
 LANGUAGE plpgsql AS $$
-DECLARE
-    d_ops  INT;
-    d_stor INT;
+DECLARE d_ops INT; d_stor INT;
 BEGIN
-    DELETE FROM phone_operations  WHERE timestamp    < NOW() - INTERVAL '1 month';
+    DELETE FROM phone_operations WHERE timestamp    < NOW() - INTERVAL '1 month';
     GET DIAGNOSTICS d_ops  = ROW_COUNT;
-
-    DELETE FROM phone_storage
-    WHERE retrieved_at IS NOT NULL
-      AND retrieved_at < NOW() - INTERVAL '1 month';
+    DELETE FROM phone_storage   WHERE retrieved_at IS NOT NULL
+                                  AND retrieved_at < NOW() - INTERVAL '1 month';
     GET DIAGNOSTICS d_stor = ROW_COUNT;
-
-    deleted_phone_ops := d_ops;
-    deleted_storage   := d_stor;
-    RETURN NEXT;
-
+    deleted_phone_ops := d_ops; deleted_storage := d_stor; RETURN NEXT;
     RAISE NOTICE 'Cleanup: % phone_ops + % storage rows deleted', d_ops, d_stor;
 END;
 $$;
 
+-- ── TRIGGERS ──────────────────────────────────────────────────────────────────
 
--- ============================================================
--- TRIGGERS
--- ============================================================
-
--- phones: guarantee UUID pid before INSERT
 CREATE TRIGGER phones_before_insert_defaults
-    BEFORE INSERT ON phones
-    FOR EACH ROW EXECUTE FUNCTION phones_defaults();
+    BEFORE INSERT ON phones FOR EACH ROW EXECUTE FUNCTION phones_defaults();
 
--- phones: keep modified_at current
 CREATE TRIGGER phones_before_update
-    BEFORE UPDATE ON phones
-    FOR EACH ROW EXECUTE FUNCTION update_modified_column();
+    BEFORE UPDATE ON phones FOR EACH ROW EXECUTE FUNCTION update_modified_column();
 
--- phones: write audit log
 CREATE TRIGGER phones_after_all_operations
-    AFTER INSERT OR UPDATE OR DELETE ON phones
-    FOR EACH ROW EXECUTE FUNCTION log_phone_operation();
+    AFTER INSERT OR UPDATE OR DELETE ON phones FOR EACH ROW EXECUTE FUNCTION log_phone_operation();
 
--- students: keep modified_at current
 CREATE TRIGGER students_before_update
-    BEFORE UPDATE ON students
-    FOR EACH ROW EXECUTE FUNCTION update_modified_column();
+    BEFORE UPDATE ON students FOR EACH ROW EXECUTE FUNCTION update_modified_column();
 
--- phone_storage: auto-assign empty lid when lid IS NULL on INSERT
 CREATE TRIGGER phone_storage_before_insert_auto_lid
-    BEFORE INSERT ON phone_storage
-    FOR EACH ROW EXECUTE FUNCTION auto_assign_location();
+    BEFORE INSERT ON phone_storage FOR EACH ROW EXECUTE FUNCTION auto_assign_location();
 
--- Opt #25: broadcast every phone_storage change for Python cache invalidation
--- FOR EACH ROW so the payload carries the specific lid that changed.
 CREATE TRIGGER phone_storage_notify_change
-    AFTER INSERT OR UPDATE OR DELETE ON phone_storage
-    FOR EACH ROW EXECUTE FUNCTION notify_storage_change();
+    AFTER INSERT OR UPDATE OR DELETE ON phone_storage FOR EACH ROW EXECUTE FUNCTION notify_storage_change();
+COMMENT ON TRIGGER phone_storage_notify_change ON phone_storage IS
+    'Opt #25: pg_notify("phonebox_storage_change", lid) — Python asyncpg invalidates pid cache in <1 ms.';
 
+-- ── VIEWS ─────────────────────────────────────────────────────────────────────
 
--- ============================================================
--- VIEWS
--- ============================================================
-
--- All phones currently in storage with full context
-CREATE OR REPLACE VIEW v_active_phone_storage AS
+CREATE VIEW v_active_phone_storage AS
 SELECT
     ps.id, ps.pid, ps.lid, ps.stored_at,
-    p.sid, p.imei, p.model, p.cond,
+    ps.box_id, b.box_slug, b.box_name,
+    p.sid, p.imei, p.model, p.cond, p.phone_size, p.allowed_box_slugs,
     l.x, l.y,
-    st.first_name, st.last_name
+    st.first_name, st.last_name, st.year_group
 FROM phone_storage ps
-JOIN phones   p  ON ps.pid = p.pid
-JOIN locations l ON ps.lid = l.lid
-JOIN students st ON p.sid  = st.sid
+JOIN phones    p  ON ps.pid    = p.pid
+JOIN locations l  ON ps.lid    = l.lid
+JOIN boxes     b  ON ps.box_id = b.box_id
+JOIN students  st ON p.sid     = st.sid
 WHERE ps.retrieved_at IS NULL;
+COMMENT ON VIEW v_active_phone_storage IS 'All phones currently in storage with full student, box, and location context.';
 
--- All slots with no active deposit
-CREATE OR REPLACE VIEW v_empty_locations AS
-SELECT l.lid, l.x, l.y
+CREATE VIEW v_empty_locations AS
+SELECT l.lid, l.x, l.y, l.box_id, b.box_slug, b.box_name
 FROM   locations l
+JOIN   boxes b ON l.box_id = b.box_id
 LEFT JOIN phone_storage ps ON l.lid = ps.lid AND ps.retrieved_at IS NULL
 WHERE  ps.lid IS NULL;
+COMMENT ON VIEW v_empty_locations IS 'All unoccupied slots with box context.';
 
+CREATE VIEW v_box_dashboard AS
+SELECT
+    b.box_id, b.box_slug, b.box_name, b.max_slots, b.accept_year_groups,
+    COUNT(ps.id)                                        AS phones_stored,
+    b.max_slots - COUNT(ps.id)                          AS slots_free,
+    ROUND(COUNT(ps.id)::NUMERIC / b.max_slots * 100, 1) AS fill_pct
+FROM boxes b
+LEFT JOIN locations     l  ON l.box_id = b.box_id
+LEFT JOIN phone_storage ps ON ps.lid   = l.lid AND ps.retrieved_at IS NULL
+GROUP BY b.box_id, b.box_slug, b.box_name, b.max_slots, b.accept_year_groups
+ORDER BY b.box_id;
+COMMENT ON VIEW v_box_dashboard IS 'Cross-box fill summary — used by central dashboard endpoint.';
 
--- ============================================================
--- HELPER FUNCTIONS (used by Python layer)
--- ============================================================
+-- ── HELPER FUNCTIONS ──────────────────────────────────────────────────────────
 
--- Full storage history for one phone (most recent first)
-CREATE OR REPLACE FUNCTION get_phone_storage_history(
-    phone_pid   UUID,
-    months_back INT DEFAULT 1
-)
-RETURNS TABLE(
-    storage_id   INT,
-    lid          INT,
-    x            SMALLINT,
-    y            SMALLINT,
-    stored_at    TIMESTAMPTZ,
-    retrieved_at TIMESTAMPTZ,
-    duration     INTERVAL
-)
+CREATE OR REPLACE FUNCTION get_phone_storage_history(phone_pid UUID, months_back INT DEFAULT 1)
+RETURNS TABLE(storage_id INT, lid INT, x SMALLINT, y SMALLINT,
+              stored_at TIMESTAMPTZ, retrieved_at TIMESTAMPTZ, duration INTERVAL)
 LANGUAGE plpgsql AS $$
 BEGIN
     RETURN QUERY
     SELECT ps.id, ps.lid, l.x, l.y, ps.stored_at, ps.retrieved_at,
-           COALESCE(ps.retrieved_at, NOW()) - ps.stored_at AS duration
+           COALESCE(ps.retrieved_at, NOW()) - ps.stored_at
     FROM   phone_storage ps
     JOIN   locations l ON ps.lid = l.lid
-    WHERE  ps.pid       = phone_pid
+    WHERE  ps.pid = phone_pid
       AND  ps.stored_at > NOW() - (months_back || ' months')::INTERVAL
     ORDER  BY ps.stored_at DESC;
 END;
 $$;
 
--- Full usage history for one physical slot (most recent first)
-CREATE OR REPLACE FUNCTION get_location_usage_history(
-    location_lid INT,
-    months_back  INT DEFAULT 1
-)
-RETURNS TABLE(
-    phone_pid    UUID,
-    imei         VARCHAR,
-    student_sid  CHAR,
-    stored_at    TIMESTAMPTZ,
-    retrieved_at TIMESTAMPTZ,
-    duration     INTERVAL
-)
+CREATE OR REPLACE FUNCTION get_location_usage_history(location_lid INT, months_back INT DEFAULT 1)
+RETURNS TABLE(phone_pid UUID, imei VARCHAR, student_sid CHAR,
+              stored_at TIMESTAMPTZ, retrieved_at TIMESTAMPTZ, duration INTERVAL)
 LANGUAGE plpgsql AS $$
 BEGIN
     RETURN QUERY
     SELECT ps.pid, p.imei, p.sid, ps.stored_at, ps.retrieved_at,
-           COALESCE(ps.retrieved_at, NOW()) - ps.stored_at AS duration
+           COALESCE(ps.retrieved_at, NOW()) - ps.stored_at
     FROM   phone_storage ps
     JOIN   phones p ON ps.pid = p.pid
-    WHERE  ps.lid       = location_lid
+    WHERE  ps.lid = location_lid
       AND  ps.stored_at > NOW() - (months_back || ' months')::INTERVAL
     ORDER  BY ps.stored_at DESC;
 END;
 $$;
 
--- Return first N empty locations (ordered by lid)
-CREATE OR REPLACE FUNCTION get_available_locations(limit_count INT DEFAULT 10)
+CREATE OR REPLACE FUNCTION get_available_locations(
+    limit_count INT DEFAULT 10,
+    for_box_id  INT DEFAULT NULL
+)
 RETURNS TABLE(lid INT, x SMALLINT, y SMALLINT)
 LANGUAGE plpgsql AS $$
 BEGIN
@@ -459,45 +363,48 @@ BEGIN
     FROM   locations l
     LEFT JOIN phone_storage ps ON l.lid = ps.lid AND ps.retrieved_at IS NULL
     WHERE  ps.lid IS NULL
+      AND (for_box_id IS NULL OR l.box_id = for_box_id)
     ORDER  BY l.lid
     LIMIT  limit_count;
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION get_box_lids(for_box_id INT)
+RETURNS TABLE(lid INT, x SMALLINT, y SMALLINT)
+LANGUAGE plpgsql AS $$
+BEGIN
+    RETURN QUERY
+    SELECT l.lid, l.x, l.y FROM locations l
+    WHERE  l.box_id = for_box_id ORDER BY l.lid;
+END;
+$$;
+COMMENT ON FUNCTION get_box_lids(INT) IS
+    'Returns all (lid,x,y) for a given box. Used by ROI calibration and slot monitor startup.';
 
--- ============================================================
--- COMMENTS
--- ============================================================
-
-COMMENT ON TABLE students        IS 'Registered students with face embedding.';
-COMMENT ON TABLE locations       IS 'Static physical slot grid — one row per slot.';
-COMMENT ON TABLE phones          IS 'Student phones (not tied to a slot directly).';
-COMMENT ON TABLE phone_storage   IS 'Active + historical slot assignments. 1-month retention on retrieved rows. lid auto-assigned when NULL.';
-COMMENT ON TABLE phone_operations IS 'Audit log for phones table. 1-month retention.';
-COMMENT ON TABLE slot_baselines  IS 'Per-slot visual embedding. embedding=BYTEA always written; embedding_vec=vector(96) written by Python when pgvector active (Opt #36a).';
-COMMENT ON TABLE evidence_sessions IS 'One row per admin resolution session.';
-COMMENT ON TABLE evidence_items    IS 'One row per video clip / event within a session. pid may be a temporary string before QR confirmation.';
-
-COMMENT ON COLUMN phone_storage.retrieved_at IS 'NULL = currently stored. NOT NULL = retrieved.';
-COMMENT ON COLUMN phone_storage.lid          IS 'Auto-assigned to first empty slot when NULL on INSERT.';
-COMMENT ON COLUMN slot_baselines.embedding_vec IS 'Opt #36a vector. NULL until Python writes it post-migration. HNSW index (idx_slot_baselines_hnsw) covers only non-NULL rows.';
-COMMENT ON COLUMN evidence_items.pid         IS 'VARCHAR not UUID: may be "pending-lid{N}" before QR scan, "unknown-{N}" for foreign objects.';
-
-COMMENT ON INDEX uniq_active_phone_storage   IS 'Opt #35: prevents double-deposit of same phone.';
-COMMENT ON INDEX uniq_active_location        IS 'Opt #35: prevents two phones in one slot.';
-COMMENT ON INDEX idx_students_fname_trgm     IS 'Opt #36b: GIN trigram — fast ILIKE name search.';
-COMMENT ON INDEX idx_slot_baselines_hnsw     IS 'Opt #36a: HNSW cosine ANN on 96-dim embeddings (partial: WHERE embedding_vec IS NOT NULL).';
-COMMENT ON TRIGGER phone_storage_notify_change ON phone_storage IS 'Opt #25: pg_notify("phonebox_storage_change", lid) — Python asyncpg listener invalidates pid cache in <1 ms.';
-
-
--- ============================================================
--- SCHEDULED CLEANUP  (set up once after first deploy)
--- ============================================================
--- Option A — pg_cron (recommended):
+-- ── SCHEDULED CLEANUP ─────────────────────────────────────────────────────────
+-- pg_cron (recommended):
 --   CREATE EXTENSION pg_cron;
---   SELECT cron.schedule('phonebox-cleanup', '0 2 * * 0',
---       $$SELECT cleanup_old_logs()$$);
---
--- Option B — OS cron:
+--   SELECT cron.schedule('phonebox-cleanup','0 2 * * 0',$$SELECT cleanup_old_logs()$$);
+-- OS cron:
 --   0 2 * * 0  psql -d PhoneBoxDB -c "SELECT cleanup_old_logs();"
--- ============================================================
+
+-- ── POST-DEPLOY SETUP ─────────────────────────────────────────────────────────
+-- 1. Add real boxes:
+--    INSERT INTO boxes (box_slug, box_name, max_slots, accept_year_groups) VALUES
+--      ('year_1','Year 1 Box',30,'{1}'),('year_2','Year 2 Box',30,'{2}'),
+--      ('year_3','Year 3 Box',30,'{3}'),('large','Large Phones Box',20,NULL);
+--
+-- 2. Populate locations per box:
+--    INSERT INTO locations (x, y, box_id)
+--    SELECT x, y, (SELECT box_id FROM boxes WHERE box_slug='year_1')
+--    FROM generate_series(1,5) x, generate_series(1,6) y;
+--
+-- 3. Set year_group on students:
+--    UPDATE students SET year_group=1 WHERE sid LIKE 'E1%';
+--
+-- 4. Set allowed_box_slugs on phones (optional):
+--    UPDATE phones SET allowed_box_slugs='{year_1}'
+--    WHERE sid IN (SELECT sid FROM students WHERE year_group=1);
+--
+-- 5. Set phone_size='large' for oversized phones:
+--    UPDATE phones SET phone_size='large' WHERE imei IN (...);

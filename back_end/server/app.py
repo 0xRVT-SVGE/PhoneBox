@@ -9,18 +9,18 @@ import logging
 from flask import Flask
 from flask_cors import CORS
 from flask_socketio import SocketIO
-from back_end.Database.API.students_API import students_bp
-from back_end.Database.API.phones_API import phones_bp
-from back_end.server.embed_handler import embed_bp
-from back_end.Database.logging_config import setup_logging
-from back_end.config import (
+from Backup.back_end.Database.API.students_API import students_bp
+from Backup.back_end.Database.API.phones_API import phones_bp
+from Backup.back_end.server.embed_handler import embed_bp
+from Backup.back_end.Database.logging_config import setup_logging
+from Backup.back_end.config import (
     CameraConfig         as _CC,
     DatabaseConfig       as _DC,
     SlotMonitorConfig    as _SMC,
     MonitorServiceConfig as _MSC,   # Opt #39
 )
 
-from back_end.secrets import Secrets
+from Backup.back_end.secrets import Secrets
 
 # Optimization #24: HTTP gzip compression (~60-80% payload reduction on JSON)
 # pip install flask-compress
@@ -75,7 +75,7 @@ def create_app(stop_event: threading.Event = None):
     # alarm events even if the slot monitor runs in a separate process.
     if _MSC.ENABLED:
         try:
-            from back_end.slot_monitor.redis_bridge import AlarmSubscriber
+            from Backup.back_end.slot_monitor.redis_bridge import AlarmSubscriber
             _alarm_sub = AlarmSubscriber(socketio)
             _alarm_sub.start()
             logger.info("[App] Redis alarm subscriber started (Opt #39)")
@@ -94,8 +94,8 @@ def _initialize_monitoring(socketio, stop_event: threading.Event):
     global _slot_monitor, _slot_operations
 
     try:
-        from back_end.slot_monitor.headless_slot_monitor import HeadlessSlotMonitor
-        from back_end.slot_monitor.slot_operations import SlotOperations
+        from Backup.back_end.slot_monitor.headless_slot_monitor import HeadlessSlotMonitor
+        from Backup.back_end.slot_monitor.slot_operations import SlotOperations
 
         CONFIG = {
             "stop_event": stop_event,
@@ -131,7 +131,7 @@ def _initialize_monitoring(socketio, stop_event: threading.Event):
         # so alarm events are fanned out to all Flask instances via Redis.
         if _MSC.ENABLED:
             try:
-                from back_end.slot_monitor.redis_bridge import AlarmPublisher
+                from Backup.back_end.slot_monitor.redis_bridge import AlarmPublisher
                 publisher = AlarmPublisher()
                 # Publisher is set after monitor.start() / alarm setup;
                 # see set_monitor_components() call in server_main.py.

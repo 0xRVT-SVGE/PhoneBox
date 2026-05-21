@@ -44,18 +44,18 @@ from typing import Optional
 from flask import request
 from flask_socketio import SocketIO, emit
 
-from back_end.slot_monitor.admin.resolution_session import (
+from Backup.back_end.slot_monitor.admin.resolution_session import (
     admin_ctx, SESSION_TIMEOUT,
 )
-from back_end.slot_monitor.admin.evidence_recorder import EvidenceRecorder
-from back_end.slot_monitor.camera.qr_pid_reader import (
+from Backup.back_end.slot_monitor.admin.evidence_recorder import EvidenceRecorder
+from Backup.back_end.slot_monitor.camera.qr_pid_reader import (
     scan_and_validate_pid_from_buffer,
 )
-from back_end.slot_monitor.camera.top_camera import top_camera
-from back_end.slot_monitor.slot_operations import SlotOperations
-from back_end.slot_monitor.db_interface import SlotMonitorDB
-from back_end.slot_monitor.alarm_controller import AlarmController
-from back_end.config import AdminConfig as _ADM, SlotMonitorConfig as _SMC
+from Backup.back_end.slot_monitor.camera.top_camera import top_camera
+from Backup.back_end.slot_monitor.slot_operations import SlotOperations
+from Backup.back_end.slot_monitor.db_interface import SlotMonitorDB
+from Backup.back_end.slot_monitor.alarm_controller import AlarmController
+from Backup.back_end.config import AdminConfig as _ADM, SlotMonitorConfig as _SMC
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +124,7 @@ class AdminOpsHandler:
 
     def _refresh_overlay(self, session, source_lid=None, dest_lid=None):
         try:
-            from back_end.slot_monitor.phone_tracker import (
+            from Backup.back_end.slot_monitor.phone_tracker import (
                 make_admin_session_overlay, load_all_top_rois,
             )
             staged_pids = list(session.staged_phones.keys()) if session else []
@@ -163,7 +163,7 @@ class AdminOpsHandler:
         normal and does not need further attention.
         """
         try:
-            from back_end.slot_monitor.slot_embed import embedding_distance
+            from Backup.back_end.slot_monitor.slot_embed import embedding_distance
             slot, fb = self.slot_ops._get_slot(lid)
             if slot is None or fb is None:
                 return False
@@ -303,7 +303,7 @@ class AdminOpsHandler:
 
         top_camera.clear_context_overlay()
         try:
-            from back_end.slot_monitor.camera.rolling_buffer import top_rolling_buffer
+            from Backup.back_end.slot_monitor.camera.rolling_buffer import top_rolling_buffer
             top_rolling_buffer.set_active(False)
         except Exception:
             pass
@@ -383,7 +383,7 @@ class AdminOpsHandler:
 
         top_camera.start()
         try:
-            from back_end.slot_monitor.camera.rolling_buffer import top_rolling_buffer
+            from Backup.back_end.slot_monitor.camera.rolling_buffer import top_rolling_buffer
             top_rolling_buffer.set_active(True)
         except Exception:
             pass
@@ -655,7 +655,7 @@ class AdminOpsHandler:
         raw      = top_camera.get_raw_frame()
         bg_frame = raw if raw is not None else top_camera.get_frame()
 
-        from back_end.slot_monitor.phone_tracker import PhoneTracker, _load_top_roi
+        from Backup.back_end.slot_monitor.phone_tracker import PhoneTracker, _load_top_roi
         slot_roi     = _load_top_roi(to_lid)
         staging_rois = StagingConfig.get_rois()
 
@@ -926,7 +926,7 @@ class AdminOpsHandler:
             ),
         })
 
-        from back_end.slot_monitor.phone_tracker import PhoneTracker, _load_top_roi
+        from Backup.back_end.slot_monitor.phone_tracker import PhoneTracker, _load_top_roi
         slot_roi     = _load_top_roi(to_lid)
         staging_rois = StagingConfig.get_rois()
 
@@ -1197,7 +1197,7 @@ class AdminOpsHandler:
 
         top_camera.clear_context_overlay()
         try:
-            from back_end.slot_monitor.camera.rolling_buffer import top_rolling_buffer
+            from Backup.back_end.slot_monitor.camera.rolling_buffer import top_rolling_buffer
             top_rolling_buffer.set_active(False)
         except Exception:
             pass
@@ -1290,7 +1290,7 @@ class AdminOpsHandler:
 
         top_camera.clear_context_overlay()
         try:
-            from back_end.slot_monitor.camera.rolling_buffer import top_rolling_buffer
+            from Backup.back_end.slot_monitor.camera.rolling_buffer import top_rolling_buffer
             top_rolling_buffer.set_active(False)
         except Exception:
             pass

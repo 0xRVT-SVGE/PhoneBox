@@ -31,8 +31,8 @@ import logging
 import time
 from typing import Callable, Dict, Optional
 import numpy as np
-from back_end.Database.db import get_conn, put_conn
-from back_end.config import AlarmConfig as _AC
+from Backup.back_end.Database.db import get_conn, put_conn
+from Backup.back_end.config import AlarmConfig as _AC
 
 logger = logging.getLogger(__name__)
 
@@ -154,7 +154,7 @@ class SlotOperations:
     # ── Deposit ───────────────────────────────────────────────────────────────
 
     def deposit_phone_db(self, pid: str, lid: int) -> Dict:
-        from back_end.slot_monitor.db_interface import _BOX_ID
+        from Backup.back_end.slot_monitor.db_interface import _BOX_ID
         conn = get_conn()
         try:
             with conn.cursor() as cur:
@@ -258,7 +258,7 @@ class SlotOperations:
             emb = self._current_embedding(slot, fb)
             if emb is None:
                 return {"status": "error", "message": "Failed to capture baseline"}
-            from back_end.slot_monitor.db_interface import SlotMonitorDB
+            from Backup.back_end.slot_monitor.db_interface import SlotMonitorDB
             SlotMonitorDB.save_baseline(lid, emb)
             slot.reset_baseline(emb)
             slot.is_occupied = is_occupied
@@ -311,7 +311,7 @@ class SlotOperations:
 
     def get_empty_locations(self, limit: int = 10) -> Dict:
         """Return free slots in THIS box only."""
-        from back_end.slot_monitor.db_interface import _BOX_ID
+        from Backup.back_end.slot_monitor.db_interface import _BOX_ID
         conn = get_conn()
         try:
             with conn.cursor() as cur:

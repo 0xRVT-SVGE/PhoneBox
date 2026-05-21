@@ -39,9 +39,9 @@ import cv2
 import numpy as np
 from flask import Blueprint, jsonify, Response
 
-from back_end.scanner_state import scanner_state
-from back_end.scanner_worker import _deepface_represent, l2_normalize
-from back_end.config import ScannerConfig as _SC
+from Backup.back_end.scanner_state import scanner_state
+from Backup.back_end.scanner_worker import _deepface_represent, l2_normalize
+from Backup.back_end.config import ScannerConfig as _SC
 
 logger = logging.getLogger(__name__)
 

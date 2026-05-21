@@ -51,14 +51,14 @@ _ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from back_end.config import (
+from Backup.back_end.config import (
     CameraConfig        as _CC,
     DatabaseConfig      as _DC,
     SlotMonitorConfig   as _SMC,
     MonitorServiceConfig as _MSC,
 )
-from back_end.secrets import Secrets
-from back_end.Database.logging_config import setup_logging
+from Backup.back_end.secrets import Secrets
+from Backup.back_end.Database.logging_config import setup_logging
 
 logger = logging.getLogger(__name__)
 setup_logging(log_level=logging.INFO)
@@ -80,7 +80,7 @@ def main() -> None:
     logger.info("=" * 60)
 
     # ── Redis bridge ──────────────────────────────────────────────────────────
-    from back_end.slot_monitor.redis_bridge import AlarmPublisher, RedisSocketIOBridge
+    from Backup.back_end.slot_monitor.redis_bridge import AlarmPublisher, RedisSocketIOBridge
     try:
         publisher = AlarmPublisher()
         bridge    = RedisSocketIOBridge(publisher)
@@ -133,7 +133,7 @@ def main() -> None:
 
     asyncio.set_event_loop(loop)
 
-    from back_end.slot_monitor.headless_slot_monitor import HeadlessSlotMonitor
+    from Backup.back_end.slot_monitor.headless_slot_monitor import HeadlessSlotMonitor
     monitor = HeadlessSlotMonitor(**config)
 
     # ── Shutdown handler ──────────────────────────────────────────────────────
@@ -162,7 +162,7 @@ def main() -> None:
 
     # ── Evidence storage pruner ───────────────────────────────────────────────
     try:
-        from back_end.server.evidence_storage import evidence_store
+        from Backup.back_end.server.evidence_storage import evidence_store
         evidence_store.start()
         logger.info("[MonitorService] Evidence storage pruner started")
     except Exception as e:
@@ -179,7 +179,7 @@ def main() -> None:
 
 def _check_roi_file() -> None:
     """Warn if the box-specific rois_bottom_{slug}.json is missing."""
-    from back_end.config import ServerConfig as _SVC
+    from Backup.back_end.config import ServerConfig as _SVC
     slug     = getattr(_SVC, "BOX_SLUG", "") or "box_1"
     roi_name = f"rois_bottom_{slug}.json"
     roi_path = Path(__file__).resolve().parent / "tools" / roi_name

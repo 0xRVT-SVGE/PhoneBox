@@ -63,7 +63,7 @@ services:
   phonebox_1:
     image: phonebox:latest
     build:
-      context: .
+      context: ..
       dockerfile: Dockerfile
     restart: unless-stopped
     networks: [phonebox_net]

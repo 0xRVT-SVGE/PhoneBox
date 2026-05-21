@@ -8,17 +8,17 @@ from typing import Optional
 from flask_socketio import emit, SocketIO
 from flask import request
 
-from back_end.slot_monitor.services.operation_context import op_ctx
-from back_end.slot_monitor.camera.qr_pid_reader import scan_and_validate_pid_from_buffer
-from back_end.slot_monitor.camera.top_camera import top_camera
-from back_end.slot_monitor.slot_operations import SlotOperations
-from back_end.slot_monitor.db_interface import SlotMonitorDB
-from back_end.slot_monitor.phone_tracker import (
+from Backup.back_end.slot_monitor.services.operation_context import op_ctx
+from Backup.back_end.slot_monitor.camera.qr_pid_reader import scan_and_validate_pid_from_buffer
+from Backup.back_end.slot_monitor.camera.top_camera import top_camera
+from Backup.back_end.slot_monitor.slot_operations import SlotOperations
+from Backup.back_end.slot_monitor.db_interface import SlotMonitorDB
+from Backup.back_end.slot_monitor.phone_tracker import (
     create_tracker_for_operation,
     make_dvw_context_overlay,
     load_all_top_rois,
 )
-from back_end.config import QRConfig as _QRC
+from Backup.back_end.config import QRConfig as _QRC
 
 logger = logging.getLogger(__name__)
 
@@ -348,7 +348,7 @@ class DVWSocketHandler:
 
         top_camera.start()
         try:
-            from back_end.slot_monitor.camera.rolling_buffer import top_rolling_buffer
+            from Backup.back_end.slot_monitor.camera.rolling_buffer import top_rolling_buffer
             top_rolling_buffer.set_active(True)
         except Exception:
             pass
@@ -454,9 +454,9 @@ class DVWSocketHandler:
 
         Returns None on success, or a human-readable rejection reason.
         """
-        from back_end.config import ServerConfig as _SVC
-        from back_end.slot_monitor.db_interface import _BOX_ID
-        from back_end.Database.db import get_conn, put_conn
+        from Backup.back_end.config import ServerConfig as _SVC
+        from Backup.back_end.slot_monitor.db_interface import _BOX_ID
+        from Backup.back_end.Database.db import get_conn, put_conn
 
         conn = get_conn()
         try:
@@ -740,7 +740,7 @@ class DVWSocketHandler:
 
     def _top_buffer_idle(self):
         try:
-            from back_end.slot_monitor.camera.rolling_buffer import top_rolling_buffer
+            from Backup.back_end.slot_monitor.camera.rolling_buffer import top_rolling_buffer
             top_rolling_buffer.set_active(False)
         except Exception:
             pass

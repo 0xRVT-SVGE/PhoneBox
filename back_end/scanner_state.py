@@ -2,7 +2,7 @@ import threading
 from queue import Queue
 import time
 from flask_socketio import emit as _emit
-from back_end.config import ScannerStateConfig as _SSC
+from Backup.back_end.config import ScannerStateConfig as _SSC
 
 class ScannerState:
     def __init__(self):

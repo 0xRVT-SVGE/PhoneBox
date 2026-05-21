@@ -54,10 +54,10 @@ from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack, R
 from av import VideoFrame
 import av
 
-from back_end.scanner_state import scanner_state
-from back_end.embedding_gen import generate_embedding
-from back_end.slot_monitor.camera.top_camera import top_camera
-from back_end.config import WebRTCConfig as _WRC
+from Backup.back_end.scanner_state import scanner_state
+from Backup.back_end.embedding_gen import generate_embedding
+from Backup.back_end.slot_monitor.camera.top_camera import top_camera
+from Backup.back_end.config import WebRTCConfig as _WRC
 
 logger = logging.getLogger(__name__)
 

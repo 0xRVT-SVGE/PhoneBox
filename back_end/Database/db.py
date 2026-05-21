@@ -1,10 +1,9 @@
 # back_end/Database/db.py
 import logging
 import time
-import psycopg2
 from psycopg2 import pool, OperationalError
-from back_end.secrets import Secrets
-from back_end.config import DatabaseConfig as _DC
+from Backup.back_end.secrets import Secrets
+from Backup.back_end.config import DatabaseConfig as _DC
 
 logger = logging.getLogger(__name__)
 

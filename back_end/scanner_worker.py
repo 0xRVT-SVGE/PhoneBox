@@ -22,8 +22,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pyzbar.pyzbar import decode, ZBarSymbol
 import requests
 
-from back_end.scanner_state import scanner_state
-from back_end.config import ScannerConfig as _SC, ServerConfig as _SVC
+from Backup.back_end.scanner_state import scanner_state
+from Backup.back_end.config import ScannerConfig as _SC, ServerConfig as _SVC
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +49,8 @@ _resize_scale: float | None = None
 
 # ── Opt #3: ONNX face embedder (graceful fallback if unavailable) ─────────────
 try:
-    from back_end.face_embedder import represent as _onnx_represent
-    from back_end.face_embedder import is_onnx_ready as _onnx_ready
+    from Backup.back_end.face_embedder import represent as _onnx_represent
+    from Backup.back_end.face_embedder import is_onnx_ready as _onnx_ready
     _ONNX_MODULE_AVAILABLE = True
 except ImportError:
     _onnx_represent        = None
@@ -59,7 +59,7 @@ except ImportError:
 
 # ── Opt #26: Redis student cache (graceful fallback if unavailable) ───────────
 try:
-    from back_end.scanner_worker_cache import fetch_student_cached as _cache_fetch
+    from Backup.back_end.scanner_worker_cache import fetch_student_cached as _cache_fetch
     _CACHE_AVAILABLE = True
 except ImportError:
     _cache_fetch     = None

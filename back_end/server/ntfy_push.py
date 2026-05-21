@@ -34,7 +34,6 @@ Wire-up (server_main.py, after alarm is created):
       slot_monitor.alarm.set_ntfy_push(ntfy)
 """
 
-import json
 import logging
 import threading
 from typing import Optional
@@ -43,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 # ── Config import with defaults ───────────────────────────────────────────────
 try:
-    from back_end.config import NtfyConfig as _NC
+    from Backup.back_end.config import NtfyConfig as _NC
     _ENABLED    = _NC.ENABLED
     _SERVER_URL = _NC.SERVER_URL.rstrip("/")
     _TOPIC      = _NC.TOPIC

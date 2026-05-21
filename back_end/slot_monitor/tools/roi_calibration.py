@@ -402,7 +402,7 @@ class _ROIEditor:
 # Public API
 # ══════════════════════════════════════════════════════════
 #from back_end.camera_manager import cam_mgr
-from back_end.config import CameraConfig as _CC
+from Backup.back_end.config import CameraConfig as _CC
 
 def run_calibration(num_lids: int, box_slug: str = "") -> None:
     """
@@ -419,7 +419,7 @@ def run_calibration(num_lids: int, box_slug: str = "") -> None:
         return
 
     if not box_slug:
-        from back_end.config import ServerConfig as _SVC
+        from Backup.back_end.config import ServerConfig as _SVC
         box_slug = _SVC.BOX_SLUG or "box_1"
 
     roi_file_bottom, roi_file_top = _roi_paths(box_slug)
@@ -479,7 +479,7 @@ def _query_num_lids(box_slug: str) -> Optional[int]:
     Returns None if the DB is unreachable or the slug is not found.
     """
     try:
-        from back_end.Database.db import get_conn, put_conn
+        from Backup.back_end.Database.db import get_conn, put_conn
         conn = get_conn()
         try:
             with conn.cursor() as cur:
@@ -524,7 +524,7 @@ def _query_num_lids(box_slug: str) -> Optional[int]:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s - %(levelname)s - %(message)s")
-    from back_end.config import ServerConfig as _SVC
+    from Backup.back_end.config import ServerConfig as _SVC
     _slug = os.getenv("PHONEBOX_BOX_SLUG", "") or _SVC.BOX_SLUG or "box_1"
 
     if len(sys.argv) > 1:
@@ -547,4 +547,4 @@ if __name__ == "__main__":
 
     print(f"  Override: python roi_calibration.py <num_lids>")
     print(f"  Override box: set PHONEBOX_BOX_SLUG env var")
-    run_calibration(n, box_slug=_slug)
+    run_calibration(n, box_slug=_slug)

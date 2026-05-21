@@ -35,11 +35,11 @@ import threading
 import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-from back_end.config import CameraConfig as _CC, CalibrationConfig as _CAL
+from Backup.back_end.config import CameraConfig as _CC, CalibrationConfig as _CAL
 import cv2
 import numpy as np
 
-from back_end.slot_monitor.slot_embed import compute_embedding, embedding_distance
+from Backup.back_end.slot_monitor.slot_embed import compute_embedding, embedding_distance
 
 logging.basicConfig(
     level=logging.INFO,
@@ -56,7 +56,7 @@ def _resolve_box_slug() -> str:
     slug = os.getenv("PHONEBOX_BOX_SLUG", "")
     if not slug:
         try:
-            from back_end.config import ServerConfig as _SVC
+            from Backup.back_end.config import ServerConfig as _SVC
             slug = getattr(_SVC, "BOX_SLUG", "") or ""
         except Exception:
             pass
@@ -80,8 +80,8 @@ def _init_box_id(box_slug: str) -> int:
     loud warning so the operator knows to fix their setup before proceeding).
     """
     try:
-        from back_end.Database.db import get_conn, put_conn
-        from back_end.slot_monitor.db_interface import set_box_id
+        from Backup.back_end.Database.db import get_conn, put_conn
+        from Backup.back_end.slot_monitor.db_interface import set_box_id
         conn = get_conn()
         try:
             with conn.cursor() as cur:
@@ -458,7 +458,7 @@ if __name__ == "__main__":
     # Catch the common mistake of using an ROI file from a different box
     # or a previous calibration run with the wrong slot count.
     try:
-        from back_end.Database.db import get_conn, put_conn as _put_conn
+        from Backup.back_end.Database.db import get_conn, put_conn as _put_conn
         _conn = get_conn()
         try:
             with _conn.cursor() as _cur:
@@ -499,7 +499,7 @@ if __name__ == "__main__":
         print(f"\n✗ {e}")
         raise SystemExit(1)
 
-    from back_end.slot_monitor.db_interface import SlotMonitorDB
+    from Backup.back_end.slot_monitor.db_interface import SlotMonitorDB
     db = SlotMonitorDB()
 
     # ── Dispatch ──────────────────────────────────────────
@@ -525,4 +525,4 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\nInterrupted.")
     finally:
-        buf.stop()
+        buf.stop()

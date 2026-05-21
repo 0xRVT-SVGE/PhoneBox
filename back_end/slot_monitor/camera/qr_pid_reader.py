@@ -32,11 +32,11 @@ import threading
 import time
 from typing import Optional, TYPE_CHECKING
 import cv2
-from back_end.config import CameraConfig as _CC
-from back_end.slot_monitor.db_interface import SlotMonitorDB
+from Backup.back_end.config import CameraConfig as _CC
+from Backup.back_end.slot_monitor.db_interface import SlotMonitorDB
 
 if TYPE_CHECKING:
-    from back_end.slot_monitor.camera.top_camera import TopCamera
+    from Backup.back_end.slot_monitor.camera.top_camera import TopCamera
 
 logger = logging.getLogger(__name__)
 

@@ -65,10 +65,9 @@ import time
 from multiprocessing import shared_memory
 from typing import List, Optional
 
-import cv2
 import numpy as np
 
-from back_end.config import CameraProcessConfig as _CPC
+from Backup.back_end.config import CameraProcessConfig as _CPC
 
 logger = logging.getLogger(__name__)
 

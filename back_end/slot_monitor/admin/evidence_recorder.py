@@ -48,12 +48,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-import numpy as np
-
-from back_end.Database.db import get_conn, put_conn
-from back_end.slot_monitor.camera.top_camera import top_camera
-from back_end.config import EvidenceConfig as _EC
-from back_end.server.evidence_storage import evidence_store   # Opt #38
+from Backup.back_end.Database.db import get_conn, put_conn
+from Backup.back_end.config import EvidenceConfig as _EC
+from Backup.back_end.server.evidence_storage import evidence_store   # Opt #38
 
 logger = logging.getLogger(__name__)
 
@@ -204,10 +201,10 @@ class PhoneRecorder:
         Submit pre-buffer clip to BackgroundEncoder (non-blocking), then
         start live capture immediately.  Returns in microseconds.
         """
-        from back_end.slot_monitor.camera.rolling_buffer import (
+        from Backup.back_end.slot_monitor.camera.rolling_buffer import (
             top_rolling_buffer, TOP_FPS,
         )
-        from back_end.slot_monitor.admin.background_encoder import BackgroundEncoder
+        from Backup.back_end.slot_monitor.admin.background_encoder import BackgroundEncoder
 
         self._running    = True
         self._started_at = time.time()
@@ -288,7 +285,7 @@ class PhoneRecorder:
                 )
                 # Face cam: async with DB-insert callback.
                 try:
-                    from back_end.slot_monitor.camera.rolling_buffer import (
+                    from Backup.back_end.slot_monitor.camera.rolling_buffer import (
                         face_rolling_buffer,
                     )
                     sid, pid_, lid_, dur = (
@@ -348,7 +345,7 @@ class PhoneRecorder:
 
     def _record_live(self) -> None:
         """Phase 2: live capture from top_camera. Starts immediately."""
-        from back_end.slot_monitor.camera.top_camera import top_camera
+        from Backup.back_end.slot_monitor.camera.top_camera import top_camera
 
         writer_ready  = False
         interval      = 1.0 / RECORD_FPS
