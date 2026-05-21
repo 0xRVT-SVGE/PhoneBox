@@ -41,8 +41,8 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import List, Dict, Optional
 from dataclasses import dataclass
 
-from Backup.back_end.slot_monitor.slots import Slot
-from Backup.back_end.slot_monitor.alarm_controller import AlarmController
+from back_end.slot_monitor.slots import Slot
+from back_end.slot_monitor.alarm_controller import AlarmController
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ def _get_op_ctx():
     global _op_ctx
     if _op_ctx is None:
         try:
-            from Backup.back_end.slot_monitor.services.operation_context import op_ctx
+            from back_end.slot_monitor.services.operation_context import op_ctx
             _op_ctx = op_ctx
         except Exception:
             pass
@@ -64,7 +64,7 @@ def _get_admin_ctx():
     global _admin_ctx
     if _admin_ctx is None:
         try:
-            from Backup.back_end.slot_monitor.admin.resolution_session import admin_ctx
+            from back_end.slot_monitor.admin.resolution_session import admin_ctx
             _admin_ctx = admin_ctx
         except Exception:
             pass

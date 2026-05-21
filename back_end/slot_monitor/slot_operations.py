@@ -31,8 +31,8 @@ import logging
 import time
 from typing import Callable, Dict, Optional
 import numpy as np
-from Backup.back_end.Database.db import get_conn, put_conn
-from Backup.back_end.config import AlarmConfig as _AC
+from back_end.Database.db import get_conn, put_conn
+from back_end.config import AlarmConfig as _AC
 
 logger = logging.getLogger(__name__)
 
@@ -154,7 +154,7 @@ class SlotOperations:
     # ── Deposit ───────────────────────────────────────────────────────────────
 
     def deposit_phone_db(self, pid: str, lid: int) -> Dict:
-        from Backup.back_end.slot_monitor.db_interface import _BOX_ID
+        from back_end.slot_monitor.db_interface import _BOX_ID
         conn = get_conn()
         try:
             with conn.cursor() as cur:
@@ -258,7 +258,7 @@ class SlotOperations:
             emb = self._current_embedding(slot, fb)
             if emb is None:
                 return {"status": "error", "message": "Failed to capture baseline"}
-            from Backup.back_end.slot_monitor.db_interface import SlotMonitorDB
+            from back_end.slot_monitor.db_interface import SlotMonitorDB
             SlotMonitorDB.save_baseline(lid, emb)
             slot.reset_baseline(emb)
             slot.is_occupied = is_occupied
@@ -311,7 +311,7 @@ class SlotOperations:
 
     def get_empty_locations(self, limit: int = 10) -> Dict:
         """Return free slots in THIS box only."""
-        from Backup.back_end.slot_monitor.db_interface import _BOX_ID
+        from back_end.slot_monitor.db_interface import _BOX_ID
         conn = get_conn()
         try:
             with conn.cursor() as cur:
@@ -333,3 +333,52 @@ class SlotOperations:
             return {"status": "error", "message": str(exc)}
         finally:
             put_conn(conn)
+
+    @staticmethod
+    def get_student_phone_statuses(sid: str) -> list:
+        """
+        Return all registered phones for a student with cross-box storage
+        location and fit status for the CURRENT box.
+
+        Called after a successful authentication (face + badge) to populate
+        the Flutter phone list with actionable states.
+
+        Each returned dict has:
+          pid, model, phone_size,
+          stored_box_id, stored_box_name, stored_box_slug,
+          action         — 'deposit' | 'retrieve' | 'wrong_box' | 'size_mismatch'
+          fits_here      — bool
+          stored_here    — bool
+          action_message — human-readable note (empty string when action is active)
+        """
+        import back_end.access_control as ac
+        conn = get_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT
+                        ph.pid,
+                        ph.model,
+                        ph.phone_size,
+                        ps.box_id           AS stored_box_id,
+                        b.box_name          AS stored_box_name,
+                        b.box_slug          AS stored_box_slug
+                    FROM phones ph
+                    LEFT JOIN phone_storage ps
+                           ON ps.pid = ph.pid AND ps.retrieved_at IS NULL
+                    LEFT JOIN boxes b ON b.box_id = ps.box_id
+                    WHERE ph.sid = %s
+                    ORDER BY ph.model;
+                """, (sid,))
+                rows = cur.fetchall()
+                cols = [d[0] for d in cur.description]
+
+            phones = [dict(zip(cols, row)) for row in rows]
+            # Enrich each phone with action / fit data (pure logic, no DB)
+            return [ac.resolve_phone_action(p) for p in phones]
+
+        except Exception as exc:
+            logger.error(f"[SlotOps] get_student_phone_statuses({sid}): {exc}")
+            return []
+        finally:
+            put_conn(conn)

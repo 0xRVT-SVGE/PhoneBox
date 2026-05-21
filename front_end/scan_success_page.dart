@@ -46,6 +46,9 @@ class _ScanSuccessPageState extends State<ScanSuccessPage> {
   List<dynamic> _phones     = [];
   int           _pendingOps = 0;   // Opt #33: queued op count
 
+  // Opt #28: typed stream subscriptions
+  final List<StreamSubscription> _subs = [];
+
   // ── Top-camera pre-connection (Opt #27) ──────────────────────────────────
   final _topRenderer    = RTCVideoRenderer();
   RTCPeerConnection?    _topPc;
@@ -56,9 +59,21 @@ class _ScanSuccessPageState extends State<ScanSuccessPage> {
   @override
   void initState() {
     super.initState();
+    // Subscribe to socket-pushed phone statuses (arrives right after auth)
+    _subs.add(_socketService.onPhoneStatuses.listen(_handlePhoneStatuses));
     _loadPhones();
     _topRenderer.initialize().then((_) {
       if (!_topPageDisposed) _preconnectTopCamera();
+    });
+  }
+
+  void _handlePhoneStatuses(Map<String, dynamic> data) {
+    if (!mounted) return;
+    final phones = data['phones'] as List<dynamic>? ?? [];
+    if (phones.isEmpty) return;   // ignore empty pushes
+    setState(() {
+      _phones  = phones;
+      _loading = false;
     });
   }
 
@@ -66,6 +81,7 @@ class _ScanSuccessPageState extends State<ScanSuccessPage> {
   @override
   void dispose() {
     _topPageDisposed = true;
+    for (final s in _subs) s.cancel();
     _topPc?.onTrack            = null;
     _topPc?.onConnectionState  = null;
     _topPc?.close();
@@ -179,8 +195,87 @@ class _ScanSuccessPageState extends State<ScanSuccessPage> {
   }
 
   Widget _buildPhoneCard(Map<String, dynamic> p) {
-    final pid      = p['pid'].toString();
-    final model    = p['model'] as String? ?? 'Unknown Model';
+    final pid    = p['pid'].toString();
+    final model  = p['model'] as String? ?? 'Unknown Model';
+
+    // ── Socket-pushed format (phone_statuses event) ──────────────────────
+    // action: 'deposit' | 'retrieve' | 'wrong_box' | 'size_mismatch'
+    final action  = p['action'] as String?;
+
+    if (action != null) {
+      final canDeposit  = action == 'deposit';
+      final canRetrieve = action == 'retrieve';
+      final message     = p['action_message'] as String? ?? '';
+      // Safe title-case: 'extra_large' → 'Extra Large', never throws on empty.
+      final rawSize = p['phone_size'] as String? ?? 'standard';
+      final size = rawSize
+          .split('_')
+          .map((w) => w.isEmpty ? w : '${w[0].toUpperCase()}${w.substring(1)}')
+          .join(' ');
+
+      return Card(
+        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(model, style: const TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 2),
+                  Text('PID: $pid  •  $size',
+                      style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                  if (message.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Row(children: [
+                      const Icon(Icons.info_outline, size: 14,
+                          color: Colors.orange),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(message,
+                            style: const TextStyle(
+                                fontSize: 13, color: Colors.orange)),
+                      ),
+                    ]),
+                  ] else ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      canRetrieve ? '📦 Stored here' : '🎒 Not stored here',
+                      style: TextStyle(
+                        color: canRetrieve
+                            ? Colors.green[700]
+                            : Colors.blue[700],
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Column(children: [
+              _ActionButton(
+                label:     'Take',
+                color:     Colors.green,
+                enabled:   canRetrieve,
+                onPressed: () => _startOperation(pid, false),
+              ),
+              const SizedBox(height: 8),
+              _ActionButton(
+                label:     'Put',
+                color:     Colors.blue,
+                enabled:   canDeposit,
+                onPressed: () => _startOperation(pid, true),
+              ),
+            ]),
+          ]),
+        ),
+      );
+    }
+
+    // ── Fallback: legacy API format (is_stored / lid / x / y) ────────────
     final isStored = p['is_stored'] == true;
     final location = phoneLocationLabel(p);
 

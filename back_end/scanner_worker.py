@@ -22,8 +22,9 @@ from concurrent.futures import ThreadPoolExecutor
 from pyzbar.pyzbar import decode, ZBarSymbol
 import requests
 
-from Backup.back_end.scanner_state import scanner_state
-from Backup.back_end.config import ScannerConfig as _SC, ServerConfig as _SVC
+from back_end.scanner_state import scanner_state
+from back_end.config import ScannerConfig as _SC, ServerConfig as _SVC
+import back_end.access_control as _ac
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +50,8 @@ _resize_scale: float | None = None
 
 # ── Opt #3: ONNX face embedder (graceful fallback if unavailable) ─────────────
 try:
-    from Backup.back_end.face_embedder import represent as _onnx_represent
-    from Backup.back_end.face_embedder import is_onnx_ready as _onnx_ready
+    from back_end.face_embedder import represent as _onnx_represent
+    from back_end.face_embedder import is_onnx_ready as _onnx_ready
     _ONNX_MODULE_AVAILABLE = True
 except ImportError:
     _onnx_represent        = None
@@ -59,7 +60,7 @@ except ImportError:
 
 # ── Opt #26: Redis student cache (graceful fallback if unavailable) ───────────
 try:
-    from Backup.back_end.scanner_worker_cache import fetch_student_cached as _cache_fetch
+    from back_end.scanner_worker_cache import fetch_student_cached as _cache_fetch
     _CACHE_AVAILABLE = True
 except ImportError:
     _cache_fetch     = None
@@ -253,6 +254,30 @@ def run_scan_session():
                     student = fetch_student_by_sid(sid)
 
                     if student and student.get("embed") is not None:
+
+                        # ── BOX ACCESS CHECK ─────────────────────────────
+                        # Runs BEFORE face embed is loaded. If the student's
+                        # group doesn't match this box, abort immediately.
+                        year_code       = student.get("year_code")
+                        sub_group_codes = student.get("sub_group_codes") or []
+
+                        if not _ac.check_box_access(year_code, sub_group_codes):
+                            denial_msg = _ac.build_denial_message(
+                                year_code, sub_group_codes
+                            )
+                            logger.info(
+                                "[ScanWorker] Box access denied for SID=%s: %s",
+                                sid, denial_msg,
+                            )
+                            scanner_state.emit_box_denied(denial_msg, _client_id)
+                            # Reset all state and abort the scan session
+                            student    = None
+                            sid        = None
+                            barcode_ok = False
+                            scanner_state.scan_request["running"] = False
+                            break
+                        # ── ACCESS GRANTED ───────────────────────────────
+
                         barcode_ok                        = True
                         scanner_state.barcode_lock_until  = timestamp + VALID_TIME
                         scanner_state.current_student     = student
@@ -336,6 +361,28 @@ def run_scan_session():
             "badge_timeout_exceeded": timeout,
         },
     )
+
+    # Emit phone statuses immediately after successful authentication.
+    # Flutter uses this to render the phone list with action buttons
+    # (deposit / retrieve / wrong_box / size_mismatch) before the student
+    # selects anything.
+    if face_ok and barcode_ok and sid and _client_id:
+        try:
+            from back_end.slot_monitor.slot_operations import SlotOperations
+            phone_statuses = SlotOperations.get_student_phone_statuses(sid)
+            if scanner_state._socketio:
+                scanner_state._socketio.emit(
+                    "phone_statuses",
+                    {"phones": phone_statuses},
+                    to=_client_id,
+                    namespace="/",
+                )
+                logger.debug(
+                    "[ScanWorker] Emitted phone_statuses for SID=%s (%d phones)",
+                    sid, len(phone_statuses),
+                )
+        except Exception as _exc:
+            logger.warning("[ScanWorker] phone_statuses emit failed: %s", _exc)
 
 
 # ============================================================

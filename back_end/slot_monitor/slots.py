@@ -13,8 +13,8 @@ import logging
 import numpy as np
 from collections import deque
 from typing import Optional, Tuple, Dict, List
-from Backup.back_end.slot_monitor.slot_embed import compute_embedding, embedding_distance
-from Backup.back_end.config import SlotMonitorConfig as _SMC
+from back_end.slot_monitor.slot_embed import compute_embedding, embedding_distance
+from back_end.config import SlotMonitorConfig as _SMC
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ _TOOLS_DIR      = os.path.join(
 # each have their own calibration file.  E.g. rois_bottom_year_1.json.
 # Falls back to the legacy name when BOX_SLUG is not set (single-box deploy).
 def _roi_file_bottom() -> str:
-    from Backup.back_end.config import ServerConfig as _SVC
+    from back_end.config import ServerConfig as _SVC
     slug = getattr(_SVC, "BOX_SLUG", None) or "box_1"
     return os.path.join(_TOOLS_DIR, f"rois_bottom_{slug}.json")
 
@@ -51,7 +51,7 @@ def _get_recalc_min_samples():
     global _RECALC_MIN_SAMPLES
     if _RECALC_MIN_SAMPLES is None:
         try:
-            from Backup.back_end.config import SlotMonitorConfig as _SMC
+            from back_end.config import SlotMonitorConfig as _SMC
             _RECALC_MIN_SAMPLES = _SMC.RECALC_MIN_SAMPLES
         except Exception:
             _RECALC_MIN_SAMPLES = 5

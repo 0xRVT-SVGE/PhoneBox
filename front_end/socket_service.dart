@@ -80,6 +80,10 @@ class SocketService {
   final _adminOperationError    = StreamController<Map<String, dynamic>>.broadcast();
   final _adminStepCancelled     = StreamController<Map<String, dynamic>>.broadcast();
 
+  // Access control
+  final _boxAccessDenied        = StreamController<Map<String, dynamic>>.broadcast();
+  final _phoneStatuses          = StreamController<Map<String, dynamic>>.broadcast();
+
   // ── Public stream getters ─────────────────────────────────────────────────
 
   // Scan
@@ -121,6 +125,10 @@ class SocketService {
   Stream<Map<String, dynamic>> get onAdminSessionClosed     => _adminSessionClosed.stream;
   Stream<Map<String, dynamic>> get onAdminOperationError    => _adminOperationError.stream;
   Stream<Map<String, dynamic>> get onAdminStepCancelled     => _adminStepCancelled.stream;
+
+  // Access control
+  Stream<Map<String, dynamic>> get onBoxAccessDenied        => _boxAccessDenied.stream;
+  Stream<Map<String, dynamic>> get onPhoneStatuses          => _phoneStatuses.stream;
 
   // ── Connection ────────────────────────────────────────────────────────────
 
@@ -216,6 +224,10 @@ class SocketService {
     socket!.on('admin_session_closed',  (d) => _adminSessionClosed.add(_m(d)));
     socket!.on('admin_operation_error', (d) => _adminOperationError.add(_m(d)));
     socket!.on('admin_step_cancelled',  (d) => _adminStepCancelled.add(_m(d)));
+
+    // Access control
+    socket!.on('box_access_denied', (d) => _boxAccessDenied.add(_m(d)));
+    socket!.on('phone_statuses',    (d) => _phoneStatuses.add(_m(d)));
   }
 
   // ── Scan ──────────────────────────────────────────────────────────────────

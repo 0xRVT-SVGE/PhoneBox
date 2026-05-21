@@ -29,25 +29,25 @@ import os
 import signal
 import threading
 
-from Backup.back_end.scanner_loop import scanner_loop
-from Backup.back_end.scanner_state import scanner_state
-from Backup.back_end.scanner_worker import scan_worker
-from Backup.back_end.server import webrtc_handler
-from Backup.back_end.server.app import (
+from back_end.scanner_loop import scanner_loop
+from back_end.scanner_state import scanner_state
+from back_end.scanner_worker import scan_worker
+from back_end.server import webrtc_handler
+from back_end.server.app import (
     create_app, get_slot_monitor, get_slot_operations, set_monitor_components
 )
-from Backup.back_end.server.webrtc_handler import webrtc_bp
-from Backup.back_end.server.metrics import register_metrics_endpoint
+from back_end.server.webrtc_handler import webrtc_bp
+from back_end.server.metrics import register_metrics_endpoint
 # from back_end.camera_manager import cam_mgr
-from Backup.back_end.slot_monitor.admin.admin_ops_handler import register_admin_handlers
-from Backup.back_end.slot_monitor.camera.top_camera import top_camera
-from Backup.back_end.slot_monitor.ops_handler import register_dvw_handlers
-from Backup.back_end.slot_monitor.services.operation_context import op_ctx
+from back_end.slot_monitor.admin.admin_ops_handler import register_admin_handlers
+from back_end.slot_monitor.camera.top_camera import top_camera
+from back_end.slot_monitor.ops_handler import register_dvw_handlers
+from back_end.slot_monitor.services.operation_context import op_ctx
 
 logger = logging.getLogger(__name__)
 
-from Backup.back_end.config import ServerConfig as _SVC
-import Backup.back_end.slot_monitor.db_interface as _db_iface
+from back_end.config import ServerConfig as _SVC
+import back_end.slot_monitor.db_interface as _db_iface
 
 DEBUG_ROI    = _SVC.DEBUG_ROI
 DEBUG_WINDOW = _SVC.DEBUG_WINDOW
@@ -105,7 +105,7 @@ def _resolve_box_id(slug: str) -> int:
     loud early failure rather than silently operating on the
     wrong box's data.
     """
-    from Backup.back_end.Database.db import get_conn, put_conn
+    from back_end.Database.db import get_conn, put_conn
     conn = get_conn()
     try:
         with conn.cursor() as cur:
@@ -125,13 +125,73 @@ def _resolve_box_id(slug: str) -> int:
         put_conn(conn)
 
 
+def _init_access_control(box_id: int, slug: str) -> None:
+    """
+    Load group config from JSON and cache box metadata from DB.
+    Must be called after _resolve_box_id() and before the scan worker starts.
+    """
+    import back_end.access_control as ac
+    from back_end.Database.db import get_conn, put_conn
+
+    # 1. Load student_groups.json (source of truth for group codes)
+    ac.load_groups_config()
+
+    # 2. Fetch current box metadata from DB
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT box_id, box_slug, box_name,
+                       accept_group_codes, accepted_phone_sizes
+                FROM boxes
+                WHERE box_id = %s;
+                """,
+                (box_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise RuntimeError(f"Box id={box_id} not found in boxes table.")
+            bid, bslug, bname, accept_groups, accept_sizes = row
+            ac.set_current_box(
+                box_id               = bid,
+                box_slug             = bslug,
+                box_name             = bname,
+                accept_group_codes   = list(accept_groups)  if accept_groups  else None,
+                accepted_phone_sizes = list(accept_sizes)   if accept_sizes   else None,
+            )
+
+            # 3. Fetch all boxes for denial + size-mismatch messages
+            cur.execute(
+                """SELECT box_slug, box_name,
+                          accept_group_codes, accepted_phone_sizes
+                   FROM boxes ORDER BY box_id;"""
+            )
+            all_rows = cur.fetchall()
+            all_boxes = [
+                {
+                    "box_slug":             r[0],
+                    "box_name":             r[1],
+                    "accept_group_codes":   list(r[2]) if r[2] else None,
+                    "accepted_phone_sizes": list(r[3]) if r[3] else None,
+                }
+                for r in all_rows
+            ]
+            ac.set_all_boxes(all_boxes)
+    finally:
+        put_conn(conn)
+
+    logger.info("[Main] Access control initialised.")
+
+
+
 # ============================================================
 # WEBSOCKET EVENTS — LEGACY SCANNER
 # ============================================================
 
 @socketio.on("toggle_scan")
 def handle_toggle_scan(_):
-    from Backup.back_end.scanner_worker import start_scan, stop_scan
+    from back_end.scanner_worker import start_scan, stop_scan
     client_id = request.sid
     new_state = not scanner_state.scan_request["running"]
     scanner_state.scan_request["running"] = new_state
@@ -236,13 +296,17 @@ if __name__ == "__main__":
     _db_iface.set_box_id(_box_id)          # thread the box_id into all DB queries
     logger.info(f"Box identity: slug={_SVC.BOX_SLUG!r}, box_id={_box_id}")
 
+    # 0b. Initialise access control (loads groups config + caches box metadata)
+    _init_access_control(_box_id, _SVC.BOX_SLUG)
+
+
     # 1. Scan worker
     threading.Thread(target=scan_worker, daemon=True, name="ScanWorker").start()
     logger.info("Scan worker started")
 
     # Opt #38: start evidence storage pruner (background retention checks)
     try:
-        from Backup.back_end.server.evidence_storage import evidence_store
+        from back_end.server.evidence_storage import evidence_store
         evidence_store.start()
         logger.info("Evidence storage pruner started (Opt #38)")
     except Exception as e:
@@ -256,7 +320,7 @@ if __name__ == "__main__":
         import numpy as np
         # Opt #3: try ONNX first — initialises session and runs one dummy pass
         try:
-             from Backup.back_end.face_embedder import prewarm as _onnx_prewarm
+             from back_end.face_embedder import prewarm as _onnx_prewarm
              if _onnx_prewarm():
                  logger.info("Face embedder: ONNX Runtime pre-warmed")
                  return   # ONNX is ready; no need to also warm TF
@@ -282,7 +346,7 @@ if __name__ == "__main__":
     # Opt #17: pre-warm BackgroundEncoder — starts its daemon worker thread
     # immediately so the first alarm clip has no queue-startup latency.
     try:
-        from Backup.back_end.slot_monitor.admin.background_encoder import BackgroundEncoder
+        from back_end.slot_monitor.admin.background_encoder import BackgroundEncoder
         BackgroundEncoder.instance()
         logger.info("BackgroundEncoder pre-warmed")
     except Exception as e:
@@ -325,7 +389,7 @@ if __name__ == "__main__":
     num_lids = _SVC.FALLBACK_NUM_LIDS
     box_lids: list[int] = []          # actual lid values for this box
     try:
-        from Backup.back_end.Database.db import get_conn, put_conn
+        from back_end.Database.db import get_conn, put_conn
         conn = get_conn()
         try:
             with conn.cursor() as cur:
@@ -368,7 +432,7 @@ if __name__ == "__main__":
             f"Using existing rois_bottom_{_SVC.BOX_SLUG}.json / rois_top_{_SVC.BOX_SLUG}.json."
         )
     else:
-        from Backup.back_end.slot_monitor.tools.roi_calibration import run_calibration
+        from back_end.slot_monitor.tools.roi_calibration import run_calibration
         run_calibration(num_lids, box_slug=_SVC.BOX_SLUG)   # blocks until operator confirms both windows
 
     # 7. Slot monitor (reads rois_bottom.json written by step 6)

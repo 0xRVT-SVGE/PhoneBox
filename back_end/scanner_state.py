@@ -2,7 +2,7 @@ import threading
 from queue import Queue
 import time
 from flask_socketio import emit as _emit
-from Backup.back_end.config import ScannerStateConfig as _SSC
+from back_end.config import ScannerStateConfig as _SSC
 
 class ScannerState:
     def __init__(self):
@@ -116,6 +116,27 @@ class ScannerState:
         if self._socketio is None or client_id is None:
             return
         self._socketio.emit("scan_status", self._get_status_data(), to=client_id, namespace="/")
+
+    def emit_box_denied(self, reason: str, client_id: str) -> None:
+        """
+        Emit 'box_access_denied' to the specific client.
+
+        Called by scanner_worker immediately after the badge barcode is decoded
+        and the student's group does NOT match the current box's accept_group_codes.
+        The scan session is already broken out of at this point.
+        """
+        if self._socketio is None or client_id is None:
+            return
+        self._socketio.emit(
+            "box_access_denied",
+            {
+                "authorized": False,
+                "user":       None,
+                "reason":     reason,
+            },
+            to=client_id,
+            namespace="/",
+        )
 
     def emit_to_requester(self):
         """

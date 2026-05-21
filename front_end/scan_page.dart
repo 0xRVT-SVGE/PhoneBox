@@ -35,6 +35,10 @@ class _ScanPageState extends State<ScanPage> {
   // arrive before the first ScanSuccessPage navigation completes.
   bool _navigating      = false;
 
+  // Access-control denial state
+  bool   _boxDenied      = false;
+  String _boxDeniedMsg   = '';
+
   final socketService = SocketService();
 
   // Opt #28: typed stream subscriptions — cancelled in dispose()
@@ -62,6 +66,7 @@ class _ScanPageState extends State<ScanPage> {
     _subs.add(socketService.onAlarmTriggered.listen(_handleAlarmTriggered));
     _subs.add(socketService.onAlarmCleared.listen(_handleAlarmCleared));
     _subs.add(socketService.onAlarmStatus.listen(_handleAlarmStatus));
+    _subs.add(socketService.onBoxAccessDenied.listen(_handleBoxAccessDenied));
   }
 
   void _handleAlarmStatus(Map<String, dynamic> data) {
@@ -88,9 +93,31 @@ class _ScanPageState extends State<ScanPage> {
     _alarmPageOpen = false;
   }
 
+  // ── Box access denial ────────────────────────────────────────────────────
+
+  void _handleBoxAccessDenied(Map<String, dynamic> data) {
+    if (!mounted || viewDisposed) return;
+    final reason = data['reason'] as String? ?? 'Access denied for this box.';
+    setState(() {
+      _boxDenied    = true;
+      _boxDeniedMsg = reason;
+      scanning      = false;
+      scanStatus    = 'Access Denied';
+    });
+    // Auto-dismiss the denial overlay after 6 seconds
+    Future.delayed(const Duration(seconds: 6), () {
+      if (mounted) setState(() => _boxDenied = false);
+    });
+  }
+
   void _updateScanStatus(Map<String, dynamic> data) {
     if (viewDisposed || !mounted) return;
     if (manualOverride) return;
+
+    // If a denial overlay is showing, hide it on new scan activity
+    if (_boxDenied && (data['running'] == true)) {
+      setState(() => _boxDenied = false);
+    }
 
     final running = data["running"] ?? false;
     setState(() {
@@ -290,41 +317,95 @@ class _ScanPageState extends State<ScanPage> {
         ],
       ),
       body: SafeArea(
-        child: Column(
+        child: Stack(
           children: [
-            Expanded(
-              child: Center(
-                child: AspectRatio(
-                  aspectRatio: 16 / 9,
-                  child: _remoteRenderer.srcObject != null
-                      ? RepaintBoundary(child: RTCVideoView(_remoteRenderer))
-                      : Container(color: Colors.black),
+            // ── Main scan content ─────────────────────────────────────────
+            Column(
+              children: [
+                Expanded(
+                  child: Center(
+                    child: AspectRatio(
+                      aspectRatio: 16 / 9,
+                      child: _remoteRenderer.srcObject != null
+                          ? RepaintBoundary(child: RTCVideoView(_remoteRenderer))
+                          : Container(color: Colors.black),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(webrtcStatus,
+                    style: const TextStyle(fontSize: 16, color: Colors.grey)),
+                const SizedBox(height: 4),
+                Text(scanStatus,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 18)),
+                const SizedBox(height: 10),
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 16),
+                  child: ElevatedButton.icon(
+                    icon:  Icon(scanning ? Icons.stop : Icons.play_arrow),
+                    label: Text(scanning ? "Stop Scan" : "Start Scan"),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: scanning ? Colors.red : Colors.green,
+                      minimumSize:     const Size(160, 45),
+                    ),
+                    onPressed: toggleScan,
+                  ),
+                ),
+              ],
+            ),
+
+            // ── Box access denial overlay ─────────────────────────────────
+            // Shown when server rejects a badge scan due to group mismatch.
+            // Tapping anywhere or waiting 6 s dismisses it.
+            if (_boxDenied)
+              Positioned.fill(
+                child: GestureDetector(
+                  onTap: () => setState(() => _boxDenied = false),
+                  child: Container(
+                    color: Colors.black87,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 32, vertical: 48),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.lock_outline,
+                            size: 72, color: Colors.redAccent),
+                        const SizedBox(height: 24),
+                        const Text(
+                          'Access Denied',
+                          style: TextStyle(
+                            color:      Colors.white,
+                            fontSize:   28,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          _boxDeniedMsg,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color:    Colors.white70,
+                            fontSize: 18,
+                          ),
+                        ),
+                        const SizedBox(height: 32),
+                        TextButton(
+                          onPressed: () => setState(() => _boxDenied = false),
+                          child: const Text(
+                            'Tap to dismiss',
+                            style: TextStyle(
+                                color: Colors.white38, fontSize: 14),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: 12),
-            Text(webrtcStatus,
-                style: const TextStyle(fontSize: 16, color: Colors.grey)),
-            const SizedBox(height: 4),
-            Text(scanStatus,
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 18)),
-            const SizedBox(height: 10),
-            Padding(
-              padding: const EdgeInsets.only(bottom: 16),
-              child: ElevatedButton.icon(
-                icon:  Icon(scanning ? Icons.stop : Icons.play_arrow),
-                label: Text(scanning ? "Stop Scan" : "Start Scan"),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: scanning ? Colors.red : Colors.green,
-                  minimumSize:     const Size(160, 45),
-                ),
-                onPressed: toggleScan,
-              ),
-            ),
           ],
         ),
       ),
     );
   }
-}
+}

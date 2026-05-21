@@ -29,10 +29,10 @@ import threading
 import time
 from enum import Enum, auto
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 import re
 
-from Backup.back_end.config import (
+from back_end.config import (
     TrackerConfig   as _TC,
     MotionConfig    as _MC,
     LKConfig        as _LK,
@@ -50,7 +50,7 @@ _UUID_RE_TRACKER = re.compile(
 
 # B1: import the unified QR decoder from qr_pid_reader (uses zxing-cpp when available)
 try:
-    from Backup.back_end.slot_monitor.camera.qr_pid_reader import _decode_qr as _qr_decode_fn
+    from back_end.slot_monitor.camera.qr_pid_reader import _decode_qr as _qr_decode_fn
     _B1_FAST_QR = True
     logger_init = logging.getLogger(__name__)
     logger_init.info(
@@ -638,7 +638,7 @@ class PhoneTracker:
         return None
 
     def _run(self):
-        from Backup.back_end.slot_monitor.camera.top_camera import top_camera as tc
+        from back_end.slot_monitor.camera.top_camera import top_camera as tc
         try:
             self._state=_TS.DETECTING
             logger.info(f"[Tracker] PID={self._pid} LID={self._lid} DETECTING")
@@ -660,7 +660,7 @@ class PhoneTracker:
         except Exception as e:
             logger.error(f"[Tracker] Fatal: {e}",exc_info=True)
             try:
-                from Backup.back_end.slot_monitor.camera.top_camera import top_camera as t2
+                from back_end.slot_monitor.camera.top_camera import top_camera as t2
                 t2.clear_tracker_overlay()
             except Exception: pass
             if self._on_failure: self._on_failure("error")
@@ -958,7 +958,7 @@ class PhoneTracker:
 
 def create_tracker_for_operation(op, socketio, slot_ops=None):
     """Build a PhoneTracker for a DVW operation."""
-    from Backup.back_end.slot_monitor.camera.top_camera import top_camera
+    from back_end.slot_monitor.camera.top_camera import top_camera
     if op.background_frame is None:
         top_camera.wait_for_frame(timeout=0.3)
         raw=top_camera.get_raw_frame()

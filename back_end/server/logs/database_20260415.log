@@ -1,0 +1,924 @@
+2026-04-15 10:47:34 - tensorflow - WARNING - From C:\Users\enpei\PycharmProjects\PhoneBox\.venv\Lib\site-packages\tf_keras\src\losses.py:2976: The name tf.losses.sparse_softmax_cross_entropy is deprecated. Please use tf.compat.v1.losses.sparse_softmax_cross_entropy instead.
+
+2026-04-15 10:47:36 - back_end.server.webrtc_handler - INFO - Hardware acceleration: NVIDIA (h264_nvenc)
+2026-04-15 10:47:36 - back_end.server.app - INFO - API blueprints registered
+2026-04-15 10:47:36 - back_end.server.app - INFO - SocketIO initialized
+2026-04-15 10:47:36 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:47:36 - back_end.slot_monitor.headless_slot_monitor - INFO - HEADLESS SLOT MONITOR (PRODUCTION MODE)
+2026-04-15 10:47:36 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:47:36 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 1 (1280x720 @ 30fps)
+2026-04-15 10:47:36 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 4 | Thresholds: mismatch=0.15, recalc=0.05
+2026-04-15 10:47:36 - back_end.slot_monitor.slot_operations - INFO - SlotOperations initialized
+2026-04-15 10:47:36 - back_end.server.app - INFO - Slot monitor created (not started yet)
+2026-04-15 10:47:36 - back_end.server.app - INFO - Flask application ready
+2026-04-15 10:47:36 - __main__ - INFO - ============================================================
+2026-04-15 10:47:36 - __main__ - INFO - PHONE BOX SERVER — STARTING
+2026-04-15 10:47:36 - __main__ - INFO - ============================================================
+2026-04-15 10:47:36 - __main__ - INFO - Scan worker started
+2026-04-15 10:47:36 - back_end.server.webrtc_handler - INFO - WebRTC async event loop started
+2026-04-15 10:47:36 - __main__ - INFO - Scanner loop started
+2026-04-15 10:47:36 - back_end.slot_monitor.camera.top_camera - INFO - [TopCamera] Started on camera index 2
+2026-04-15 10:47:36 - back_end.slot_monitor.camera.rolling_buffer - INFO - [TopRollingBuffer] Started (5 fps idle)
+2026-04-15 10:47:36 - __main__ - INFO - Top camera started (eager)
+2026-04-15 10:47:36 - back_end.slot_monitor.ops_handler - INFO - DVW WebSocket handlers registered
+2026-04-15 10:47:36 - back_end.slot_monitor.services.operation_context - INFO - Operation cleanup thread started
+2026-04-15 10:47:36 - __main__ - INFO - DVW system ready
+2026-04-15 10:47:36 - __main__ - INFO - ROI calibration: 4 lids from DB
+2026-04-15 10:47:36 - back_end.slot_monitor.tools.roi_calibration - INFO - [ROI Calibration] Capturing frame from camera 1…
+2026-04-15 10:47:38 - back_end.slot_monitor.tools.roi_calibration - INFO - [ROI Calibration] Editing BOTTOM CAMERA — Slot monitoring (cam 1) (640×480, 4 lids). Press X/Enter to confirm.
+2026-04-15 10:47:42 - back_end.slot_monitor.tools.roi_calibration - INFO - [ROI Calibration] Saved 4 ROIs to C:\Users\enpei\PycharmProjects\PhoneBox\back_end\slot_monitor\tools\rois_bottom.json
+2026-04-15 10:47:42 - back_end.slot_monitor.tools.roi_calibration - INFO - [ROI Calibration] Capturing frame from camera 2…
+2026-04-15 10:47:43 - back_end.slot_monitor.tools.roi_calibration - INFO - [ROI Calibration] Editing TOP-DOWN CAMERA — Admin / evidence (cam 2) (640×480, 4 lids). Press X/Enter to confirm.
+2026-04-15 10:47:44 - back_end.slot_monitor.camera.top_camera - WARNING - [TopCamera] Frame read failed
+2026-04-15 10:47:44 - back_end.slot_monitor.tools.roi_calibration - INFO - [ROI Calibration] Saved 4 ROIs to C:\Users\enpei\PycharmProjects\PhoneBox\back_end\slot_monitor\tools\rois_top.json
+2026-04-15 10:47:44 - back_end.slot_monitor.tools.roi_calibration - INFO - [ROI Calibration] Complete.
+2026-04-15 10:47:44 - back_end.slot_monitor.headless_slot_monitor - INFO - Slot monitor thread started
+2026-04-15 10:47:44 - __main__ - INFO - Slot monitor started
+2026-04-15 10:47:44 - back_end.slot_monitor.slot_operations - INFO - Monitor attached to SlotOperations
+2026-04-15 10:47:44 - back_end.server.app - INFO - Monitor connected to SlotOperations
+2026-04-15 10:47:44 - __main__ - INFO - Waiting for slot monitor setup to complete...
+2026-04-15 10:47:44 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:47:44 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR SETUP
+2026-04-15 10:47:44 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:47:44 - back_end.slot_monitor.headless_slot_monitor - INFO - Connecting to database...
+2026-04-15 10:47:45 - back_end.slot_monitor.db_interface - INFO - AsyncPG pool created: 5-20 connections to localhost:5432/PhoneBoxDB
+2026-04-15 10:47:45 - back_end.slot_monitor.headless_slot_monitor - INFO - Database ready (pool: 5-20)
+2026-04-15 10:47:45 - back_end.slot_monitor.headless_slot_monitor - INFO - Setting up camera...
+2026-04-15 10:47:45 - back_end.slot_monitor.camera.camera_async - INFO - Event loop attached to AsyncFrameBuffer
+2026-04-15 10:47:45 - back_end.slot_monitor.camera.camera_async - INFO - Waiting for first frame...
+2026-04-15 10:47:45 - back_end.slot_monitor.camera.camera_async - INFO - Camera 1 opened: 1280x720 @ 29fps
+2026-04-15 10:47:45 - back_end.slot_monitor.camera.camera_async - INFO - Async camera 1 started (1280x720 @ 30fps)
+2026-04-15 10:47:45 - back_end.slot_monitor.camera.camera_async - INFO - AsyncCameraCapture initialized (cam 1, 1280x720)
+2026-04-15 10:47:45 - back_end.slot_monitor.headless_slot_monitor - INFO - Auto grid: 2x2 for 4 slots
+2026-04-15 10:47:45 - back_end.slot_monitor.slots - INFO - [Slots] Loaded 4 ROIs from C:\Users\enpei\PycharmProjects\PhoneBox\back_end\slot_monitor\tools\rois_bottom.json
+2026-04-15 10:47:45 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera ready — 4 ROIs generated
+2026-04-15 10:47:45 - back_end.slot_monitor.headless_slot_monitor - INFO - Checking baselines...
+2026-04-15 10:47:45 - back_end.slot_monitor.db_interface - INFO - Fetched 4 baselines from DB (async)
+2026-04-15 10:47:45 - back_end.slot_monitor.headless_slot_monitor - WARNING -   Slot 0: MISMATCH (dist=0.3993)
+2026-04-15 10:47:45 - back_end.slot_monitor.headless_slot_monitor - INFO -   Slot 1: OK (dist=0.0000)
+2026-04-15 10:47:45 - back_end.slot_monitor.headless_slot_monitor - INFO -   Slot 2: OK (dist=0.0000)
+2026-04-15 10:47:45 - back_end.slot_monitor.headless_slot_monitor - INFO -   Slot 3: OK (dist=0.0000)
+2026-04-15 10:47:45 - back_end.slot_monitor.headless_slot_monitor - CRITICAL - 1 SLOT(S) WITH MISMATCHES — MANUAL INTERVENTION REQUIRED
+2026-04-15 10:47:45 - back_end.slot_monitor.headless_slot_monitor - INFO - Initializing slot states from database...
+2026-04-15 10:47:45 - back_end.slot_monitor.db_interface - INFO - Fetched 2 occupied slots from DB (async)
+2026-04-15 10:47:45 - back_end.slot_monitor.db_interface - INFO - Fetched 4 baselines from DB (async)
+2026-04-15 10:47:45 - back_end.slot_monitor.headless_slot_monitor - INFO - 2 occupied slots, 4 baselines
+2026-04-15 10:47:45 - back_end.slot_monitor.headless_slot_monitor - INFO -   Slot 0: OCCUPIED (PID: 4877f4c1-0fd5-49b0-ac1a-2db9eafa8249)
+2026-04-15 10:47:45 - back_end.slot_monitor.headless_slot_monitor - INFO -   Slot 1: OCCUPIED (PID: c76d7cd4-ab52-4a56-9c66-0c4fb777d087)
+2026-04-15 10:47:45 - back_end.slot_monitor.headless_slot_monitor - INFO -   Slot 2: EMPTY
+2026-04-15 10:47:45 - back_end.slot_monitor.headless_slot_monitor - INFO -   Slot 3: EMPTY
+2026-04-15 10:47:45 - back_end.slot_monitor.headless_slot_monitor - INFO - Initialized 4 slots
+2026-04-15 10:47:45 - back_end.slot_monitor.headless_slot_monitor - INFO - Creating 4 workers...
+2026-04-15 10:47:45 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 0 initialized: slots=[0]
+2026-04-15 10:47:45 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 1 initialized: slots=[1]
+2026-04-15 10:47:45 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 2 initialized: slots=[2]
+2026-04-15 10:47:45 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 3 initialized: slots=[3]
+2026-04-15 10:47:45 - back_end.slot_monitor.worker_async - INFO - WorkerPool created: 4 workers, 4 slots
+2026-04-15 10:47:45 - back_end.slot_monitor.headless_slot_monitor - INFO - 4 workers ready
+2026-04-15 10:47:45 - back_end.slot_monitor.services.operation_context - INFO - WorkerPool attached to OperationContext
+2026-04-15 10:47:45 - back_end.slot_monitor.headless_slot_monitor - INFO - Setup complete
+2026-04-15 10:47:45 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:47:45 - back_end.slot_monitor.admin.admin_ops_handler - INFO - Admin resolution WebSocket handlers registered
+2026-04-15 10:47:45 - back_end.slot_monitor.headless_slot_monitor - INFO - MONITORING ACTIVE
+2026-04-15 10:47:45 - __main__ - INFO - Admin resolution system ready
+2026-04-15 10:47:45 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:47:45 - __main__ - INFO - Ready — press Ctrl+C to stop
+2026-04-15 10:47:45 - back_end.slot_monitor.worker_async - INFO - Starting worker pool...
+2026-04-15 10:47:45 - werkzeug - WARNING - Werkzeug appears to be used in a production deployment. Consider switching to a production web server instead.
+2026-04-15 10:47:45 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 0 started
+2026-04-15 10:47:45 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 1 started
+2026-04-15 10:47:45 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 2 started
+2026-04-15 10:47:45 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 3 started
+2026-04-15 10:47:45 - back_end.slot_monitor.worker_async - INFO - Worker 0 entering event-driven loop
+2026-04-15 10:47:45 - back_end.slot_monitor.worker_async - INFO - Worker 1 entering event-driven loop
+2026-04-15 10:47:45 - back_end.slot_monitor.worker_async - INFO - Worker 2 entering event-driven loop
+2026-04-15 10:47:45 - back_end.slot_monitor.worker_async - INFO - Worker 3 entering event-driven loop
+2026-04-15 10:47:45 - back_end.slot_monitor.worker_async - INFO - 4 workers started
+2026-04-15 10:47:45 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://172.19.109.119:5000
+2026-04-15 10:47:45 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-04-15 10:47:48 - socketio.server - INFO - received event "get_status" from oTHCkOcqhsvN6211AAAB [/]
+2026-04-15 10:47:48 - socketio.server - INFO - emitting event "scan_status" to oTHCkOcqhsvN6211AAAB [/]
+2026-04-15 10:47:48 - socketio.server - INFO - received event "get_alarm_status" from oTHCkOcqhsvN6211AAAB [/]
+2026-04-15 10:47:48 - socketio.server - INFO - emitting event "alarm_status" to oTHCkOcqhsvN6211AAAB [/]
+2026-04-15 10:47:48 - back_end.slot_monitor.alarm_controller - WARNING - Physical alarm started
+2026-04-15 10:47:48 - back_end.slot_monitor.alarm_controller - WARNING - ALARM ACTIVATED
+2026-04-15 10:47:48 - socketio.server - INFO - emitting event "alarm_triggered" to all [/]
+2026-04-15 10:47:48 - back_end.slot_monitor.alarm_controller - WARNING - Mismatch added: PID=4877f4c1-0fd5-49b0-ac1a-2db9eafa8249, LID=0
+2026-04-15 10:47:48 - socketio.server - INFO - emitting event "alarm_updated" to all [/]
+2026-04-15 10:47:48 - back_end.slot_monitor.admin.background_encoder - INFO - [BgEncoder] Background video encoder started
+2026-04-15 10:47:48 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [FaceRollingBuffer] Alarm clip queued: 4877f4c10fd549b0_lid0_1776246468_face.mp4
+2026-04-15 10:47:48 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [TopRollingBuffer] Alarm clip queued: 4877f4c10fd549b0_lid0_1776246468_top.mp4
+2026-04-15 10:47:48 - back_end.slot_monitor.worker_async - CRITICAL - Worker 0: ALARM! LID=0 PID=4877f4c1-0fd5-49b0-ac1a-2db9eafa8249 dist=0.3993
+2026-04-15 10:47:48 - socketio.server - INFO - received event "get_alarm_status" from oTHCkOcqhsvN6211AAAB [/]
+2026-04-15 10:47:48 - socketio.server - INFO - emitting event "alarm_status" to oTHCkOcqhsvN6211AAAB [/]
+2026-04-15 10:47:49 - werkzeug - INFO - 127.0.0.1 - - [15/Apr/2026 10:47:49] "POST /webrtc/cancel/admin HTTP/1.1" 200 -
+2026-04-15 10:47:49 - werkzeug - INFO - 127.0.0.1 - - [15/Apr/2026 10:47:49] "OPTIONS /webrtc/offer/admin HTTP/1.1" 200 -
+2026-04-15 10:47:50 - aioice.ice - INFO - Connection(0) Could not bind to 169.254.213.224 - [WinError 10049] The requested address is not valid in its context
+2026-04-15 10:47:50 - aioice.ice - INFO - Connection(0) Could not bind to 169.254.207.190 - [WinError 10049] The requested address is not valid in its context
+2026-04-15 10:47:50 - aioice.ice - INFO - Connection(0) Could not bind to 169.254.21.235 - [WinError 10049] The requested address is not valid in its context
+2026-04-15 10:47:50 - aioice.ice - INFO - Connection(0) Could not bind to 192.168.137.1 - [WinError 10049] The requested address is not valid in its context
+2026-04-15 10:47:53 - werkzeug - INFO - 127.0.0.1 - - [15/Apr/2026 10:47:53] "OPTIONS /webrtc/offer/main HTTP/1.1" 200 -
+2026-04-15 10:47:54 - aioice.ice - INFO - Connection(1) Could not bind to 169.254.213.224 - [WinError 10049] The requested address is not valid in its context
+2026-04-15 10:47:54 - aioice.ice - INFO - Connection(1) Could not bind to 169.254.207.190 - [WinError 10049] The requested address is not valid in its context
+2026-04-15 10:47:54 - aioice.ice - INFO - Connection(1) Could not bind to 169.254.21.235 - [WinError 10049] The requested address is not valid in its context
+2026-04-15 10:47:54 - aioice.ice - INFO - Connection(1) Could not bind to 192.168.137.1 - [WinError 10049] The requested address is not valid in its context
+2026-04-15 10:47:55 - werkzeug - INFO - 127.0.0.1 - - [15/Apr/2026 10:47:55] "POST /webrtc/offer/admin HTTP/1.1" 200 -
+2026-04-15 10:47:55 - aioice.ice - INFO - Connection(0) Discovered peer reflexive candidate Candidate(en2KEZkOiH 1 udp 1845501695 192.168.56.1 60693 typ prflx)
+2026-04-15 10:47:55 - aioice.ice - INFO - Connection(0) Check CandidatePair(('192.168.56.1', 56001) -> ('192.168.56.1', 60693)) State.WAITING -> State.IN_PROGRESS
+2026-04-15 10:47:55 - aioice.ice - INFO - Connection(0) Check CandidatePair(('192.168.56.1', 56001) -> ('192.168.56.1', 60693)) State.IN_PROGRESS -> State.SUCCEEDED
+2026-04-15 10:47:55 - aioice.ice - INFO - Connection(0) ICE completed
+2026-04-15 10:47:55 - aioice.ice - INFO - Connection(0) Discovered peer reflexive candidate Candidate(mHhlEESldB 1 udp 1845501695 172.19.109.119 60693 typ prflx)
+2026-04-15 10:47:55 - aioice.ice - INFO - Connection(0) Check CandidatePair(('172.19.109.119', 56002) -> ('172.19.109.119', 60693)) State.WAITING -> State.IN_PROGRESS
+2026-04-15 10:47:55 - aioice.ice - INFO - Connection(0) Check CandidatePair(('172.19.109.119', 56002) -> ('172.19.109.119', 60693)) State.IN_PROGRESS -> State.SUCCEEDED
+2026-04-15 10:47:59 - werkzeug - INFO - 127.0.0.1 - - [15/Apr/2026 10:47:59] "POST /webrtc/offer/main HTTP/1.1" 200 -
+2026-04-15 10:47:59 - aioice.ice - INFO - Connection(1) Discovered peer reflexive candidate Candidate(3PsUl8pOcU 1 udp 1845501695 192.168.56.1 51693 typ prflx)
+2026-04-15 10:47:59 - aioice.ice - INFO - Connection(1) Check CandidatePair(('192.168.56.1', 56964) -> ('192.168.56.1', 51693)) State.WAITING -> State.IN_PROGRESS
+2026-04-15 10:47:59 - aioice.ice - INFO - Connection(1) Check CandidatePair(('192.168.56.1', 56964) -> ('192.168.56.1', 51693)) State.IN_PROGRESS -> State.SUCCEEDED
+2026-04-15 10:47:59 - aioice.ice - INFO - Connection(1) ICE completed
+2026-04-15 10:47:59 - aioice.ice - INFO - Connection(1) Discovered peer reflexive candidate Candidate(Uir3zbjdta 1 udp 1845501695 172.19.109.119 51693 typ prflx)
+2026-04-15 10:47:59 - aioice.ice - INFO - Connection(1) Check CandidatePair(('172.19.109.119', 56965) -> ('172.19.109.119', 51693)) State.WAITING -> State.IN_PROGRESS
+2026-04-15 10:47:59 - aioice.ice - INFO - Connection(1) Check CandidatePair(('172.19.109.119', 56965) -> ('172.19.109.119', 51693)) State.IN_PROGRESS -> State.SUCCEEDED
+2026-04-15 10:48:15 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:48:15 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-15 10:48:15 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:48:15 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 874 frames, 4 subscribers
+2026-04-15 10:48:15 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 3480 frames, avg_dist=0.0998
+2026-04-15 10:48:15 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 1, Errors: 0
+2026-04-15 10:48:15 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 1 mismatches
+2026-04-15 10:48:20 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=1000 avg_dist=0.0000 avg_time=1.30ms alarms=0 paused=0 errors=0
+2026-04-15 10:48:20 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=1000 avg_dist=0.0000 avg_time=0.79ms alarms=0 paused=0 errors=0
+2026-04-15 10:48:20 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=1000 avg_dist=0.0000 avg_time=0.64ms alarms=0 paused=0 errors=0
+2026-04-15 10:48:20 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=1000 avg_dist=0.3993 avg_time=0.83ms alarms=1 paused=0 errors=0
+2026-04-15 10:48:45 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:48:45 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-15 10:48:45 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:48:45 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 1689 frames, 4 subscribers
+2026-04-15 10:48:45 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 6740 frames, avg_dist=0.0998
+2026-04-15 10:48:45 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 1, Errors: 0
+2026-04-15 10:48:45 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 1 mismatches
+2026-04-15 10:48:56 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=2000 avg_dist=0.0000 avg_time=1.57ms alarms=0 paused=0 errors=0
+2026-04-15 10:48:56 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=2000 avg_dist=0.0000 avg_time=0.90ms alarms=0 paused=0 errors=0
+2026-04-15 10:48:56 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=2000 avg_dist=0.0000 avg_time=0.72ms alarms=0 paused=0 errors=0
+2026-04-15 10:48:56 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=2000 avg_dist=0.3993 avg_time=0.89ms alarms=1 paused=0 errors=0
+2026-04-15 10:49:03 - __main__ - INFO - ============================================================
+2026-04-15 10:49:03 - __main__ - INFO - Signal 2 received — shutting down
+2026-04-15 10:49:03 - __main__ - INFO - ============================================================
+2026-04-15 10:49:03 - back_end.server.webrtc_handler - INFO - Shutting down WebRTC handler...
+2026-04-15 10:49:03 - back_end.server.webrtc_handler - INFO - WebRTC handler shutdown complete
+2026-04-15 10:49:03 - back_end.slot_monitor.camera.top_camera - INFO - [TopCamera] Stopped
+2026-04-15 10:49:03 - back_end.slot_monitor.headless_slot_monitor - INFO - Stop event received — shutting down slot monitor
+2026-04-15 10:49:03 - back_end.slot_monitor.headless_slot_monitor - INFO - Shutting down slot monitor...
+2026-04-15 10:49:03 - back_end.slot_monitor.worker_async - INFO - Stopping worker pool...
+2026-04-15 10:49:03 - back_end.slot_monitor.worker_async - INFO - Worker 0 cancelled
+2026-04-15 10:49:03 - back_end.slot_monitor.camera.rolling_buffer - INFO - [TopRollingBuffer] Stopped
+2026-04-15 10:49:03 - back_end.slot_monitor.worker_async - INFO - Worker 1 cancelled
+2026-04-15 10:49:03 - back_end.slot_monitor.worker_async - INFO - Worker 2 cancelled
+2026-04-15 10:49:03 - back_end.slot_monitor.worker_async - INFO - Worker 3 cancelled
+2026-04-15 10:49:03 - back_end.slot_monitor.services.operation_context - INFO - Operation cleanup thread stopped
+2026-04-15 10:49:03 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 0 stopped
+2026-04-15 10:49:03 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 1 stopped
+2026-04-15 10:49:03 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 2 stopped
+2026-04-15 10:49:03 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 3 stopped
+2026-04-15 10:49:03 - back_end.slot_monitor.worker_async - INFO - 4 workers stopped
+2026-04-15 10:49:03 - back_end.slot_monitor.camera.camera_async - INFO - Async camera capture stopped
+2026-04-15 10:49:03 - back_end.slot_monitor.camera.camera_async - INFO - Async camera released
+2026-04-15 10:49:03 - back_end.slot_monitor.db_interface - INFO - AsyncPG pool closed
+2026-04-15 10:49:03 - back_end.slot_monitor.headless_slot_monitor - INFO - Slot monitor shutdown complete
+2026-04-15 10:49:03 - __main__ - INFO - All modules stopped — exiting
+2026-04-15 10:49:19 - tensorflow - WARNING - From C:\Users\enpei\PycharmProjects\PhoneBox\.venv\Lib\site-packages\tf_keras\src\losses.py:2976: The name tf.losses.sparse_softmax_cross_entropy is deprecated. Please use tf.compat.v1.losses.sparse_softmax_cross_entropy instead.
+
+2026-04-15 10:49:20 - back_end.server.webrtc_handler - INFO - Hardware acceleration: NVIDIA (h264_nvenc)
+2026-04-15 10:49:20 - back_end.server.app - INFO - API blueprints registered
+2026-04-15 10:49:20 - back_end.server.app - INFO - SocketIO initialized
+2026-04-15 10:49:20 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:49:20 - back_end.slot_monitor.headless_slot_monitor - INFO - HEADLESS SLOT MONITOR (PRODUCTION MODE)
+2026-04-15 10:49:20 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:49:20 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 1 (1280x720 @ 30fps)
+2026-04-15 10:49:20 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 4 | Thresholds: mismatch=0.15, recalc=0.05
+2026-04-15 10:49:20 - back_end.slot_monitor.slot_operations - INFO - SlotOperations initialized
+2026-04-15 10:49:20 - back_end.server.app - INFO - Slot monitor created (not started yet)
+2026-04-15 10:49:20 - back_end.server.app - INFO - Flask application ready
+2026-04-15 10:49:20 - __main__ - INFO - ============================================================
+2026-04-15 10:49:20 - __main__ - INFO - PHONE BOX SERVER — STARTING
+2026-04-15 10:49:20 - __main__ - INFO - ============================================================
+2026-04-15 10:49:20 - __main__ - INFO - Scan worker started
+2026-04-15 10:49:20 - back_end.server.webrtc_handler - INFO - WebRTC async event loop started
+2026-04-15 10:49:20 - __main__ - INFO - Scanner loop started
+2026-04-15 10:49:20 - back_end.slot_monitor.camera.top_camera - INFO - [TopCamera] Started on camera index 2
+2026-04-15 10:49:20 - back_end.slot_monitor.camera.rolling_buffer - INFO - [TopRollingBuffer] Started (5 fps idle)
+2026-04-15 10:49:20 - __main__ - INFO - Top camera started (eager)
+2026-04-15 10:49:20 - back_end.slot_monitor.ops_handler - INFO - DVW WebSocket handlers registered
+2026-04-15 10:49:20 - back_end.slot_monitor.services.operation_context - INFO - Operation cleanup thread started
+2026-04-15 10:49:20 - __main__ - INFO - DVW system ready
+2026-04-15 10:49:20 - __main__ - INFO - ROI calibration: 4 lids from DB
+2026-04-15 10:49:20 - back_end.slot_monitor.tools.roi_calibration - INFO - [ROI Calibration] Capturing frame from camera 1…
+2026-04-15 10:49:21 - back_end.slot_monitor.tools.roi_calibration - INFO - [ROI Calibration] Editing BOTTOM CAMERA — Slot monitoring (cam 1) (640×480, 4 lids). Press X/Enter to confirm.
+2026-04-15 10:49:24 - back_end.slot_monitor.tools.roi_calibration - INFO - [ROI Calibration] Saved 4 ROIs to C:\Users\enpei\PycharmProjects\PhoneBox\back_end\slot_monitor\tools\rois_bottom.json
+2026-04-15 10:49:24 - back_end.slot_monitor.tools.roi_calibration - INFO - [ROI Calibration] Capturing frame from camera 2…
+2026-04-15 10:49:25 - back_end.slot_monitor.tools.roi_calibration - INFO - [ROI Calibration] Editing TOP-DOWN CAMERA — Admin / evidence (cam 2) (640×480, 4 lids). Press X/Enter to confirm.
+2026-04-15 10:49:26 - back_end.slot_monitor.tools.roi_calibration - INFO - [ROI Calibration] Saved 4 ROIs to C:\Users\enpei\PycharmProjects\PhoneBox\back_end\slot_monitor\tools\rois_top.json
+2026-04-15 10:49:26 - back_end.slot_monitor.tools.roi_calibration - INFO - [ROI Calibration] Complete.
+2026-04-15 10:49:26 - back_end.slot_monitor.headless_slot_monitor - INFO - Slot monitor thread started
+2026-04-15 10:49:26 - __main__ - INFO - Slot monitor started
+2026-04-15 10:49:26 - back_end.slot_monitor.slot_operations - INFO - Monitor attached to SlotOperations
+2026-04-15 10:49:26 - back_end.server.app - INFO - Monitor connected to SlotOperations
+2026-04-15 10:49:26 - __main__ - INFO - Waiting for slot monitor setup to complete...
+2026-04-15 10:49:26 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:49:26 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR SETUP
+2026-04-15 10:49:26 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:49:26 - back_end.slot_monitor.headless_slot_monitor - INFO - Connecting to database...
+2026-04-15 10:49:26 - back_end.slot_monitor.camera.top_camera - WARNING - [TopCamera] Frame read failed
+2026-04-15 10:49:26 - back_end.slot_monitor.db_interface - INFO - AsyncPG pool created: 5-20 connections to localhost:5432/PhoneBoxDB
+2026-04-15 10:49:26 - back_end.slot_monitor.headless_slot_monitor - INFO - Database ready (pool: 5-20)
+2026-04-15 10:49:26 - back_end.slot_monitor.headless_slot_monitor - INFO - Setting up camera...
+2026-04-15 10:49:26 - back_end.slot_monitor.camera.camera_async - INFO - Event loop attached to AsyncFrameBuffer
+2026-04-15 10:49:26 - back_end.slot_monitor.camera.camera_async - INFO - Waiting for first frame...
+2026-04-15 10:49:26 - back_end.slot_monitor.camera.camera_async - INFO - Camera 1 opened: 1280x720 @ 29fps
+2026-04-15 10:49:27 - back_end.slot_monitor.camera.camera_async - INFO - Async camera 1 started (1280x720 @ 30fps)
+2026-04-15 10:49:27 - back_end.slot_monitor.camera.camera_async - INFO - AsyncCameraCapture initialized (cam 1, 1280x720)
+2026-04-15 10:49:27 - back_end.slot_monitor.headless_slot_monitor - INFO - Auto grid: 2x2 for 4 slots
+2026-04-15 10:49:27 - back_end.slot_monitor.slots - INFO - [Slots] Loaded 4 ROIs from C:\Users\enpei\PycharmProjects\PhoneBox\back_end\slot_monitor\tools\rois_bottom.json
+2026-04-15 10:49:27 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera ready — 4 ROIs generated
+2026-04-15 10:49:27 - back_end.slot_monitor.headless_slot_monitor - INFO - Checking baselines...
+2026-04-15 10:49:27 - back_end.slot_monitor.db_interface - INFO - Fetched 4 baselines from DB (async)
+2026-04-15 10:49:27 - back_end.slot_monitor.headless_slot_monitor - WARNING -   Slot 0: MISMATCH (dist=0.3993)
+2026-04-15 10:49:27 - back_end.slot_monitor.headless_slot_monitor - INFO -   Slot 1: OK (dist=0.0000)
+2026-04-15 10:49:27 - back_end.slot_monitor.headless_slot_monitor - INFO -   Slot 2: OK (dist=0.0000)
+2026-04-15 10:49:27 - back_end.slot_monitor.headless_slot_monitor - INFO -   Slot 3: OK (dist=0.0000)
+2026-04-15 10:49:27 - back_end.slot_monitor.headless_slot_monitor - CRITICAL - 1 SLOT(S) WITH MISMATCHES — MANUAL INTERVENTION REQUIRED
+2026-04-15 10:49:27 - back_end.slot_monitor.headless_slot_monitor - INFO - Initializing slot states from database...
+2026-04-15 10:49:27 - back_end.slot_monitor.db_interface - INFO - Fetched 2 occupied slots from DB (async)
+2026-04-15 10:49:27 - back_end.slot_monitor.db_interface - INFO - Fetched 4 baselines from DB (async)
+2026-04-15 10:49:27 - back_end.slot_monitor.headless_slot_monitor - INFO - 2 occupied slots, 4 baselines
+2026-04-15 10:49:27 - back_end.slot_monitor.headless_slot_monitor - INFO -   Slot 0: OCCUPIED (PID: 4877f4c1-0fd5-49b0-ac1a-2db9eafa8249)
+2026-04-15 10:49:27 - back_end.slot_monitor.headless_slot_monitor - INFO -   Slot 1: OCCUPIED (PID: c76d7cd4-ab52-4a56-9c66-0c4fb777d087)
+2026-04-15 10:49:27 - back_end.slot_monitor.headless_slot_monitor - INFO -   Slot 2: EMPTY
+2026-04-15 10:49:27 - back_end.slot_monitor.headless_slot_monitor - INFO -   Slot 3: EMPTY
+2026-04-15 10:49:27 - back_end.slot_monitor.headless_slot_monitor - INFO - Initialized 4 slots
+2026-04-15 10:49:27 - back_end.slot_monitor.headless_slot_monitor - INFO - Creating 4 workers...
+2026-04-15 10:49:27 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 0 initialized: slots=[0]
+2026-04-15 10:49:27 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 1 initialized: slots=[1]
+2026-04-15 10:49:27 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 2 initialized: slots=[2]
+2026-04-15 10:49:27 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 3 initialized: slots=[3]
+2026-04-15 10:49:27 - back_end.slot_monitor.worker_async - INFO - WorkerPool created: 4 workers, 4 slots
+2026-04-15 10:49:27 - back_end.slot_monitor.headless_slot_monitor - INFO - 4 workers ready
+2026-04-15 10:49:27 - back_end.slot_monitor.services.operation_context - INFO - WorkerPool attached to OperationContext
+2026-04-15 10:49:27 - back_end.slot_monitor.headless_slot_monitor - INFO - Setup complete
+2026-04-15 10:49:27 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:49:27 - back_end.slot_monitor.admin.admin_ops_handler - INFO - Admin resolution WebSocket handlers registered
+2026-04-15 10:49:27 - back_end.slot_monitor.headless_slot_monitor - INFO - MONITORING ACTIVE
+2026-04-15 10:49:27 - __main__ - INFO - Admin resolution system ready
+2026-04-15 10:49:27 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:49:27 - __main__ - INFO - Ready — press Ctrl+C to stop
+2026-04-15 10:49:27 - back_end.slot_monitor.worker_async - INFO - Starting worker pool...
+2026-04-15 10:49:27 - werkzeug - WARNING - Werkzeug appears to be used in a production deployment. Consider switching to a production web server instead.
+2026-04-15 10:49:27 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 0 started
+2026-04-15 10:49:27 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 1 started
+2026-04-15 10:49:27 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 2 started
+2026-04-15 10:49:27 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 3 started
+2026-04-15 10:49:27 - back_end.slot_monitor.worker_async - INFO - Worker 0 entering event-driven loop
+2026-04-15 10:49:27 - back_end.slot_monitor.worker_async - INFO - Worker 1 entering event-driven loop
+2026-04-15 10:49:27 - back_end.slot_monitor.worker_async - INFO - Worker 2 entering event-driven loop
+2026-04-15 10:49:27 - back_end.slot_monitor.worker_async - INFO - Worker 3 entering event-driven loop
+2026-04-15 10:49:27 - back_end.slot_monitor.worker_async - INFO - 4 workers started
+2026-04-15 10:49:27 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://172.19.109.119:5000
+2026-04-15 10:49:27 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-04-15 10:49:27 - werkzeug - INFO - 127.0.0.1 - - [15/Apr/2026 10:49:27] "OPTIONS /webrtc/offer/main HTTP/1.1" 200 -
+2026-04-15 10:49:27 - socketio.server - INFO - received event "get_status" from zk793H1090oeQgaPAAAB [/]
+2026-04-15 10:49:27 - socketio.server - INFO - emitting event "scan_status" to zk793H1090oeQgaPAAAB [/]
+2026-04-15 10:49:27 - socketio.server - INFO - received event "get_alarm_status" from zk793H1090oeQgaPAAAB [/]
+2026-04-15 10:49:27 - socketio.server - INFO - emitting event "alarm_status" to zk793H1090oeQgaPAAAB [/]
+2026-04-15 10:49:27 - aioice.ice - INFO - Connection(0) Could not bind to 169.254.213.224 - [WinError 10049] The requested address is not valid in its context
+2026-04-15 10:49:27 - aioice.ice - INFO - Connection(0) Could not bind to 169.254.207.190 - [WinError 10049] The requested address is not valid in its context
+2026-04-15 10:49:27 - aioice.ice - INFO - Connection(0) Could not bind to 169.254.21.235 - [WinError 10049] The requested address is not valid in its context
+2026-04-15 10:49:27 - aioice.ice - INFO - Connection(0) Could not bind to 192.168.137.1 - [WinError 10049] The requested address is not valid in its context
+2026-04-15 10:49:30 - back_end.slot_monitor.alarm_controller - WARNING - Physical alarm started
+2026-04-15 10:49:30 - back_end.slot_monitor.alarm_controller - WARNING - ALARM ACTIVATED
+2026-04-15 10:49:30 - socketio.server - INFO - emitting event "alarm_triggered" to all [/]
+2026-04-15 10:49:30 - back_end.slot_monitor.alarm_controller - WARNING - Mismatch added: PID=4877f4c1-0fd5-49b0-ac1a-2db9eafa8249, LID=0
+2026-04-15 10:49:30 - socketio.server - INFO - emitting event "alarm_updated" to all [/]
+2026-04-15 10:49:30 - back_end.slot_monitor.admin.background_encoder - INFO - [BgEncoder] Background video encoder started
+2026-04-15 10:49:30 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [FaceRollingBuffer] Alarm clip queued: 4877f4c10fd549b0_lid0_1776246570_face.mp4
+2026-04-15 10:49:30 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [TopRollingBuffer] Alarm clip queued: 4877f4c10fd549b0_lid0_1776246570_top.mp4
+2026-04-15 10:49:30 - back_end.slot_monitor.worker_async - CRITICAL - Worker 0: ALARM! LID=0 PID=4877f4c1-0fd5-49b0-ac1a-2db9eafa8249 dist=0.3993
+2026-04-15 10:49:30 - socketio.server - INFO - received event "get_alarm_status" from zk793H1090oeQgaPAAAB [/]
+2026-04-15 10:49:30 - socketio.server - INFO - emitting event "alarm_status" to zk793H1090oeQgaPAAAB [/]
+2026-04-15 10:49:30 - werkzeug - INFO - 127.0.0.1 - - [15/Apr/2026 10:49:30] "POST /webrtc/cancel/admin HTTP/1.1" 200 -
+2026-04-15 10:49:31 - werkzeug - INFO - 127.0.0.1 - - [15/Apr/2026 10:49:31] "OPTIONS /webrtc/offer/admin HTTP/1.1" 200 -
+2026-04-15 10:49:31 - aioice.ice - INFO - Connection(1) Could not bind to 169.254.213.224 - [WinError 10049] The requested address is not valid in its context
+2026-04-15 10:49:31 - aioice.ice - INFO - Connection(1) Could not bind to 169.254.207.190 - [WinError 10049] The requested address is not valid in its context
+2026-04-15 10:49:31 - aioice.ice - INFO - Connection(1) Could not bind to 169.254.21.235 - [WinError 10049] The requested address is not valid in its context
+2026-04-15 10:49:31 - aioice.ice - INFO - Connection(1) Could not bind to 192.168.137.1 - [WinError 10049] The requested address is not valid in its context
+2026-04-15 10:49:32 - back_end.slot_monitor.admin.background_encoder - INFO - [BgEncoder] Encoded 158 frames 4877f4c10fd549b0_lid0_1776246570_face.mp4  (5.3s @ 30fps)
+2026-04-15 10:49:32 - back_end.slot_monitor.admin.background_encoder - INFO - [BgEncoder] Encoded 38 frames 4877f4c10fd549b0_lid0_1776246570_top.mp4  (7.6s @ 5fps)
+2026-04-15 10:49:32 - werkzeug - INFO - 127.0.0.1 - - [15/Apr/2026 10:49:32] "POST /webrtc/offer/main HTTP/1.1" 200 -
+2026-04-15 10:49:32 - aioice.ice - INFO - Connection(0) Discovered peer reflexive candidate Candidate(wArMGuhMjF 1 udp 1845501695 192.168.56.1 56859 typ prflx)
+2026-04-15 10:49:32 - aioice.ice - INFO - Connection(0) Check CandidatePair(('192.168.56.1', 51016) -> ('192.168.56.1', 56859)) State.WAITING -> State.IN_PROGRESS
+2026-04-15 10:49:32 - aioice.ice - INFO - Connection(0) Check CandidatePair(('192.168.56.1', 51016) -> ('192.168.56.1', 56859)) State.IN_PROGRESS -> State.SUCCEEDED
+2026-04-15 10:49:32 - aioice.ice - INFO - Connection(0) ICE completed
+2026-04-15 10:49:32 - aioice.ice - INFO - Connection(0) Discovered peer reflexive candidate Candidate(BaLlj0gdkd 1 udp 1845501695 172.19.109.119 56859 typ prflx)
+2026-04-15 10:49:32 - aioice.ice - INFO - Connection(0) Check CandidatePair(('172.19.109.119', 51017) -> ('172.19.109.119', 56859)) State.WAITING -> State.IN_PROGRESS
+2026-04-15 10:49:32 - aioice.ice - INFO - Connection(0) Check CandidatePair(('172.19.109.119', 51017) -> ('172.19.109.119', 56859)) State.IN_PROGRESS -> State.SUCCEEDED
+2026-04-15 10:49:36 - werkzeug - INFO - 127.0.0.1 - - [15/Apr/2026 10:49:36] "POST /webrtc/offer/admin HTTP/1.1" 200 -
+2026-04-15 10:49:36 - aioice.ice - INFO - Connection(1) Discovered peer reflexive candidate Candidate(r1XpbPeeiv 1 udp 1845501695 192.168.56.1 63425 typ prflx)
+2026-04-15 10:49:36 - aioice.ice - INFO - Connection(1) Check CandidatePair(('192.168.56.1', 63980) -> ('192.168.56.1', 63425)) State.WAITING -> State.IN_PROGRESS
+2026-04-15 10:49:36 - aioice.ice - INFO - Connection(1) Check CandidatePair(('192.168.56.1', 63980) -> ('192.168.56.1', 63425)) State.IN_PROGRESS -> State.SUCCEEDED
+2026-04-15 10:49:36 - aioice.ice - INFO - Connection(1) ICE completed
+2026-04-15 10:49:36 - aioice.ice - INFO - Connection(1) Discovered peer reflexive candidate Candidate(x8NmhMpPov 1 udp 1845501695 172.19.109.119 63425 typ prflx)
+2026-04-15 10:49:36 - aioice.ice - INFO - Connection(1) Check CandidatePair(('172.19.109.119', 63981) -> ('172.19.109.119', 63425)) State.WAITING -> State.IN_PROGRESS
+2026-04-15 10:49:37 - aioice.ice - INFO - Connection(1) Check CandidatePair(('172.19.109.119', 63981) -> ('172.19.109.119', 63425)) State.IN_PROGRESS -> State.SUCCEEDED
+2026-04-15 10:49:57 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:49:57 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-15 10:49:57 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:49:57 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 833 frames, 4 subscribers
+2026-04-15 10:49:57 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 3312 frames, avg_dist=0.0998
+2026-04-15 10:49:57 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 1, Errors: 0
+2026-04-15 10:49:57 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 1 mismatches
+2026-04-15 10:50:03 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=1000 avg_dist=0.0000 avg_time=2.75ms alarms=0 paused=0 errors=0
+2026-04-15 10:50:03 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=1000 avg_dist=0.0000 avg_time=2.21ms alarms=0 paused=0 errors=0
+2026-04-15 10:50:03 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=1000 avg_dist=0.0000 avg_time=1.82ms alarms=0 paused=0 errors=0
+2026-04-15 10:50:03 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=1000 avg_dist=0.3993 avg_time=2.37ms alarms=1 paused=0 errors=0
+2026-04-15 10:50:04 - socketio.server - INFO - received event "alarm_acknowledge" from zk793H1090oeQgaPAAAB [/]
+2026-04-15 10:50:04 - back_end.slot_monitor.alarm_controller - INFO - Physical alarm stopped
+2026-04-15 10:50:04 - back_end.slot_monitor.alarm_controller - INFO - Alarm silenced — mismatches remain, resolution in progress
+2026-04-15 10:50:04 - socketio.server - INFO - emitting event "alarm_acknowledge_result" to zk793H1090oeQgaPAAAB [/]
+2026-04-15 10:50:04 - socketio.server - INFO - received event "admin_session_start" from zk793H1090oeQgaPAAAB [/]
+2026-04-15 10:50:04 - back_end.slot_monitor.admin.resolution_session - INFO - [ResolutionSession] 0203ee98 opened — 1 mismatches, phone_count=2
+2026-04-15 10:50:04 - back_end.slot_monitor.camera.rolling_buffer - INFO - [TopRollingBuffer] Active mode (20 fps)
+2026-04-15 10:50:04 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Session started: 0203ee98  dir=evidence\0203ee98
+2026-04-15 10:50:04 - back_end.slot_monitor.worker_async - INFO - Worker 0: slot 0 paused
+2026-04-15 10:50:04 - back_end.slot_monitor.phone_tracker - INFO - [Tracker] Loaded 4 top-cam ROIs from C:\Users\enpei\PycharmProjects\PhoneBox\back_end\slot_monitor\tools\rois_top.json
+2026-04-15 10:50:04 - back_end.slot_monitor.admin.admin_ops_handler - INFO - [StagingConfig] Loaded 2 staging ROIs from C:\Users\enpei\PycharmProjects\PhoneBox\back_end\slot_monitor\admin\staging_rois.json
+2026-04-15 10:50:04 - socketio.server - INFO - emitting event "admin_session_opened" to zk793H1090oeQgaPAAAB [/]
+2026-04-15 10:50:27 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:50:27 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-15 10:50:27 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:50:27 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 1670 frames, 4 subscribers
+2026-04-15 10:50:27 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 6664 frames, avg_dist=0.0624
+2026-04-15 10:50:27 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 1, Errors: 0
+2026-04-15 10:50:27 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 1 mismatches
+2026-04-15 10:50:38 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=2000 avg_dist=0.0000 avg_time=2.62ms alarms=0 paused=0 errors=0
+2026-04-15 10:50:38 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=2000 avg_dist=0.0000 avg_time=2.03ms alarms=0 paused=0 errors=0
+2026-04-15 10:50:38 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=2000 avg_dist=0.0000 avg_time=1.76ms alarms=0 paused=0 errors=0
+2026-04-15 10:50:38 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=2000 avg_dist=0.2080 avg_time=1.21ms alarms=1 paused=1 errors=0
+2026-04-15 10:50:57 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:50:57 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-15 10:50:57 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:50:57 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 2528 frames, 4 subscribers
+2026-04-15 10:50:57 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 10096 frames, avg_dist=0.0412
+2026-04-15 10:50:57 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 1, Errors: 0
+2026-04-15 10:50:57 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 1 mismatches
+2026-04-15 10:51:13 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=3000 avg_dist=0.0000 avg_time=2.59ms alarms=0 paused=0 errors=0
+2026-04-15 10:51:13 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=3000 avg_dist=0.0000 avg_time=2.02ms alarms=0 paused=0 errors=0
+2026-04-15 10:51:13 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=3000 avg_dist=0.0000 avg_time=1.69ms alarms=0 paused=0 errors=0
+2026-04-15 10:51:13 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=3000 avg_dist=0.1387 avg_time=0.81ms alarms=1 paused=1 errors=0
+2026-04-15 10:51:27 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:51:27 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-15 10:51:27 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:51:27 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 3385 frames, 4 subscribers
+2026-04-15 10:51:27 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 13524 frames, avg_dist=0.0308
+2026-04-15 10:51:27 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 1, Errors: 0
+2026-04-15 10:51:27 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 1 mismatches
+2026-04-15 10:51:48 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=4000 avg_dist=0.0000 avg_time=2.55ms alarms=0 paused=0 errors=0
+2026-04-15 10:51:48 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=4000 avg_dist=0.0000 avg_time=1.98ms alarms=0 paused=0 errors=0
+2026-04-15 10:51:48 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=4000 avg_dist=0.0000 avg_time=1.69ms alarms=0 paused=0 errors=0
+2026-04-15 10:51:48 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=4000 avg_dist=0.1040 avg_time=0.61ms alarms=1 paused=1 errors=0
+2026-04-15 10:51:57 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:51:57 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-15 10:51:57 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:51:57 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 4251 frames, 4 subscribers
+2026-04-15 10:51:57 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 16988 frames, avg_dist=0.0245
+2026-04-15 10:51:57 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 1, Errors: 0
+2026-04-15 10:51:57 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 1 mismatches
+2026-04-15 10:52:23 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=5000 avg_dist=0.0000 avg_time=2.61ms alarms=0 paused=0 errors=0
+2026-04-15 10:52:23 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=5000 avg_dist=0.0000 avg_time=2.00ms alarms=0 paused=0 errors=0
+2026-04-15 10:52:23 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=5000 avg_dist=0.0000 avg_time=1.68ms alarms=0 paused=0 errors=0
+2026-04-15 10:52:23 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=5000 avg_dist=0.0832 avg_time=0.49ms alarms=1 paused=1 errors=0
+2026-04-15 10:52:27 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:52:27 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-15 10:52:27 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:52:27 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 5106 frames, 4 subscribers
+2026-04-15 10:52:27 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 20408 frames, avg_dist=0.0204
+2026-04-15 10:52:27 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 1, Errors: 0
+2026-04-15 10:52:27 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 1 mismatches
+2026-04-15 10:52:45 - socketio.server - INFO - received event "admin_force_close_session" from zk793H1090oeQgaPAAAB [/]
+2026-04-15 10:52:45 - back_end.slot_monitor.worker_async - INFO - Worker 0: slot 0 restored (is_occupied=True)
+2026-04-15 10:52:45 - back_end.slot_monitor.admin.evidence_recorder - WARNING - [Evidence] Session dir renamed -> NotFullyResolved-20260415-095245-0203ee98
+2026-04-15 10:52:45 - back_end.slot_monitor.admin.evidence_recorder - WARNING - [Evidence] Session 0203ee98 evidence KEPT outcome='force_closed' warnings=1
+2026-04-15 10:52:45 - back_end.slot_monitor.camera.rolling_buffer - INFO - [TopRollingBuffer] Idle mode (5 fps)
+2026-04-15 10:52:45 - back_end.slot_monitor.admin.resolution_session - INFO - [AdminSessionContext] Session 0203ee98 closed
+2026-04-15 10:52:45 - back_end.slot_monitor.admin.admin_ops_handler - WARNING - [AdminSession] 0203ee98 — FORCE CLOSED (safe=True, remaining=['4877f4c1-0fd5-49b0-ac1a-2db9eafa8249'])
+2026-04-15 10:52:45 - back_end.slot_monitor.alarm_controller - WARNING - Physical alarm started
+2026-04-15 10:52:45 - back_end.slot_monitor.alarm_controller - WARNING - Alarm unsilenced — admin quit resolution without finishing
+2026-04-15 10:52:45 - socketio.server - INFO - emitting event "admin_session_closed" to zk793H1090oeQgaPAAAB [/]
+2026-04-15 10:52:47 - socketio.server - INFO - received event "alarm_unsilence" from zk793H1090oeQgaPAAAB [/]
+2026-04-15 10:52:48 - werkzeug - INFO - 127.0.0.1 - - [15/Apr/2026 10:52:48] "POST /webrtc/cancel/admin HTTP/1.1" 200 -
+2026-04-15 10:52:48 - back_end.slot_monitor.alarm_controller - WARNING - Mismatch added: PID=4877f4c1-0fd5-49b0-ac1a-2db9eafa8249, LID=0
+2026-04-15 10:52:48 - socketio.server - INFO - emitting event "alarm_updated" to all [/]
+2026-04-15 10:52:48 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [FaceRollingBuffer] Alarm clip queued: 4877f4c10fd549b0_lid0_1776246768_face.mp4
+2026-04-15 10:52:48 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [TopRollingBuffer] Alarm clip queued: 4877f4c10fd549b0_lid0_1776246768_top.mp4
+2026-04-15 10:52:48 - back_end.slot_monitor.worker_async - CRITICAL - Worker 0: ALARM! LID=0 PID=4877f4c1-0fd5-49b0-ac1a-2db9eafa8249 dist=0.3993
+2026-04-15 10:52:57 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:52:57 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-15 10:52:57 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:52:57 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 5784 frames, 4 subscribers
+2026-04-15 10:52:57 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 23068 frames, avg_dist=0.0232
+2026-04-15 10:52:57 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 2, Errors: 0
+2026-04-15 10:52:57 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 1 mismatches
+2026-04-15 10:53:06 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=6000 avg_dist=0.0000 avg_time=2.60ms alarms=0 paused=0 errors=0
+2026-04-15 10:53:06 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=6000 avg_dist=0.0000 avg_time=2.01ms alarms=0 paused=0 errors=0
+2026-04-15 10:53:06 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=6000 avg_dist=0.0000 avg_time=1.71ms alarms=0 paused=0 errors=0
+2026-04-15 10:53:06 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=6000 avg_dist=0.1046 avg_time=0.65ms alarms=2 paused=0 errors=0
+2026-04-15 10:53:14 - back_end.slot_monitor.admin.background_encoder - INFO - [BgEncoder] Encoded 709 frames 4877f4c10fd549b0_lid0_1776246768_face.mp4  (29.9s @ 24fps)
+2026-04-15 10:53:21 - back_end.slot_monitor.admin.background_encoder - INFO - [BgEncoder] Encoded 439 frames 4877f4c10fd549b0_lid0_1776246768_top.mp4  (87.8s @ 5fps)
+2026-04-15 10:53:27 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:53:27 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-15 10:53:27 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:53:27 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 6570 frames, 4 subscribers
+2026-04-15 10:53:27 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 26212 frames, avg_dist=0.0324
+2026-04-15 10:53:27 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 2, Errors: 0
+2026-04-15 10:53:27 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 1 mismatches
+2026-04-15 10:53:27 - socketio.server - INFO - received event "alarm_acknowledge" from zk793H1090oeQgaPAAAB [/]
+2026-04-15 10:53:27 - back_end.slot_monitor.alarm_controller - INFO - Physical alarm stopped
+2026-04-15 10:53:27 - back_end.slot_monitor.alarm_controller - INFO - Alarm silenced — mismatches remain, resolution in progress
+2026-04-15 10:53:27 - socketio.server - INFO - emitting event "alarm_acknowledge_result" to zk793H1090oeQgaPAAAB [/]
+2026-04-15 10:53:27 - socketio.server - INFO - received event "admin_session_start" from zk793H1090oeQgaPAAAB [/]
+2026-04-15 10:53:27 - werkzeug - INFO - 127.0.0.1 - - [15/Apr/2026 10:53:27] "POST /webrtc/cancel/admin HTTP/1.1" 200 -
+2026-04-15 10:53:27 - back_end.slot_monitor.admin.resolution_session - INFO - [ResolutionSession] 60ccbd06 opened — 1 mismatches, phone_count=2
+2026-04-15 10:53:27 - back_end.slot_monitor.camera.rolling_buffer - INFO - [TopRollingBuffer] Active mode (20 fps)
+2026-04-15 10:53:27 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Session started: 60ccbd06  dir=evidence\60ccbd06
+2026-04-15 10:53:27 - back_end.slot_monitor.worker_async - INFO - Worker 0: slot 0 paused
+2026-04-15 10:53:27 - socketio.server - INFO - emitting event "admin_session_opened" to zk793H1090oeQgaPAAAB [/]
+2026-04-15 10:53:28 - werkzeug - INFO - 127.0.0.1 - - [15/Apr/2026 10:53:28] "OPTIONS /webrtc/offer/admin HTTP/1.1" 200 -
+2026-04-15 10:53:28 - aioice.ice - INFO - Connection(2) Could not bind to 169.254.213.224 - [WinError 10049] The requested address is not valid in its context
+2026-04-15 10:53:28 - aioice.ice - INFO - Connection(2) Could not bind to 169.254.207.190 - [WinError 10049] The requested address is not valid in its context
+2026-04-15 10:53:28 - aioice.ice - INFO - Connection(2) Could not bind to 169.254.21.235 - [WinError 10049] The requested address is not valid in its context
+2026-04-15 10:53:28 - aioice.ice - INFO - Connection(2) Could not bind to 192.168.137.1 - [WinError 10049] The requested address is not valid in its context
+2026-04-15 10:53:33 - werkzeug - INFO - 127.0.0.1 - - [15/Apr/2026 10:53:33] "POST /webrtc/offer/admin HTTP/1.1" 200 -
+2026-04-15 10:53:34 - aioice.ice - INFO - Connection(2) Discovered peer reflexive candidate Candidate(QoBwK43Gfo 1 udp 1845501695 192.168.56.1 62065 typ prflx)
+2026-04-15 10:53:34 - aioice.ice - INFO - Connection(2) Check CandidatePair(('192.168.56.1', 53993) -> ('192.168.56.1', 62065)) State.WAITING -> State.IN_PROGRESS
+2026-04-15 10:53:34 - aioice.ice - INFO - Connection(2) Check CandidatePair(('192.168.56.1', 53993) -> ('192.168.56.1', 62065)) State.IN_PROGRESS -> State.SUCCEEDED
+2026-04-15 10:53:34 - aioice.ice - INFO - Connection(2) ICE completed
+2026-04-15 10:53:34 - aioice.ice - INFO - Connection(2) Discovered peer reflexive candidate Candidate(nIhjj9loVb 1 udp 1845501695 172.19.109.119 62065 typ prflx)
+2026-04-15 10:53:34 - aioice.ice - INFO - Connection(2) Check CandidatePair(('172.19.109.119', 53994) -> ('172.19.109.119', 62065)) State.WAITING -> State.IN_PROGRESS
+2026-04-15 10:53:34 - aioice.ice - INFO - Connection(2) Check CandidatePair(('172.19.109.119', 53994) -> ('172.19.109.119', 62065)) State.IN_PROGRESS -> State.SUCCEEDED
+2026-04-15 10:53:44 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=7000 avg_dist=0.0000 avg_time=2.76ms alarms=0 paused=0 errors=0
+2026-04-15 10:53:44 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=7000 avg_dist=0.0000 avg_time=2.13ms alarms=0 paused=0 errors=0
+2026-04-15 10:53:44 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=7000 avg_dist=0.0000 avg_time=1.82ms alarms=0 paused=0 errors=0
+2026-04-15 10:53:44 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=7000 avg_dist=0.1218 avg_time=0.77ms alarms=2 paused=1 errors=0
+2026-04-15 10:53:57 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:53:57 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-15 10:53:57 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:53:57 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 7389 frames, 4 subscribers
+2026-04-15 10:53:57 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 29476 frames, avg_dist=0.0289
+2026-04-15 10:53:57 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 2, Errors: 0
+2026-04-15 10:53:57 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 1 mismatches
+2026-04-15 10:54:19 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=8000 avg_dist=0.0000 avg_time=2.86ms alarms=0 paused=0 errors=0
+2026-04-15 10:54:19 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=8000 avg_dist=0.0000 avg_time=2.24ms alarms=0 paused=0 errors=0
+2026-04-15 10:54:19 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=8000 avg_dist=0.0000 avg_time=1.96ms alarms=0 paused=0 errors=0
+2026-04-15 10:54:19 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=8000 avg_dist=0.1066 avg_time=0.67ms alarms=2 paused=1 errors=0
+2026-04-15 10:54:27 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:54:27 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-15 10:54:27 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:54:27 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 8229 frames, 4 subscribers
+2026-04-15 10:54:27 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 32832 frames, avg_dist=0.0260
+2026-04-15 10:54:27 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 2, Errors: 0
+2026-04-15 10:54:27 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 1 mismatches
+2026-04-15 10:54:54 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=9000 avg_dist=0.0000 avg_time=2.85ms alarms=0 paused=0 errors=0
+2026-04-15 10:54:54 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=9000 avg_dist=0.0000 avg_time=2.20ms alarms=0 paused=0 errors=0
+2026-04-15 10:54:54 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=9000 avg_dist=0.0000 avg_time=1.93ms alarms=0 paused=0 errors=0
+2026-04-15 10:54:54 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=9000 avg_dist=0.0948 avg_time=0.60ms alarms=2 paused=1 errors=0
+2026-04-15 10:54:57 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:54:57 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-15 10:54:57 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:54:57 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 9094 frames, 4 subscribers
+2026-04-15 10:54:57 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 36292 frames, avg_dist=0.0235
+2026-04-15 10:54:57 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 2, Errors: 0
+2026-04-15 10:54:57 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 1 mismatches
+2026-04-15 10:55:27 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:55:27 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-15 10:55:27 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:55:27 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 9954 frames, 4 subscribers
+2026-04-15 10:55:27 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 39732 frames, avg_dist=0.0215
+2026-04-15 10:55:27 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 2, Errors: 0
+2026-04-15 10:55:27 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 1 mismatches
+2026-04-15 10:55:29 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=10000 avg_dist=0.0000 avg_time=2.82ms alarms=0 paused=0 errors=0
+2026-04-15 10:55:29 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=10000 avg_dist=0.0000 avg_time=2.14ms alarms=0 paused=0 errors=0
+2026-04-15 10:55:29 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=10000 avg_dist=0.0000 avg_time=1.87ms alarms=0 paused=0 errors=0
+2026-04-15 10:55:29 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=10000 avg_dist=0.0853 avg_time=0.54ms alarms=2 paused=1 errors=0
+2026-04-15 10:55:57 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:55:57 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-15 10:55:57 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:55:57 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 10783 frames, 4 subscribers
+2026-04-15 10:55:57 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 43048 frames, avg_dist=0.0198
+2026-04-15 10:55:57 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 2, Errors: 0
+2026-04-15 10:55:57 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 1 mismatches
+2026-04-15 10:56:05 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=11000 avg_dist=0.0000 avg_time=2.75ms alarms=0 paused=0 errors=0
+2026-04-15 10:56:05 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=11000 avg_dist=0.0000 avg_time=2.08ms alarms=0 paused=0 errors=0
+2026-04-15 10:56:05 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=11000 avg_dist=0.0000 avg_time=1.80ms alarms=0 paused=0 errors=0
+2026-04-15 10:56:05 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=11000 avg_dist=0.0775 avg_time=0.49ms alarms=2 paused=1 errors=0
+2026-04-15 10:56:27 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:56:27 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-15 10:56:27 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:56:27 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 11649 frames, 4 subscribers
+2026-04-15 10:56:27 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 46512 frames, avg_dist=0.0183
+2026-04-15 10:56:27 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 2, Errors: 0
+2026-04-15 10:56:27 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 1 mismatches
+2026-04-15 10:56:40 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=12000 avg_dist=0.0000 avg_time=2.71ms alarms=0 paused=0 errors=0
+2026-04-15 10:56:40 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=12000 avg_dist=0.0000 avg_time=2.03ms alarms=0 paused=0 errors=0
+2026-04-15 10:56:40 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=12000 avg_dist=0.0000 avg_time=1.76ms alarms=0 paused=0 errors=0
+2026-04-15 10:56:40 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=12000 avg_dist=0.0711 avg_time=0.45ms alarms=2 paused=1 errors=0
+2026-04-15 10:56:57 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:56:57 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-15 10:56:57 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:56:57 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 12513 frames, 4 subscribers
+2026-04-15 10:56:57 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 49968 frames, avg_dist=0.0171
+2026-04-15 10:56:57 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 2, Errors: 0
+2026-04-15 10:56:57 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 1 mismatches
+2026-04-15 10:57:14 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=13000 avg_dist=0.0000 avg_time=2.68ms alarms=0 paused=0 errors=0
+2026-04-15 10:57:14 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=13000 avg_dist=0.0000 avg_time=1.99ms alarms=0 paused=0 errors=0
+2026-04-15 10:57:14 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=13000 avg_dist=0.0000 avg_time=1.71ms alarms=0 paused=0 errors=0
+2026-04-15 10:57:14 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=13000 avg_dist=0.0656 avg_time=0.42ms alarms=2 paused=1 errors=0
+2026-04-15 10:57:27 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:57:27 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-15 10:57:27 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:57:27 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 13378 frames, 4 subscribers
+2026-04-15 10:57:27 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 53428 frames, avg_dist=0.0160
+2026-04-15 10:57:27 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 2, Errors: 0
+2026-04-15 10:57:27 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 1 mismatches
+2026-04-15 10:57:49 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=14000 avg_dist=0.0000 avg_time=2.68ms alarms=0 paused=0 errors=0
+2026-04-15 10:57:49 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=14000 avg_dist=0.0000 avg_time=1.97ms alarms=0 paused=0 errors=0
+2026-04-15 10:57:49 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=14000 avg_dist=0.0000 avg_time=1.69ms alarms=0 paused=0 errors=0
+2026-04-15 10:57:49 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=14000 avg_dist=0.0609 avg_time=0.39ms alarms=2 paused=1 errors=0
+2026-04-15 10:57:57 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:57:57 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-15 10:57:57 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:57:57 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 14242 frames, 4 subscribers
+2026-04-15 10:57:57 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 56884 frames, avg_dist=0.0150
+2026-04-15 10:57:57 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 2, Errors: 0
+2026-04-15 10:57:57 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 1 mismatches
+2026-04-15 10:58:24 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=15000 avg_dist=0.0000 avg_time=2.67ms alarms=0 paused=0 errors=0
+2026-04-15 10:58:24 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=15000 avg_dist=0.0000 avg_time=1.96ms alarms=0 paused=0 errors=0
+2026-04-15 10:58:24 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=15000 avg_dist=0.0000 avg_time=1.67ms alarms=0 paused=0 errors=0
+2026-04-15 10:58:24 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=15000 avg_dist=0.0569 avg_time=0.36ms alarms=2 paused=1 errors=0
+2026-04-15 10:58:27 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:58:27 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-15 10:58:27 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:58:27 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 15105 frames, 4 subscribers
+2026-04-15 10:58:27 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 60336 frames, avg_dist=0.0141
+2026-04-15 10:58:27 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 2, Errors: 0
+2026-04-15 10:58:27 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 1 mismatches
+2026-04-15 10:58:57 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:58:57 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-15 10:58:57 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:58:57 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 15968 frames, 4 subscribers
+2026-04-15 10:58:57 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 63788 frames, avg_dist=0.0134
+2026-04-15 10:58:57 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 2, Errors: 0
+2026-04-15 10:58:57 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 1 mismatches
+2026-04-15 10:58:59 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=16000 avg_dist=0.0000 avg_time=2.67ms alarms=0 paused=0 errors=0
+2026-04-15 10:58:59 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=16000 avg_dist=0.0000 avg_time=1.94ms alarms=0 paused=0 errors=0
+2026-04-15 10:58:59 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=16000 avg_dist=0.0000 avg_time=1.66ms alarms=0 paused=0 errors=0
+2026-04-15 10:58:59 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=16000 avg_dist=0.0533 avg_time=0.34ms alarms=2 paused=1 errors=0
+2026-04-15 10:59:27 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:59:27 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-15 10:59:27 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:59:27 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 16827 frames, 4 subscribers
+2026-04-15 10:59:27 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 67224 frames, avg_dist=0.0127
+2026-04-15 10:59:27 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 2, Errors: 0
+2026-04-15 10:59:27 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 1 mismatches
+2026-04-15 10:59:33 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=17000 avg_dist=0.0000 avg_time=2.66ms alarms=0 paused=0 errors=0
+2026-04-15 10:59:34 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=17000 avg_dist=0.0000 avg_time=1.93ms alarms=0 paused=0 errors=0
+2026-04-15 10:59:34 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=17000 avg_dist=0.0000 avg_time=1.65ms alarms=0 paused=0 errors=0
+2026-04-15 10:59:34 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=17000 avg_dist=0.0502 avg_time=0.32ms alarms=2 paused=1 errors=0
+2026-04-15 10:59:57 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:59:57 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-15 10:59:57 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 10:59:57 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 17690 frames, 4 subscribers
+2026-04-15 10:59:57 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 70676 frames, avg_dist=0.0121
+2026-04-15 10:59:57 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 2, Errors: 0
+2026-04-15 10:59:57 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 1 mismatches
+2026-04-15 11:00:08 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=18000 avg_dist=0.0000 avg_time=2.65ms alarms=0 paused=0 errors=0
+2026-04-15 11:00:08 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=18000 avg_dist=0.0000 avg_time=1.91ms alarms=0 paused=0 errors=0
+2026-04-15 11:00:08 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=18000 avg_dist=0.0000 avg_time=1.64ms alarms=0 paused=0 errors=0
+2026-04-15 11:00:08 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=18000 avg_dist=0.0474 avg_time=0.30ms alarms=2 paused=1 errors=0
+2026-04-15 11:00:24 - __main__ - INFO - ============================================================
+2026-04-15 11:00:24 - __main__ - INFO - Signal 2 received — shutting down
+2026-04-15 11:00:24 - __main__ - INFO - ============================================================
+2026-04-15 11:00:24 - back_end.server.webrtc_handler - INFO - Shutting down WebRTC handler...
+2026-04-15 11:00:24 - back_end.server.webrtc_handler - INFO - WebRTC handler shutdown complete
+2026-04-15 11:00:24 - back_end.slot_monitor.camera.top_camera - INFO - [TopCamera] Stopped
+2026-04-15 11:00:24 - back_end.slot_monitor.camera.rolling_buffer - INFO - [TopRollingBuffer] Stopped
+2026-04-15 11:00:24 - back_end.slot_monitor.services.operation_context - INFO - Operation cleanup thread stopped
+2026-04-15 11:00:24 - back_end.slot_monitor.headless_slot_monitor - INFO - Stop event received — shutting down slot monitor
+2026-04-15 11:00:24 - back_end.slot_monitor.headless_slot_monitor - INFO - Shutting down slot monitor...
+2026-04-15 11:00:24 - back_end.slot_monitor.worker_async - INFO - Stopping worker pool...
+2026-04-15 11:00:24 - back_end.slot_monitor.worker_async - INFO - Worker 0 cancelled
+2026-04-15 11:00:24 - back_end.slot_monitor.worker_async - INFO - Worker 1 cancelled
+2026-04-15 11:00:24 - back_end.slot_monitor.worker_async - INFO - Worker 2 cancelled
+2026-04-15 11:00:24 - back_end.slot_monitor.worker_async - INFO - Worker 3 cancelled
+2026-04-15 11:00:24 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 0 stopped
+2026-04-15 11:00:24 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 1 stopped
+2026-04-15 11:00:24 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 2 stopped
+2026-04-15 11:00:24 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 3 stopped
+2026-04-15 11:00:24 - back_end.slot_monitor.worker_async - INFO - 4 workers stopped
+2026-04-15 11:00:24 - back_end.slot_monitor.camera.camera_async - INFO - Async camera capture stopped
+2026-04-15 11:00:24 - back_end.slot_monitor.camera.camera_async - INFO - Async camera released
+2026-04-15 11:00:24 - back_end.slot_monitor.db_interface - INFO - AsyncPG pool closed
+2026-04-15 11:00:24 - back_end.slot_monitor.headless_slot_monitor - INFO - Slot monitor shutdown complete
+2026-04-15 11:00:24 - __main__ - INFO - All modules stopped — exiting
+2026-04-15 13:36:53 - tensorflow - WARNING - From C:\Users\enpei\PycharmProjects\PhoneBox\.venv\Lib\site-packages\tf_keras\src\losses.py:2976: The name tf.losses.sparse_softmax_cross_entropy is deprecated. Please use tf.compat.v1.losses.sparse_softmax_cross_entropy instead.
+
+2026-04-15 13:36:55 - back_end.server.webrtc_handler - INFO - Hardware acceleration: NVIDIA (h264_nvenc)
+2026-04-15 13:36:55 - back_end.server.app - INFO - API blueprints registered
+2026-04-15 13:36:55 - back_end.server.app - INFO - SocketIO initialized
+2026-04-15 13:36:55 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 13:36:55 - back_end.slot_monitor.headless_slot_monitor - INFO - HEADLESS SLOT MONITOR (PRODUCTION MODE)
+2026-04-15 13:36:55 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 13:36:55 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 1 (1280x720 @ 30fps)
+2026-04-15 13:36:55 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 4 | Thresholds: mismatch=0.15, recalc=0.05
+2026-04-15 13:36:55 - back_end.slot_monitor.slot_operations - INFO - SlotOperations initialized
+2026-04-15 13:36:55 - back_end.server.app - INFO - Slot monitor created (not started yet)
+2026-04-15 13:36:55 - back_end.server.app - INFO - Flask application ready
+2026-04-15 13:36:55 - __main__ - INFO - ============================================================
+2026-04-15 13:36:55 - __main__ - INFO - PHONE BOX SERVER — STARTING
+2026-04-15 13:36:55 - __main__ - INFO - ============================================================
+2026-04-15 13:36:55 - __main__ - INFO - Scan worker started
+2026-04-15 13:36:55 - back_end.server.webrtc_handler - INFO - WebRTC async event loop started
+2026-04-15 13:36:55 - __main__ - INFO - Scanner loop started
+2026-04-15 13:36:55 - back_end.slot_monitor.camera.top_camera - INFO - [TopCamera] Started on camera index 2
+2026-04-15 13:36:55 - back_end.slot_monitor.camera.rolling_buffer - INFO - [TopRollingBuffer] Started (5 fps idle)
+2026-04-15 13:36:55 - __main__ - INFO - Top camera started (eager)
+2026-04-15 13:36:55 - back_end.slot_monitor.ops_handler - INFO - DVW WebSocket handlers registered
+2026-04-15 13:36:55 - back_end.slot_monitor.services.operation_context - INFO - Operation cleanup thread started
+2026-04-15 13:36:55 - __main__ - INFO - DVW system ready
+2026-04-15 13:36:55 - __main__ - INFO - ROI calibration: 4 lids from DB
+2026-04-15 13:36:55 - back_end.slot_monitor.tools.roi_calibration - INFO - [ROI Calibration] Capturing frame from camera 1…
+2026-04-15 13:36:56 - back_end.slot_monitor.tools.roi_calibration - INFO - [ROI Calibration] Editing BOTTOM CAMERA — Slot monitoring (cam 1) (640×480, 4 lids). Press X/Enter to confirm.
+2026-04-15 13:36:59 - back_end.slot_monitor.tools.roi_calibration - INFO - [ROI Calibration] Saved 4 ROIs to C:\Users\enpei\PycharmProjects\PhoneBox\back_end\slot_monitor\tools\rois_bottom.json
+2026-04-15 13:36:59 - back_end.slot_monitor.tools.roi_calibration - INFO - [ROI Calibration] Capturing frame from camera 2…
+2026-04-15 13:37:00 - back_end.slot_monitor.tools.roi_calibration - INFO - [ROI Calibration] Editing TOP-DOWN CAMERA — Admin / evidence (cam 2) (640×480, 4 lids). Press X/Enter to confirm.
+2026-04-15 13:37:01 - back_end.slot_monitor.camera.top_camera - WARNING - [TopCamera] Frame read failed
+2026-04-15 13:37:01 - back_end.slot_monitor.tools.roi_calibration - INFO - [ROI Calibration] Saved 4 ROIs to C:\Users\enpei\PycharmProjects\PhoneBox\back_end\slot_monitor\tools\rois_top.json
+2026-04-15 13:37:01 - back_end.slot_monitor.tools.roi_calibration - INFO - [ROI Calibration] Complete.
+2026-04-15 13:37:01 - back_end.slot_monitor.headless_slot_monitor - INFO - Slot monitor thread started
+2026-04-15 13:37:01 - __main__ - INFO - Slot monitor started
+2026-04-15 13:37:01 - back_end.slot_monitor.slot_operations - INFO - Monitor attached to SlotOperations
+2026-04-15 13:37:01 - back_end.server.app - INFO - Monitor connected to SlotOperations
+2026-04-15 13:37:01 - __main__ - INFO - Waiting for slot monitor setup to complete...
+2026-04-15 13:37:01 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 13:37:01 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR SETUP
+2026-04-15 13:37:01 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 13:37:01 - back_end.slot_monitor.headless_slot_monitor - INFO - Connecting to database...
+2026-04-15 13:37:01 - back_end.slot_monitor.db_interface - INFO - AsyncPG pool created: 5-20 connections to localhost:5432/PhoneBoxDB
+2026-04-15 13:37:01 - back_end.slot_monitor.headless_slot_monitor - INFO - Database ready (pool: 5-20)
+2026-04-15 13:37:01 - back_end.slot_monitor.headless_slot_monitor - INFO - Setting up camera...
+2026-04-15 13:37:01 - back_end.slot_monitor.camera.camera_async - INFO - Event loop attached to AsyncFrameBuffer
+2026-04-15 13:37:01 - back_end.slot_monitor.camera.camera_async - INFO - Waiting for first frame...
+2026-04-15 13:37:02 - back_end.slot_monitor.camera.camera_async - INFO - Camera 1 opened: 1280x720 @ 29fps
+2026-04-15 13:37:02 - back_end.slot_monitor.camera.camera_async - INFO - Async camera 1 started (1280x720 @ 30fps)
+2026-04-15 13:37:02 - back_end.slot_monitor.camera.camera_async - INFO - AsyncCameraCapture initialized (cam 1, 1280x720)
+2026-04-15 13:37:02 - back_end.slot_monitor.headless_slot_monitor - INFO - Auto grid: 2x2 for 4 slots
+2026-04-15 13:37:02 - back_end.slot_monitor.slots - INFO - [Slots] Loaded 4 ROIs from C:\Users\enpei\PycharmProjects\PhoneBox\back_end\slot_monitor\tools\rois_bottom.json
+2026-04-15 13:37:02 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera ready — 4 ROIs generated
+2026-04-15 13:37:02 - back_end.slot_monitor.headless_slot_monitor - INFO - Checking baselines...
+2026-04-15 13:37:02 - back_end.slot_monitor.db_interface - INFO - Fetched 4 baselines from DB (async)
+2026-04-15 13:37:02 - back_end.slot_monitor.headless_slot_monitor - WARNING -   Slot 0: MISMATCH (dist=0.3993)
+2026-04-15 13:37:02 - back_end.slot_monitor.headless_slot_monitor - INFO -   Slot 1: OK (dist=0.0000)
+2026-04-15 13:37:02 - back_end.slot_monitor.headless_slot_monitor - INFO -   Slot 2: OK (dist=0.0000)
+2026-04-15 13:37:02 - back_end.slot_monitor.headless_slot_monitor - INFO -   Slot 3: OK (dist=0.0000)
+2026-04-15 13:37:02 - back_end.slot_monitor.headless_slot_monitor - CRITICAL - 1 SLOT(S) WITH MISMATCHES — MANUAL INTERVENTION REQUIRED
+2026-04-15 13:37:02 - back_end.slot_monitor.headless_slot_monitor - INFO - Initializing slot states from database...
+2026-04-15 13:37:02 - back_end.slot_monitor.db_interface - INFO - Fetched 2 occupied slots from DB (async)
+2026-04-15 13:37:02 - back_end.slot_monitor.db_interface - INFO - Fetched 4 baselines from DB (async)
+2026-04-15 13:37:02 - back_end.slot_monitor.headless_slot_monitor - INFO - 2 occupied slots, 4 baselines
+2026-04-15 13:37:02 - back_end.slot_monitor.headless_slot_monitor - INFO -   Slot 0: OCCUPIED (PID: 4877f4c1-0fd5-49b0-ac1a-2db9eafa8249)
+2026-04-15 13:37:02 - back_end.slot_monitor.headless_slot_monitor - INFO -   Slot 1: OCCUPIED (PID: c76d7cd4-ab52-4a56-9c66-0c4fb777d087)
+2026-04-15 13:37:02 - back_end.slot_monitor.headless_slot_monitor - INFO -   Slot 2: EMPTY
+2026-04-15 13:37:02 - back_end.slot_monitor.headless_slot_monitor - INFO -   Slot 3: EMPTY
+2026-04-15 13:37:02 - back_end.slot_monitor.headless_slot_monitor - INFO - Initialized 4 slots
+2026-04-15 13:37:02 - back_end.slot_monitor.headless_slot_monitor - INFO - Creating 4 workers...
+2026-04-15 13:37:02 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 0 initialized: slots=[0]
+2026-04-15 13:37:02 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 1 initialized: slots=[1]
+2026-04-15 13:37:02 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 2 initialized: slots=[2]
+2026-04-15 13:37:02 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 3 initialized: slots=[3]
+2026-04-15 13:37:02 - back_end.slot_monitor.worker_async - INFO - WorkerPool created: 4 workers, 4 slots
+2026-04-15 13:37:02 - back_end.slot_monitor.headless_slot_monitor - INFO - 4 workers ready
+2026-04-15 13:37:02 - back_end.slot_monitor.services.operation_context - INFO - WorkerPool attached to OperationContext
+2026-04-15 13:37:02 - back_end.slot_monitor.headless_slot_monitor - INFO - Setup complete
+2026-04-15 13:37:02 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 13:37:02 - back_end.slot_monitor.headless_slot_monitor - INFO - MONITORING ACTIVE
+2026-04-15 13:37:02 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 13:37:02 - back_end.slot_monitor.admin.admin_ops_handler - INFO - Admin resolution WebSocket handlers registered
+2026-04-15 13:37:02 - back_end.slot_monitor.worker_async - INFO - Starting worker pool...
+2026-04-15 13:37:02 - __main__ - INFO - Admin resolution system ready
+2026-04-15 13:37:02 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 0 started
+2026-04-15 13:37:02 - __main__ - INFO - Ready — press Ctrl+C to stop
+2026-04-15 13:37:02 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 1 started
+2026-04-15 13:37:02 - werkzeug - WARNING - Werkzeug appears to be used in a production deployment. Consider switching to a production web server instead.
+2026-04-15 13:37:02 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 2 started
+2026-04-15 13:37:02 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 3 started
+2026-04-15 13:37:02 - back_end.slot_monitor.worker_async - INFO - Worker 0 entering event-driven loop
+2026-04-15 13:37:02 - back_end.slot_monitor.worker_async - INFO - Worker 1 entering event-driven loop
+2026-04-15 13:37:02 - back_end.slot_monitor.worker_async - INFO - Worker 2 entering event-driven loop
+2026-04-15 13:37:02 - back_end.slot_monitor.worker_async - INFO - Worker 3 entering event-driven loop
+2026-04-15 13:37:02 - back_end.slot_monitor.worker_async - INFO - 4 workers started
+2026-04-15 13:37:02 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.0.2:5000
+2026-04-15 13:37:02 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-04-15 13:37:05 - back_end.slot_monitor.alarm_controller - WARNING - Physical alarm started
+2026-04-15 13:37:05 - back_end.slot_monitor.alarm_controller - WARNING - ALARM ACTIVATED
+2026-04-15 13:37:05 - socketio.server - INFO - emitting event "alarm_triggered" to all [/]
+2026-04-15 13:37:05 - back_end.slot_monitor.alarm_controller - WARNING - Mismatch added: PID=4877f4c1-0fd5-49b0-ac1a-2db9eafa8249, LID=0
+2026-04-15 13:37:05 - socketio.server - INFO - emitting event "alarm_updated" to all [/]
+2026-04-15 13:37:05 - back_end.slot_monitor.admin.background_encoder - INFO - [BgEncoder] Background video encoder started
+2026-04-15 13:37:05 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [FaceRollingBuffer] Alarm clip queued: 4877f4c10fd549b0_lid0_1776256625_face.mp4
+2026-04-15 13:37:05 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [TopRollingBuffer] Alarm clip queued: 4877f4c10fd549b0_lid0_1776256625_top.mp4
+2026-04-15 13:37:05 - back_end.slot_monitor.worker_async - CRITICAL - Worker 0: ALARM! LID=0 PID=4877f4c1-0fd5-49b0-ac1a-2db9eafa8249 dist=0.3993
+2026-04-15 13:37:07 - back_end.slot_monitor.admin.background_encoder - INFO - [BgEncoder] Encoded 143 frames 4877f4c10fd549b0_lid0_1776256625_face.mp4  (4.7s @ 30fps)
+2026-04-15 13:37:07 - back_end.slot_monitor.admin.background_encoder - INFO - [BgEncoder] Encoded 43 frames 4877f4c10fd549b0_lid0_1776256625_top.mp4  (8.6s @ 5fps)
+2026-04-15 13:37:32 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 13:37:32 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-15 13:37:32 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 13:37:32 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 851 frames, 4 subscribers
+2026-04-15 13:37:32 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 3380 frames, avg_dist=0.0998
+2026-04-15 13:37:32 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 1, Errors: 0
+2026-04-15 13:37:32 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 1 mismatches
+2026-04-15 13:37:37 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=1000 avg_dist=0.0000 avg_time=1.21ms alarms=0 paused=0 errors=0
+2026-04-15 13:37:37 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=1000 avg_dist=0.0000 avg_time=0.89ms alarms=0 paused=0 errors=0
+2026-04-15 13:37:37 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=1000 avg_dist=0.0000 avg_time=0.76ms alarms=0 paused=0 errors=0
+2026-04-15 13:37:37 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=1000 avg_dist=0.3993 avg_time=0.89ms alarms=1 paused=0 errors=0
+2026-04-15 13:38:02 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 13:38:02 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-15 13:38:02 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 13:38:02 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 1723 frames, 4 subscribers
+2026-04-15 13:38:02 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 6868 frames, avg_dist=0.0998
+2026-04-15 13:38:02 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 1, Errors: 0
+2026-04-15 13:38:02 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 1 mismatches
+2026-04-15 13:38:05 - werkzeug - INFO - 127.0.0.1 - - [15/Apr/2026 13:38:05] "POST /webrtc/cancel/main HTTP/1.1" 200 -
+2026-04-15 13:38:07 - werkzeug - INFO - 127.0.0.1 - - [15/Apr/2026 13:38:07] "OPTIONS /webrtc/offer/main HTTP/1.1" 200 -
+2026-04-15 13:38:07 - socketio.server - INFO - received event "get_status" from xAg6LbEbhuCY3NTzAAAB [/]
+2026-04-15 13:38:07 - socketio.server - INFO - emitting event "scan_status" to xAg6LbEbhuCY3NTzAAAB [/]
+2026-04-15 13:38:07 - socketio.server - INFO - received event "get_alarm_status" from xAg6LbEbhuCY3NTzAAAB [/]
+2026-04-15 13:38:07 - socketio.server - INFO - emitting event "alarm_status" to xAg6LbEbhuCY3NTzAAAB [/]
+2026-04-15 13:38:08 - socketio.server - INFO - received event "get_alarm_status" from xAg6LbEbhuCY3NTzAAAB [/]
+2026-04-15 13:38:08 - socketio.server - INFO - emitting event "alarm_status" to xAg6LbEbhuCY3NTzAAAB [/]
+2026-04-15 13:38:08 - aioice.ice - INFO - Connection(0) Could not bind to 169.254.213.224 - [WinError 10049] The requested address is not valid in its context
+2026-04-15 13:38:08 - aioice.ice - INFO - Connection(0) Could not bind to 169.254.207.190 - [WinError 10049] The requested address is not valid in its context
+2026-04-15 13:38:08 - aioice.ice - INFO - Connection(0) Could not bind to 169.254.21.235 - [WinError 10049] The requested address is not valid in its context
+2026-04-15 13:38:08 - aioice.ice - INFO - Connection(0) Could not bind to 192.168.137.1 - [WinError 10049] The requested address is not valid in its context
+2026-04-15 13:38:08 - werkzeug - INFO - 127.0.0.1 - - [15/Apr/2026 13:38:08] "POST /webrtc/cancel/admin HTTP/1.1" 200 -
+2026-04-15 13:38:09 - werkzeug - INFO - 127.0.0.1 - - [15/Apr/2026 13:38:09] "OPTIONS /webrtc/offer/admin HTTP/1.1" 200 -
+2026-04-15 13:38:09 - aioice.ice - INFO - Connection(1) Could not bind to 169.254.213.224 - [WinError 10049] The requested address is not valid in its context
+2026-04-15 13:38:09 - aioice.ice - INFO - Connection(1) Could not bind to 169.254.207.190 - [WinError 10049] The requested address is not valid in its context
+2026-04-15 13:38:09 - aioice.ice - INFO - Connection(1) Could not bind to 169.254.21.235 - [WinError 10049] The requested address is not valid in its context
+2026-04-15 13:38:09 - aioice.ice - INFO - Connection(1) Could not bind to 192.168.137.1 - [WinError 10049] The requested address is not valid in its context
+2026-04-15 13:38:13 - werkzeug - INFO - 127.0.0.1 - - [15/Apr/2026 13:38:13] "POST /webrtc/offer/main HTTP/1.1" 200 -
+2026-04-15 13:38:13 - aioice.ice - INFO - Connection(0) Discovered peer reflexive candidate Candidate(Tyt2ZOZ03X 1 udp 1845501695 192.168.56.1 54304 typ prflx)
+2026-04-15 13:38:13 - aioice.ice - INFO - Connection(0) Check CandidatePair(('192.168.56.1', 50214) -> ('192.168.56.1', 54304)) State.WAITING -> State.IN_PROGRESS
+2026-04-15 13:38:13 - aioice.ice - INFO - Connection(0) Discovered peer reflexive candidate Candidate(rXDlyp0Fzg 1 udp 1845501695 192.168.0.2 54304 typ prflx)
+2026-04-15 13:38:13 - aioice.ice - INFO - Connection(0) Check CandidatePair(('192.168.0.2', 50215) -> ('192.168.0.2', 54304)) State.WAITING -> State.IN_PROGRESS
+2026-04-15 13:38:13 - aioice.ice - INFO - Connection(0) Check CandidatePair(('192.168.56.1', 50214) -> ('192.168.56.1', 54304)) State.IN_PROGRESS -> State.SUCCEEDED
+2026-04-15 13:38:13 - aioice.ice - INFO - Connection(0) ICE completed
+2026-04-15 13:38:13 - aioice.ice - INFO - Connection(0) Check CandidatePair(('192.168.0.2', 50215) -> ('192.168.0.2', 54304)) State.IN_PROGRESS -> State.SUCCEEDED
+2026-04-15 13:38:14 - werkzeug - INFO - 127.0.0.1 - - [15/Apr/2026 13:38:14] "POST /webrtc/offer/admin HTTP/1.1" 200 -
+2026-04-15 13:38:14 - aioice.ice - INFO - Connection(1) Discovered peer reflexive candidate Candidate(tMuTZLJG8b 1 udp 1845501695 192.168.56.1 52848 typ prflx)
+2026-04-15 13:38:14 - aioice.ice - INFO - Connection(1) Check CandidatePair(('192.168.56.1', 59521) -> ('192.168.56.1', 52848)) State.WAITING -> State.IN_PROGRESS
+2026-04-15 13:38:14 - aioice.ice - INFO - Connection(1) Check CandidatePair(('192.168.56.1', 59521) -> ('192.168.56.1', 52848)) State.IN_PROGRESS -> State.SUCCEEDED
+2026-04-15 13:38:14 - aioice.ice - INFO - Connection(1) ICE completed
+2026-04-15 13:38:15 - aioice.ice - INFO - Connection(1) Discovered peer reflexive candidate Candidate(Ts2L3Ff8Gz 1 udp 1845501695 192.168.0.2 52848 typ prflx)
+2026-04-15 13:38:15 - aioice.ice - INFO - Connection(1) Check CandidatePair(('192.168.0.2', 59522) -> ('192.168.0.2', 52848)) State.WAITING -> State.IN_PROGRESS
+2026-04-15 13:38:15 - aioice.ice - INFO - Connection(1) Check CandidatePair(('192.168.0.2', 59522) -> ('192.168.0.2', 52848)) State.IN_PROGRESS -> State.SUCCEEDED
+2026-04-15 13:38:15 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=2000 avg_dist=0.0000 avg_time=1.28ms alarms=0 paused=0 errors=0
+2026-04-15 13:38:15 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=2000 avg_dist=0.0000 avg_time=1.00ms alarms=0 paused=0 errors=0
+2026-04-15 13:38:15 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=2000 avg_dist=0.0000 avg_time=0.81ms alarms=0 paused=0 errors=0
+2026-04-15 13:38:15 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=2000 avg_dist=0.3993 avg_time=0.88ms alarms=1 paused=0 errors=0
+2026-04-15 13:38:29 - socketio.server - INFO - received event "alarm_acknowledge" from xAg6LbEbhuCY3NTzAAAB [/]
+2026-04-15 13:38:29 - back_end.slot_monitor.alarm_controller - INFO - Physical alarm stopped
+2026-04-15 13:38:29 - back_end.slot_monitor.alarm_controller - INFO - Alarm silenced — mismatches remain, resolution in progress
+2026-04-15 13:38:29 - socketio.server - INFO - emitting event "alarm_acknowledge_result" to xAg6LbEbhuCY3NTzAAAB [/]
+2026-04-15 13:38:29 - socketio.server - INFO - received event "admin_session_start" from xAg6LbEbhuCY3NTzAAAB [/]
+2026-04-15 13:38:29 - back_end.slot_monitor.admin.resolution_session - INFO - [ResolutionSession] 65ece712 opened — 1 mismatches, phone_count=2
+2026-04-15 13:38:29 - back_end.slot_monitor.camera.rolling_buffer - INFO - [TopRollingBuffer] Active mode (20 fps)
+2026-04-15 13:38:29 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Session started: 65ece712  dir=evidence\65ece712
+2026-04-15 13:38:29 - back_end.slot_monitor.worker_async - INFO - Worker 0: slot 0 paused
+2026-04-15 13:38:29 - back_end.slot_monitor.phone_tracker - INFO - [Tracker] Loaded 4 top-cam ROIs from C:\Users\enpei\PycharmProjects\PhoneBox\back_end\slot_monitor\tools\rois_top.json
+2026-04-15 13:38:29 - back_end.slot_monitor.admin.admin_ops_handler - INFO - [StagingConfig] Loaded 2 staging ROIs from C:\Users\enpei\PycharmProjects\PhoneBox\back_end\slot_monitor\admin\staging_rois.json
+2026-04-15 13:38:29 - socketio.server - INFO - emitting event "admin_session_opened" to xAg6LbEbhuCY3NTzAAAB [/]
+2026-04-15 13:38:32 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 13:38:32 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-15 13:38:32 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 13:38:32 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 2357 frames, 4 subscribers
+2026-04-15 13:38:32 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 9396 frames, avg_dist=0.0965
+2026-04-15 13:38:32 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 1, Errors: 0
+2026-04-15 13:38:32 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 1 mismatches
+2026-04-15 13:38:33 - socketio.server - INFO - received event "admin_remove_phone" from xAg6LbEbhuCY3NTzAAAB [/]
+2026-04-15 13:38:33 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Recording started: PID=pending-lid0 LID=0 live=pendinglid0_lid0_1776256713_live.mp4  pre=queued (179 frames)
+2026-04-15 13:38:33 - back_end.slot_monitor.admin.admin_ops_handler - INFO - [AdminSession] 65ece712 — object removed from lid=0, auto-starting QR scan
+2026-04-15 13:38:33 - socketio.server - INFO - emitting event "admin_remove_ok" to xAg6LbEbhuCY3NTzAAAB [/]
+2026-04-15 13:38:33 - back_end.slot_monitor.camera.qr_pid_reader - INFO - QR scan started via frame buffer (timeout=90.0s)
+2026-04-15 13:38:34 - back_end.slot_monitor.admin.background_encoder - INFO - [BgEncoder] Encoded 179 frames pendinglid0_lid0_1776256713_pre.mp4  (8.9s @ 20fps)
+2026-04-15 13:38:52 - socketio.server - INFO - received event "admin_force_close_session" from xAg6LbEbhuCY3NTzAAAB [/]
+2026-04-15 13:38:52 - socketio.server - INFO - emitting event "admin_operation_error" to xAg6LbEbhuCY3NTzAAAB [/]
+2026-04-15 13:38:57 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=3000 avg_dist=0.0000 avg_time=1.75ms alarms=0 paused=0 errors=0
+2026-04-15 13:38:57 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=3000 avg_dist=0.0000 avg_time=1.30ms alarms=0 paused=0 errors=0
+2026-04-15 13:38:57 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=3000 avg_dist=0.0000 avg_time=1.03ms alarms=0 paused=0 errors=0
+2026-04-15 13:38:57 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=3000 avg_dist=0.3021 avg_time=0.71ms alarms=1 paused=1 errors=0
+2026-04-15 13:39:02 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 13:39:02 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-15 13:39:02 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 13:39:02 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 3158 frames, 4 subscribers
+2026-04-15 13:39:02 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 12584 frames, avg_dist=0.0720
+2026-04-15 13:39:02 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 1, Errors: 0
+2026-04-15 13:39:02 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 1 mismatches
+2026-04-15 13:39:02 - socketio.server - INFO - received event "admin_force_close_session" from xAg6LbEbhuCY3NTzAAAB [/]
+2026-04-15 13:39:02 - back_end.slot_monitor.admin.admin_ops_handler - WARNING - [AdminSession] 65ece712 — UNSAFE force-close requested
+2026-04-15 13:39:02 - back_end.slot_monitor.worker_async - INFO - Worker 0: slot 0 restored (is_occupied=True)
+2026-04-15 13:39:02 - back_end.slot_monitor.camera.qr_pid_reader - INFO - QR scan (buffer): cancelled
+2026-04-15 13:39:03 - back_end.slot_monitor.admin.evidence_recorder - WARNING - [Evidence] Live clip KEPT: pendinglid0_lid0_1776256713_live.mp4 (530 frames, 29.6s)
+2026-04-15 13:39:03 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [FaceRollingBuffer] Session clip queued: pendinglid0_face_1776256743.mp4
+2026-04-15 13:39:03 - back_end.slot_monitor.admin.evidence_recorder - WARNING - [Evidence] Clip kept — reason='force_close'  PID=pending-lid0  duration=29.6s
+2026-04-15 13:39:03 - back_end.slot_monitor.admin.evidence_recorder - WARNING - [Evidence] Session dir renamed -> NotFullyResolved-20260415-123903-65ece712
+2026-04-15 13:39:03 - back_end.slot_monitor.admin.evidence_recorder - WARNING - [Evidence] Session 65ece712 evidence KEPT outcome='force_closed' warnings=2
+2026-04-15 13:39:03 - back_end.slot_monitor.camera.rolling_buffer - INFO - [TopRollingBuffer] Idle mode (5 fps)
+2026-04-15 13:39:03 - back_end.slot_monitor.admin.resolution_session - INFO - [AdminSessionContext] Session 65ece712 closed
+2026-04-15 13:39:03 - back_end.slot_monitor.admin.admin_ops_handler - WARNING - [AdminSession] 65ece712 — FORCE CLOSED (safe=False, remaining=['4877f4c1-0fd5-49b0-ac1a-2db9eafa8249'])
+2026-04-15 13:39:03 - back_end.slot_monitor.alarm_controller - WARNING - Physical alarm started
+2026-04-15 13:39:03 - back_end.slot_monitor.alarm_controller - WARNING - Alarm unsilenced — admin quit resolution without finishing
+2026-04-15 13:39:03 - socketio.server - INFO - emitting event "admin_session_closed" to xAg6LbEbhuCY3NTzAAAB [/]
+2026-04-15 13:39:03 - back_end.slot_monitor.admin.background_encoder - ERROR - [BgEncoder] No usable VideoWriter codec for pendinglid0_face_1776256743.mp4
+2026-04-15 13:39:05 - socketio.server - INFO - received event "alarm_unsilence" from xAg6LbEbhuCY3NTzAAAB [/]
+2026-04-15 13:39:06 - back_end.slot_monitor.alarm_controller - WARNING - Mismatch added: PID=4877f4c1-0fd5-49b0-ac1a-2db9eafa8249, LID=0
+2026-04-15 13:39:06 - socketio.server - INFO - emitting event "alarm_updated" to all [/]
+2026-04-15 13:39:06 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [FaceRollingBuffer] Alarm clip queued: 4877f4c10fd549b0_lid0_1776256746_face.mp4
+2026-04-15 13:39:06 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [TopRollingBuffer] Alarm clip queued: 4877f4c10fd549b0_lid0_1776256746_top.mp4
+2026-04-15 13:39:06 - back_end.slot_monitor.worker_async - CRITICAL - Worker 0: ALARM! LID=0 PID=4877f4c1-0fd5-49b0-ac1a-2db9eafa8249 dist=0.3993
+2026-04-15 13:39:06 - werkzeug - INFO - 127.0.0.1 - - [15/Apr/2026 13:39:06] "POST /webrtc/cancel/admin HTTP/1.1" 200 -
+2026-04-15 13:39:32 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 13:39:32 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-15 13:39:32 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 13:39:32 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 3940 frames, 4 subscribers
+2026-04-15 13:39:32 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 15704 frames, avg_dist=0.0773
+2026-04-15 13:39:32 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 2, Errors: 0
+2026-04-15 13:39:32 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 1 mismatches
+2026-04-15 13:39:33 - back_end.slot_monitor.admin.background_encoder - INFO - [BgEncoder] Encoded 819 frames 4877f4c10fd549b0_lid0_1776256746_face.mp4  (30.0s @ 27fps)
+2026-04-15 13:39:35 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=4000 avg_dist=0.0000 avg_time=2.16ms alarms=0 paused=0 errors=0
+2026-04-15 13:39:35 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=4000 avg_dist=0.0000 avg_time=1.53ms alarms=0 paused=0 errors=0
+2026-04-15 13:39:35 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=4000 avg_dist=0.0000 avg_time=1.22ms alarms=0 paused=0 errors=0
+2026-04-15 13:39:35 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=4000 avg_dist=0.3109 avg_time=1.06ms alarms=2 paused=0 errors=0
+2026-04-15 13:39:37 - back_end.slot_monitor.admin.background_encoder - INFO - [BgEncoder] Encoded 496 frames 4877f4c10fd549b0_lid0_1776256746_top.mp4  (99.2s @ 5fps)
+2026-04-15 13:40:02 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 13:40:02 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-15 13:40:02 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 13:40:02 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 4756 frames, 4 subscribers
+2026-04-15 13:40:02 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 18960 frames, avg_dist=0.0812
+2026-04-15 13:40:02 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 2, Errors: 0
+2026-04-15 13:40:02 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 1 mismatches
+2026-04-15 13:40:11 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=5000 avg_dist=0.0000 avg_time=2.21ms alarms=0 paused=0 errors=0
+2026-04-15 13:40:11 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=5000 avg_dist=0.0000 avg_time=1.76ms alarms=0 paused=0 errors=0
+2026-04-15 13:40:11 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=5000 avg_dist=0.0000 avg_time=1.28ms alarms=0 paused=0 errors=0
+2026-04-15 13:40:11 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=5000 avg_dist=0.3285 avg_time=1.19ms alarms=2 paused=0 errors=0
+2026-04-15 13:40:32 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 13:40:32 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-15 13:40:32 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-15 13:40:32 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 5605 frames, 4 subscribers
+2026-04-15 13:40:32 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 22356 frames, avg_dist=0.0840
+2026-04-15 13:40:32 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 2, Errors: 0
+2026-04-15 13:40:32 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 1 mismatches
+2026-04-15 13:40:47 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=6000 avg_dist=0.0000 avg_time=2.35ms alarms=0 paused=0 errors=0
+2026-04-15 13:40:47 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=6000 avg_dist=0.0000 avg_time=1.87ms alarms=0 paused=0 errors=0
+2026-04-15 13:40:47 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=6000 avg_dist=0.0000 avg_time=1.41ms alarms=0 paused=0 errors=0
+2026-04-15 13:40:47 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=6000 avg_dist=0.3403 avg_time=1.39ms alarms=2 paused=0 errors=0
+2026-04-15 13:40:49 - __main__ - INFO - ============================================================
+2026-04-15 13:40:49 - __main__ - INFO - Signal 2 received — shutting down
+2026-04-15 13:40:49 - __main__ - INFO - ============================================================
+2026-04-15 13:40:49 - back_end.server.webrtc_handler - INFO - Shutting down WebRTC handler...
+2026-04-15 13:40:49 - back_end.slot_monitor.headless_slot_monitor - INFO - Stop event received — shutting down slot monitor
+2026-04-15 13:40:49 - back_end.slot_monitor.headless_slot_monitor - INFO - Shutting down slot monitor...
+2026-04-15 13:40:49 - back_end.slot_monitor.worker_async - INFO - Stopping worker pool...
+2026-04-15 13:40:49 - back_end.slot_monitor.worker_async - INFO - Worker 0 cancelled
+2026-04-15 13:40:49 - back_end.slot_monitor.worker_async - INFO - Worker 1 cancelled
+2026-04-15 13:40:49 - back_end.slot_monitor.worker_async - INFO - Worker 2 cancelled
+2026-04-15 13:40:49 - back_end.slot_monitor.worker_async - INFO - Worker 3 cancelled
+2026-04-15 13:40:49 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 0 stopped
+2026-04-15 13:40:49 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 1 stopped
+2026-04-15 13:40:49 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 2 stopped
+2026-04-15 13:40:49 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 3 stopped
+2026-04-15 13:40:49 - back_end.slot_monitor.worker_async - INFO - 4 workers stopped
+2026-04-15 13:40:49 - back_end.slot_monitor.camera.camera_async - INFO - Async camera capture stopped
+2026-04-15 13:40:49 - back_end.slot_monitor.camera.camera_async - INFO - Async camera released
+2026-04-15 13:40:49 - back_end.slot_monitor.db_interface - INFO - AsyncPG pool closed
+2026-04-15 13:40:49 - back_end.slot_monitor.headless_slot_monitor - INFO - Slot monitor shutdown complete
+2026-04-15 13:40:54 - back_end.server.webrtc_handler - WARNING - WebRTC connection close error: 
+2026-04-15 13:40:54 - back_end.server.webrtc_handler - INFO - WebRTC handler shutdown complete
+2026-04-15 13:40:54 - back_end.slot_monitor.camera.top_camera - INFO - [TopCamera] Stopped
+2026-04-15 13:40:54 - back_end.slot_monitor.camera.rolling_buffer - INFO - [TopRollingBuffer] Stopped
+2026-04-15 13:40:54 - back_end.slot_monitor.services.operation_context - INFO - Operation cleanup thread stopped
+2026-04-15 13:40:54 - __main__ - INFO - All modules stopped — exiting

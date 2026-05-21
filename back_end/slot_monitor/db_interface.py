@@ -28,9 +28,9 @@ import logging
 import numpy as np
 from typing import Dict, List, Tuple, Optional
 import asyncpg
-from Backup.back_end.Database.db import get_conn, put_conn
-from Backup.back_end.secrets import Secrets
-from Backup.back_end.config import DatabaseConfig as _DC
+from back_end.Database.db import get_conn, put_conn
+from back_end.secrets import Secrets
+from back_end.config import DatabaseConfig as _DC
 
 logger = logging.getLogger(__name__)
 

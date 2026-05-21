@@ -505,9 +505,16 @@ class _ManageStudentsPageState extends State<ManageStudentsPage> {
             itemCount: _students.length,
             itemBuilder: (_, i) {
               final s = _students[i] as Map<String, dynamic>;
-              final yearStr = s['year_group'] != null
-                  ? '  ·  Year ${s['year_group']}'
-                  : '';
+              // Prefer new year_code field, fall back to legacy year_group for
+              // rows not yet migrated.
+              final yearCode  = s['year_code'] as String?;
+              final yearGroup = s['year_group'];
+              String yearStr = '';
+              if (yearCode != null) {
+                yearStr = '  ·  $yearCode';
+              } else if (yearGroup != null) {
+                yearStr = '  ·  Year $yearGroup';
+              }
               return ListTile(
                 title: Text(
                     '${s['first_name']} ${s['last_name']}'),
@@ -729,8 +736,27 @@ class _EditStudentPageState extends State<EditStudentPage> {
   final _sidCtrl   = TextEditingController();
   final _firstCtrl = TextEditingController();
   final _lastCtrl  = TextEditingController();
-  int?    _yearGroup;
-  List<double>? _embedding;   // null = not yet captured (create) or unchanged (edit)
+
+  // ── Group fields ────────────────────────────────────────────────────
+  // year_code : root group code from config (e.g. 'year1')
+  // sub_group_codes : selected subcodes (empty = access to ALL subs)
+  String?       _yearCode;
+  List<String>  _subGroupCodes = [];
+
+  // Loaded from GET /api/config/groups
+  List<dynamic> _rootGroups  = [];   // [{code, label, children:[...]}, ...]
+  bool          _groupsLoaded = false;
+
+  List<dynamic> get _currentChildren {
+    if (_yearCode == null) return [];
+    // Use where+first instead of firstWhere(orElse: null) to avoid
+    // sound null-safety linting on List<dynamic>.
+    final matches = _rootGroups.where((g) => g['code'] == _yearCode);
+    if (matches.isEmpty) return [];
+    return (matches.first['children'] as List<dynamic>?) ?? [];
+  }
+
+  List<double>? _embedding;
   bool _saving = false;
 
   bool get _isEdit => widget.student != null;
@@ -743,8 +769,21 @@ class _EditStudentPageState extends State<EditStudentPage> {
       _sidCtrl.text   = s['sid']        as String? ?? '';
       _firstCtrl.text = s['first_name'] as String? ?? '';
       _lastCtrl.text  = s['last_name']  as String? ?? '';
-      _yearGroup      = s['year_group'] as int?;
+      // New fields
+      _yearCode      = s['year_code']       as String?;
+      _subGroupCodes = List<String>.from(
+          (s['sub_group_codes'] as List<dynamic>?) ?? []);
     }
+    _fetchGroupsConfig();
+  }
+
+  Future<void> _fetchGroupsConfig() async {
+    final config = await ApiService.fetchGroupsConfig();
+    if (!mounted) return;
+    setState(() {
+      _rootGroups   = (config?['groups'] as List<dynamic>?) ?? [];
+      _groupsLoaded = true;
+    });
   }
 
   @override
@@ -770,24 +809,22 @@ class _EditStudentPageState extends State<EditStudentPage> {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _saving = true);
 
-    final payload = <String, dynamic>{
-      'sid':        _sidCtrl.text.trim().toUpperCase(),
-      'first_name': _firstCtrl.text.trim(),
-      'last_name':  _lastCtrl.text.trim(),
-      'year_group': _yearGroup,    // null → stored as NULL (unrestricted)
-      // 'embed' must be added by the enrolment flow; for admin edits it's
-      // omitted so the existing embedding is preserved via COALESCE.
-    };
+    final sid        = _sidCtrl.text.trim().toUpperCase();
+    final firstName  = _firstCtrl.text.trim();
+    final lastName   = _lastCtrl.text.trim();
+    // sub_group_codes: send [] when user wants to clear all subs;
+    // send null when nothing was touched (COALESCE on server leaves existing).
+    final subCodes = _subGroupCodes.isEmpty ? null : _subGroupCodes;
 
     final bool ok;
     if (_isEdit) {
       final payload = <String, dynamic>{
-        'sid':        _sidCtrl.text.trim().toUpperCase(),
-        'first_name': _firstCtrl.text.trim(),
-        'last_name':  _lastCtrl.text.trim(),
-        'year_group': _yearGroup,
+        'sid':             sid,
+        'first_name':      firstName,
+        'last_name':       lastName,
+        'year_code':       _yearCode,
+        'sub_group_codes': subCodes,
       };
-      // Only send embed if a new one was captured — otherwise COALESCE keeps old
       if (_embedding != null) payload['embed'] = _embedding;
       ok = await ApiService.updateStudent(
           widget.student!['sid'] as String, payload);
@@ -795,18 +832,20 @@ class _EditStudentPageState extends State<EditStudentPage> {
       if (_embedding == null) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Face capture required to create a student')),
+            const SnackBar(
+                content: Text('Face capture required to create a student')),
           );
         }
         setState(() => _saving = false);
         return;
       }
       ok = await ApiService.createStudent({
-        'sid':        _sidCtrl.text.trim().toUpperCase(),
-        'first_name': _firstCtrl.text.trim(),
-        'last_name':  _lastCtrl.text.trim(),
-        'year_group': _yearGroup,
-        'embed':      _embedding,
+        'sid':             sid,
+        'first_name':      firstName,
+        'last_name':       lastName,
+        'year_code':       _yearCode,
+        'sub_group_codes': subCodes,
+        'embed':           _embedding,
       });
     }
 
@@ -897,28 +936,83 @@ class _EditStudentPageState extends State<EditStudentPage> {
             ),
             const SizedBox(height: 14),
 
-            // ── Year group ────────────────────────────────
-            DropdownButtonFormField<int?>(
-              value:       _yearGroup,
-              decoration: const InputDecoration(
-                labelText:  'Year group',
-                prefixIcon: Icon(Icons.school_outlined),
-                border:     OutlineInputBorder(),
-                helperText: 'Leave blank for no restriction',
-              ),
-              items: [
-                const DropdownMenuItem<int?>(
-                  value: null,
-                  child: Text('— Any year (unrestricted) —'),
+            // ── Year / Group picker ─────────────────────────────────────
+            // Level 1: root year code (year1, year2…) — single select.
+            // Level 2: subcodes within that year — multi-select chips.
+            //   No subcode selected = access to ALL subs of that year.
+            if (!_groupsLoaded)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+              )
+            else
+              DropdownButtonFormField<String?>(
+                value:       _yearCode,
+                decoration: const InputDecoration(
+                  labelText:  'Year / Group',
+                  prefixIcon: Icon(Icons.school_outlined),
+                  border:     OutlineInputBorder(),
+                  helperText: 'Leave blank for no restriction',
                 ),
-                for (int y = 1; y <= 10; y++)
-                  DropdownMenuItem<int?>(
-                    value: y,
-                    child: Text('Year $y'),
+                items: [
+                  const DropdownMenuItem<String?>(
+                    value: null,
+                    child: Text('\u2014 Any group (unrestricted) \u2014'),
                   ),
-              ],
-              onChanged: (v) => setState(() => _yearGroup = v),
-            ),
+                  for (final g in _rootGroups)
+                    DropdownMenuItem<String?>(
+                      value: g['code'] as String,
+                      child: Text(
+                          g['label'] as String? ?? g['code'] as String),
+                    ),
+                ],
+                onChanged: (v) => setState(() {
+                  _yearCode      = v;
+                  _subGroupCodes = [];   // reset when root changes
+                }),
+              ),
+
+            // Level 2 chips — shown when a root year with children is selected
+            if (_yearCode != null && _currentChildren.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              InputDecorator(
+                decoration: InputDecoration(
+                  labelText: 'Subcategories (optional)',
+                  helperText: _subGroupCodes.isEmpty
+                      ? 'None selected \u2192 access to all subcategories'
+                      : '${_subGroupCodes.length} selected',
+                  border: const OutlineInputBorder(),
+                  prefixIcon: const Icon(Icons.group_outlined),
+                ),
+                child: Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: [
+                    for (final child in _currentChildren)
+                      FilterChip(
+                        label: Text(child['label'] as String? ??
+                            child['code'] as String),
+                        selected: _subGroupCodes
+                            .contains(child['code'] as String),
+                        onSelected: (selected) {
+                          setState(() {
+                            final code = child['code'] as String;
+                            if (selected) {
+                              if (!_subGroupCodes.contains(code)) {
+                                _subGroupCodes = [..._subGroupCodes, code];
+                              }
+                            } else {
+                              _subGroupCodes = _subGroupCodes
+                                  .where((c) => c != code)
+                                  .toList();
+                            }
+                          });
+                        },
+                      ),
+                  ],
+                ),
+              ),
+            ],
             const SizedBox(height: 16),
 
             // ── Face embedding (required for create, optional update) ──

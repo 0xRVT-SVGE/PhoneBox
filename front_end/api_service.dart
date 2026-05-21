@@ -323,4 +323,44 @@ class ApiService {
       return null;
     }
   }
-}
+
+  // ====================== CONFIG ======================
+
+  // Cached in-memory — groups config doesn't change at runtime.
+  static Map<String, dynamic>? _cachedGroupsConfig;
+
+  /// GET /api/config/groups
+  /// Returns { "groups": [...], "phone_sizes": [...] }.
+  /// Result is cached for the lifetime of the app session.
+  static Future<Map<String, dynamic>?> fetchGroupsConfig({bool forceRefresh = false}) async {
+    if (_cachedGroupsConfig != null && !forceRefresh) return _cachedGroupsConfig;
+    try {
+      final res = await _dio.get('/api/config/groups');
+      if (res.statusCode == 200) {
+        final body = res.data as Map<String, dynamic>?;
+        if (body?['status'] == 'success') {
+          _cachedGroupsConfig = body!['data'] as Map<String, dynamic>;
+          return _cachedGroupsConfig;
+        }
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// GET /api/config/current_box
+  /// Returns the current box metadata including accepted groups and sizes.
+  static Future<Map<String, dynamic>?> fetchCurrentBox() async {
+    try {
+      final res = await _dio.get('/api/config/current_box');
+      if (res.statusCode == 200) {
+        final body = res.data as Map<String, dynamic>?;
+        if (body?['status'] == 'success') return body!['data'] as Map<String, dynamic>;
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+}

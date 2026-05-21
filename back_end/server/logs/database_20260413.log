@@ -1,0 +1,1063 @@
+2026-04-13 15:23:18 - tensorflow - WARNING - From C:\Users\enpei\PycharmProjects\PhoneBox\.venv\Lib\site-packages\tf_keras\src\losses.py:2976: The name tf.losses.sparse_softmax_cross_entropy is deprecated. Please use tf.compat.v1.losses.sparse_softmax_cross_entropy instead.
+
+2026-04-13 15:23:20 - back_end.server.webrtc_handler - INFO - Hardware acceleration: NVIDIA (h264_nvenc)
+2026-04-13 15:23:20 - back_end.server.app - INFO - API blueprints registered
+2026-04-13 15:23:21 - back_end.server.app - INFO - SocketIO initialized
+2026-04-13 15:23:21 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:23:21 - back_end.slot_monitor.headless_slot_monitor - INFO - HEADLESS SLOT MONITOR (PRODUCTION MODE)
+2026-04-13 15:23:21 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:23:21 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 1 (1280x720 @ 30fps)
+2026-04-13 15:23:21 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 4 | Thresholds: mismatch=0.15, recalc=0.05
+2026-04-13 15:23:21 - back_end.slot_monitor.slot_operations - INFO - SlotOperations initialized
+2026-04-13 15:23:21 - back_end.server.app - INFO - Slot monitor created (not started yet)
+2026-04-13 15:23:21 - back_end.server.app - INFO - Flask application ready
+2026-04-13 15:23:21 - __main__ - INFO - ============================================================
+2026-04-13 15:23:21 - __main__ - INFO - PHONE BOX SERVER — STARTING
+2026-04-13 15:23:21 - __main__ - INFO - ============================================================
+2026-04-13 15:23:21 - __main__ - INFO - Scan worker started
+2026-04-13 15:23:21 - back_end.server.webrtc_handler - INFO - WebRTC async event loop started
+2026-04-13 15:23:21 - __main__ - INFO - Scanner loop started
+2026-04-13 15:23:21 - back_end.slot_monitor.camera.top_camera - INFO - [TopCamera] Started on camera index 2
+2026-04-13 15:23:21 - back_end.slot_monitor.camera.rolling_buffer - INFO - [TopRollingBuffer] Started (5 fps idle)
+2026-04-13 15:23:21 - __main__ - INFO - Top camera started (eager)
+2026-04-13 15:23:21 - back_end.slot_monitor.ops_handler - INFO - DVW WebSocket handlers registered
+2026-04-13 15:23:21 - back_end.slot_monitor.services.operation_context - INFO - Operation cleanup thread started
+2026-04-13 15:23:21 - __main__ - INFO - DVW system ready
+2026-04-13 15:23:21 - __main__ - INFO - ROI calibration: 4 lids from DB
+2026-04-13 15:23:21 - back_end.slot_monitor.tools.roi_calibration - INFO - [ROI Calibration] Capturing frame from camera 1…
+2026-04-13 15:23:22 - back_end.slot_monitor.tools.roi_calibration - INFO - [ROI Calibration] Editing BOTTOM CAMERA — Slot monitoring (cam 1) (640×480, 4 lids). Press X/Enter to confirm.
+2026-04-13 15:23:39 - back_end.slot_monitor.tools.roi_calibration - INFO - [ROI Calibration] Saved 4 ROIs to C:\Users\enpei\PycharmProjects\PhoneBox\back_end\slot_monitor\tools\rois_bottom.json
+2026-04-13 15:23:39 - back_end.slot_monitor.tools.roi_calibration - INFO - [ROI Calibration] Capturing frame from camera 2…
+2026-04-13 15:23:40 - back_end.slot_monitor.tools.roi_calibration - INFO - [ROI Calibration] Editing TOP-DOWN CAMERA — Admin / evidence (cam 2) (640×480, 4 lids). Press X/Enter to confirm.
+2026-04-13 15:23:41 - back_end.slot_monitor.tools.roi_calibration - INFO - [ROI Calibration] Saved 4 ROIs to C:\Users\enpei\PycharmProjects\PhoneBox\back_end\slot_monitor\tools\rois_top.json
+2026-04-13 15:23:41 - back_end.slot_monitor.tools.roi_calibration - INFO - [ROI Calibration] Complete.
+2026-04-13 15:23:41 - back_end.slot_monitor.headless_slot_monitor - INFO - Slot monitor thread started
+2026-04-13 15:23:41 - __main__ - INFO - Slot monitor started
+2026-04-13 15:23:41 - back_end.slot_monitor.slot_operations - INFO - Monitor attached to SlotOperations
+2026-04-13 15:23:41 - back_end.server.app - INFO - Monitor connected to SlotOperations
+2026-04-13 15:23:41 - __main__ - INFO - Waiting for slot monitor setup to complete...
+2026-04-13 15:23:41 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:23:41 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR SETUP
+2026-04-13 15:23:41 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:23:41 - back_end.slot_monitor.headless_slot_monitor - INFO - Connecting to database...
+2026-04-13 15:23:41 - back_end.slot_monitor.camera.top_camera - WARNING - [TopCamera] Frame read failed
+2026-04-13 15:23:42 - back_end.slot_monitor.db_interface - INFO - AsyncPG pool created: 5-20 connections to localhost:5432/PhoneBoxDB
+2026-04-13 15:23:42 - back_end.slot_monitor.headless_slot_monitor - INFO - Database ready (pool: 5-20)
+2026-04-13 15:23:42 - back_end.slot_monitor.headless_slot_monitor - INFO - Setting up camera...
+2026-04-13 15:23:42 - back_end.slot_monitor.camera.camera_async - INFO - Event loop attached to AsyncFrameBuffer
+2026-04-13 15:23:42 - back_end.slot_monitor.camera.camera_async - INFO - Waiting for first frame...
+2026-04-13 15:23:42 - back_end.slot_monitor.camera.camera_async - INFO - Camera 1 opened: 1280x720 @ 29fps
+2026-04-13 15:23:43 - back_end.slot_monitor.camera.camera_async - INFO - Async camera 1 started (1280x720 @ 30fps)
+2026-04-13 15:23:43 - back_end.slot_monitor.camera.camera_async - INFO - AsyncCameraCapture initialized (cam 1, 1280x720)
+2026-04-13 15:23:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Auto grid: 2x2 for 4 slots
+2026-04-13 15:23:43 - back_end.slot_monitor.slots - INFO - [Slots] Loaded 4 ROIs from C:\Users\enpei\PycharmProjects\PhoneBox\back_end\slot_monitor\tools\rois_bottom.json
+2026-04-13 15:23:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera ready — 4 ROIs generated
+2026-04-13 15:23:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Checking baselines...
+2026-04-13 15:23:43 - back_end.slot_monitor.db_interface - INFO - Fetched 4 baselines from DB (async)
+2026-04-13 15:23:43 - back_end.slot_monitor.headless_slot_monitor - WARNING -   Slot 0: MISMATCH (dist=0.3165)
+2026-04-13 15:23:43 - back_end.slot_monitor.headless_slot_monitor - WARNING -   Slot 1: MISMATCH (dist=0.1652)
+2026-04-13 15:23:43 - back_end.slot_monitor.headless_slot_monitor - WARNING -   Slot 2: MISMATCH (dist=0.2850)
+2026-04-13 15:23:43 - back_end.slot_monitor.headless_slot_monitor - INFO -   Slot 3: OK (dist=0.0686)
+2026-04-13 15:23:43 - back_end.slot_monitor.db_interface - INFO - Saved 1 baselines in batch (async)
+2026-04-13 15:23:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Updated 1 baselines
+2026-04-13 15:23:43 - back_end.slot_monitor.headless_slot_monitor - CRITICAL - 3 SLOT(S) WITH MISMATCHES — MANUAL INTERVENTION REQUIRED
+2026-04-13 15:23:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Initializing slot states from database...
+2026-04-13 15:23:43 - back_end.slot_monitor.db_interface - INFO - Fetched 2 occupied slots from DB (async)
+2026-04-13 15:23:43 - back_end.slot_monitor.db_interface - INFO - Fetched 4 baselines from DB (async)
+2026-04-13 15:23:43 - back_end.slot_monitor.headless_slot_monitor - INFO - 2 occupied slots, 4 baselines
+2026-04-13 15:23:43 - back_end.slot_monitor.headless_slot_monitor - INFO -   Slot 0: OCCUPIED (PID: 4877f4c1-0fd5-49b0-ac1a-2db9eafa8249)
+2026-04-13 15:23:43 - back_end.slot_monitor.headless_slot_monitor - INFO -   Slot 1: OCCUPIED (PID: c76d7cd4-ab52-4a56-9c66-0c4fb777d087)
+2026-04-13 15:23:43 - back_end.slot_monitor.headless_slot_monitor - INFO -   Slot 2: EMPTY
+2026-04-13 15:23:43 - back_end.slot_monitor.headless_slot_monitor - INFO -   Slot 3: EMPTY
+2026-04-13 15:23:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Initialized 4 slots
+2026-04-13 15:23:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Creating 4 workers...
+2026-04-13 15:23:43 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 0 initialized: slots=[0]
+2026-04-13 15:23:43 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 1 initialized: slots=[1]
+2026-04-13 15:23:43 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 2 initialized: slots=[2]
+2026-04-13 15:23:43 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 3 initialized: slots=[3]
+2026-04-13 15:23:43 - back_end.slot_monitor.worker_async - INFO - WorkerPool created: 4 workers, 4 slots
+2026-04-13 15:23:43 - back_end.slot_monitor.headless_slot_monitor - INFO - 4 workers ready
+2026-04-13 15:23:43 - back_end.slot_monitor.services.operation_context - INFO - WorkerPool attached to OperationContext
+2026-04-13 15:23:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Setup complete
+2026-04-13 15:23:43 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:23:43 - back_end.slot_monitor.headless_slot_monitor - INFO - MONITORING ACTIVE
+2026-04-13 15:23:43 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:23:43 - back_end.slot_monitor.worker_async - INFO - Starting worker pool...
+2026-04-13 15:23:43 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 0 started
+2026-04-13 15:23:43 - back_end.slot_monitor.admin.admin_ops_handler - INFO - Admin resolution WebSocket handlers registered
+2026-04-13 15:23:43 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 1 started
+2026-04-13 15:23:43 - __main__ - INFO - Admin resolution system ready
+2026-04-13 15:23:43 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 2 started
+2026-04-13 15:23:43 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 3 started
+2026-04-13 15:23:43 - back_end.slot_monitor.worker_async - INFO - Worker 0 entering event-driven loop
+2026-04-13 15:23:43 - __main__ - INFO - Ready — press Ctrl+C to stop
+2026-04-13 15:23:43 - back_end.slot_monitor.worker_async - INFO - Worker 1 entering event-driven loop
+2026-04-13 15:23:43 - werkzeug - WARNING - Werkzeug appears to be used in a production deployment. Consider switching to a production web server instead.
+2026-04-13 15:23:43 - back_end.slot_monitor.worker_async - INFO - Worker 2 entering event-driven loop
+2026-04-13 15:23:43 - back_end.slot_monitor.worker_async - INFO - Worker 3 entering event-driven loop
+2026-04-13 15:23:43 - back_end.slot_monitor.worker_async - INFO - 4 workers started
+2026-04-13 15:23:43 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.0.2:5000
+2026-04-13 15:23:43 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2026-04-13 15:23:46 - socketio.server - INFO - received event "get_status" from Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:23:46 - socketio.server - INFO - emitting event "scan_status" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:23:46 - socketio.server - INFO - received event "get_alarm_status" from Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:23:46 - socketio.server - INFO - emitting event "alarm_status" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:23:46 - back_end.slot_monitor.alarm_controller - WARNING - Physical alarm started
+2026-04-13 15:23:46 - back_end.slot_monitor.alarm_controller - WARNING - ALARM ACTIVATED
+2026-04-13 15:23:46 - socketio.server - INFO - emitting event "alarm_triggered" to all [/]
+2026-04-13 15:23:46 - back_end.slot_monitor.alarm_controller - WARNING - Mismatch added: PID=4877f4c1-0fd5-49b0-ac1a-2db9eafa8249, LID=0
+2026-04-13 15:23:46 - socketio.server - INFO - emitting event "alarm_updated" to all [/]
+2026-04-13 15:23:46 - back_end.slot_monitor.worker_async - CRITICAL - Worker 0: ALARM! LID=0 PID=4877f4c1-0fd5-49b0-ac1a-2db9eafa8249 dist=0.3165
+2026-04-13 15:23:46 - back_end.slot_monitor.alarm_controller - WARNING - Mismatch added: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087, LID=1
+2026-04-13 15:23:46 - socketio.server - INFO - emitting event "alarm_updated" to all [/]
+2026-04-13 15:23:46 - back_end.slot_monitor.worker_async - CRITICAL - Worker 1: ALARM! LID=1 PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 dist=0.1652
+2026-04-13 15:23:46 - back_end.slot_monitor.alarm_controller - WARNING - Mismatch added: PID=unknown-2, LID=2
+2026-04-13 15:23:46 - socketio.server - INFO - emitting event "alarm_updated" to all [/]
+2026-04-13 15:23:46 - back_end.slot_monitor.worker_async - CRITICAL - Worker 2: ALARM! LID=2 PID=unknown-2 dist=0.2850
+2026-04-13 15:23:47 - socketio.server - INFO - received event "get_alarm_status" from Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:23:47 - socketio.server - INFO - emitting event "alarm_status" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:23:48 - werkzeug - INFO - 127.0.0.1 - - [13/Apr/2026 15:23:48] "POST /webrtc/cancel/admin HTTP/1.1" 200 -
+2026-04-13 15:23:50 - werkzeug - INFO - 127.0.0.1 - - [13/Apr/2026 15:23:50] "OPTIONS /webrtc/offer/main HTTP/1.1" 200 -
+2026-04-13 15:23:50 - aioice.ice - INFO - Connection(0) Could not bind to 169.254.213.224 - [WinError 10049] The requested address is not valid in its context
+2026-04-13 15:23:50 - aioice.ice - INFO - Connection(0) Could not bind to 169.254.207.190 - [WinError 10049] The requested address is not valid in its context
+2026-04-13 15:23:50 - aioice.ice - INFO - Connection(0) Could not bind to 169.254.21.235 - [WinError 10049] The requested address is not valid in its context
+2026-04-13 15:23:50 - aioice.ice - INFO - Connection(0) Could not bind to 192.168.137.1 - [WinError 10049] The requested address is not valid in its context
+2026-04-13 15:23:50 - werkzeug - INFO - 127.0.0.1 - - [13/Apr/2026 15:23:50] "OPTIONS /webrtc/offer/admin HTTP/1.1" 200 -
+2026-04-13 15:23:50 - aioice.ice - INFO - Connection(1) Could not bind to 169.254.213.224 - [WinError 10049] The requested address is not valid in its context
+2026-04-13 15:23:50 - aioice.ice - INFO - Connection(1) Could not bind to 169.254.207.190 - [WinError 10049] The requested address is not valid in its context
+2026-04-13 15:23:50 - aioice.ice - INFO - Connection(1) Could not bind to 169.254.21.235 - [WinError 10049] The requested address is not valid in its context
+2026-04-13 15:23:50 - aioice.ice - INFO - Connection(1) Could not bind to 192.168.137.1 - [WinError 10049] The requested address is not valid in its context
+2026-04-13 15:23:53 - back_end.slot_monitor.alarm_controller - WARNING - Mismatch added: PID=unknown-3, LID=3
+2026-04-13 15:23:53 - socketio.server - INFO - emitting event "alarm_updated" to all [/]
+2026-04-13 15:23:53 - back_end.slot_monitor.worker_async - CRITICAL - Worker 3: ALARM! LID=3 PID=unknown-3 dist=0.9819
+2026-04-13 15:23:55 - werkzeug - INFO - 127.0.0.1 - - [13/Apr/2026 15:23:55] "POST /webrtc/offer/main HTTP/1.1" 200 -
+2026-04-13 15:23:55 - werkzeug - INFO - 127.0.0.1 - - [13/Apr/2026 15:23:55] "POST /webrtc/offer/admin HTTP/1.1" 200 -
+2026-04-13 15:23:55 - aioice.ice - INFO - Connection(0) Discovered peer reflexive candidate Candidate(KkdvV7pfx6 1 udp 1845501695 192.168.56.1 51035 typ prflx)
+2026-04-13 15:23:55 - aioice.ice - INFO - Connection(0) Check CandidatePair(('192.168.56.1', 63919) -> ('192.168.56.1', 51035)) State.WAITING -> State.IN_PROGRESS
+2026-04-13 15:23:55 - aioice.ice - INFO - Connection(0) Check CandidatePair(('192.168.56.1', 63919) -> ('192.168.56.1', 51035)) State.IN_PROGRESS -> State.SUCCEEDED
+2026-04-13 15:23:55 - aioice.ice - INFO - Connection(0) ICE completed
+2026-04-13 15:23:55 - aioice.ice - INFO - Connection(0) Discovered peer reflexive candidate Candidate(LeuchcICo7 1 udp 1845501695 192.168.0.2 51035 typ prflx)
+2026-04-13 15:23:56 - aioice.ice - INFO - Connection(0) Check CandidatePair(('192.168.0.2', 63920) -> ('192.168.0.2', 51035)) State.WAITING -> State.IN_PROGRESS
+2026-04-13 15:23:56 - aioice.ice - INFO - Connection(0) Check CandidatePair(('192.168.0.2', 63920) -> ('192.168.0.2', 51035)) State.IN_PROGRESS -> State.SUCCEEDED
+2026-04-13 15:23:56 - aioice.ice - INFO - Connection(1) Discovered peer reflexive candidate Candidate(8T9qiR29d4 1 udp 1845501695 192.168.56.1 63917 typ prflx)
+2026-04-13 15:23:56 - aioice.ice - INFO - Connection(1) Check CandidatePair(('192.168.56.1', 63921) -> ('192.168.56.1', 63917)) State.WAITING -> State.IN_PROGRESS
+2026-04-13 15:23:56 - aioice.ice - INFO - Connection(1) Check CandidatePair(('192.168.56.1', 63921) -> ('192.168.56.1', 63917)) State.IN_PROGRESS -> State.SUCCEEDED
+2026-04-13 15:23:56 - aioice.ice - INFO - Connection(1) ICE completed
+2026-04-13 15:23:57 - aioice.ice - INFO - Connection(1) Discovered peer reflexive candidate Candidate(EJeHepvaiE 1 udp 1845501695 192.168.0.2 63917 typ prflx)
+2026-04-13 15:23:57 - aioice.ice - INFO - Connection(1) Check CandidatePair(('192.168.0.2', 63922) -> ('192.168.0.2', 63917)) State.WAITING -> State.IN_PROGRESS
+2026-04-13 15:23:57 - aioice.ice - INFO - Connection(1) Check CandidatePair(('192.168.0.2', 63922) -> ('192.168.0.2', 63917)) State.IN_PROGRESS -> State.SUCCEEDED
+2026-04-13 15:23:57 - back_end.slot_monitor.alarm_controller - INFO - Mismatch resolved: PID=unknown-3, LID=3
+2026-04-13 15:23:57 - back_end.slot_monitor.worker_async - INFO - Worker 3: mismatch resolved for LID=3
+2026-04-13 15:23:57 - back_end.slot_monitor.alarm_controller - INFO - Mismatch resolved: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087, LID=1
+2026-04-13 15:23:57 - back_end.slot_monitor.worker_async - INFO - Worker 1: mismatch resolved for LID=1
+2026-04-13 15:23:58 - back_end.slot_monitor.worker_async - INFO - Worker 3: baseline adapted LID=3 dist=0.0968
+2026-04-13 15:23:58 - back_end.slot_monitor.worker_async - INFO - Worker 1: baseline adapted LID=1 dist=0.0597
+2026-04-13 15:24:01 - back_end.slot_monitor.alarm_controller - WARNING - Mismatch added: PID=unknown-3, LID=3
+2026-04-13 15:24:01 - socketio.server - INFO - emitting event "alarm_updated" to all [/]
+2026-04-13 15:24:01 - back_end.slot_monitor.worker_async - CRITICAL - Worker 3: ALARM! LID=3 PID=unknown-3 dist=1.0000
+2026-04-13 15:24:01 - back_end.slot_monitor.alarm_controller - WARNING - Mismatch added: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087, LID=1
+2026-04-13 15:24:01 - socketio.server - INFO - emitting event "alarm_updated" to all [/]
+2026-04-13 15:24:01 - back_end.slot_monitor.worker_async - CRITICAL - Worker 1: ALARM! LID=1 PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 dist=0.7983
+2026-04-13 15:24:05 - socketio.server - INFO - received event "alarm_acknowledge" from Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:24:05 - back_end.slot_monitor.alarm_controller - INFO - Physical alarm stopped
+2026-04-13 15:24:05 - back_end.slot_monitor.alarm_controller - INFO - Alarm silenced — mismatches remain, resolution in progress
+2026-04-13 15:24:05 - socketio.server - INFO - emitting event "alarm_acknowledge_result" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:24:06 - socketio.server - INFO - received event "admin_session_start" from Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:24:06 - back_end.slot_monitor.admin.resolution_session - INFO - [ResolutionSession] 40d5afa1 opened — 4 mismatches, phone_count=2
+2026-04-13 15:24:06 - back_end.slot_monitor.camera.rolling_buffer - INFO - [TopRollingBuffer] Active mode (20 fps)
+2026-04-13 15:24:06 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Session started: 40d5afa1  dir=evidence\40d5afa1
+2026-04-13 15:24:06 - back_end.slot_monitor.worker_async - INFO - Worker 3: slot 3 paused
+2026-04-13 15:24:06 - back_end.slot_monitor.worker_async - INFO - Worker 2: slot 2 paused
+2026-04-13 15:24:06 - back_end.slot_monitor.worker_async - INFO - Worker 1: slot 1 paused
+2026-04-13 15:24:06 - back_end.slot_monitor.worker_async - INFO - Worker 0: slot 0 paused
+2026-04-13 15:24:06 - back_end.slot_monitor.phone_tracker - INFO - [Tracker] Loaded 4 top-cam ROIs from C:\Users\enpei\PycharmProjects\PhoneBox\back_end\slot_monitor\tools\rois_top.json
+2026-04-13 15:24:06 - back_end.slot_monitor.admin.admin_ops_handler - INFO - [StagingConfig] Loaded 2 staging ROIs from C:\Users\enpei\PycharmProjects\PhoneBox\back_end\slot_monitor\admin\staging_rois.json
+2026-04-13 15:24:06 - socketio.server - INFO - emitting event "admin_session_opened" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:24:07 - socketio.server - INFO - received event "admin_pre_highlight_slot" from Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:24:08 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 591 frames (20.9s) to unknown2_lid2_1776090226_face.mp4
+2026-04-13 15:24:08 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [FaceRollingBuffer] Alarm clip saved: unknown2_lid2_1776090226_face.mp4
+2026-04-13 15:24:08 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 590 frames (20.8s) to c76d7cd4ab524a56_lid1_1776090226_face.mp4
+2026-04-13 15:24:08 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [FaceRollingBuffer] Alarm clip saved: c76d7cd4ab524a56_lid1_1776090226_face.mp4
+2026-04-13 15:24:08 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 590 frames (20.8s) to 4877f4c10fd549b0_lid0_1776090226_face.mp4
+2026-04-13 15:24:08 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [FaceRollingBuffer] Alarm clip saved: 4877f4c10fd549b0_lid0_1776090226_face.mp4
+2026-04-13 15:24:11 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 147 frames (7.3s) to unknown2_lid2_1776090248_top.mp4
+2026-04-13 15:24:11 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [TopRollingBuffer] Alarm clip saved: unknown2_lid2_1776090248_top.mp4
+2026-04-13 15:24:11 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 147 frames (7.3s) to c76d7cd4ab524a56_lid1_1776090248_top.mp4
+2026-04-13 15:24:11 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [TopRollingBuffer] Alarm clip saved: c76d7cd4ab524a56_lid1_1776090248_top.mp4
+2026-04-13 15:24:11 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 147 frames (7.3s) to 4877f4c10fd549b0_lid0_1776090248_top.mp4
+2026-04-13 15:24:11 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [TopRollingBuffer] Alarm clip saved: 4877f4c10fd549b0_lid0_1776090248_top.mp4
+2026-04-13 15:24:13 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:24:13 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-13 15:24:13 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:24:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 764 frames, 4 subscribers
+2026-04-13 15:24:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 2647 frames, avg_dist=0.5080
+2026-04-13 15:24:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 6, Errors: 0
+2026-04-13 15:24:13 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 4 mismatches
+2026-04-13 15:24:14 - socketio.server - INFO - received event "admin_pre_highlight_slot" from Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:24:27 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=1000 avg_dist=0.3576 avg_time=3.40ms alarms=1 paused=1 errors=0
+2026-04-13 15:24:27 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=1000 avg_dist=0.3337 avg_time=3.31ms alarms=1 paused=1 errors=0
+2026-04-13 15:24:27 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=1000 avg_dist=0.3239 avg_time=3.07ms alarms=2 paused=1 errors=0
+2026-04-13 15:24:27 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=1000 avg_dist=0.3296 avg_time=2.65ms alarms=2 paused=1 errors=0
+2026-04-13 15:24:28 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 792 frames (27.6s) to unknown3_lid3_1776090233_face.mp4
+2026-04-13 15:24:28 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [FaceRollingBuffer] Alarm clip saved: unknown3_lid3_1776090233_face.mp4
+2026-04-13 15:24:35 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 396 frames (19.8s) to unknown3_lid3_1776090268_top.mp4
+2026-04-13 15:24:35 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [TopRollingBuffer] Alarm clip saved: unknown3_lid3_1776090268_top.mp4
+2026-04-13 15:24:36 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 826 frames (30.0s) to c76d7cd4ab524a56_lid1_1776090241_face.mp4
+2026-04-13 15:24:36 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [FaceRollingBuffer] Alarm clip saved: c76d7cd4ab524a56_lid1_1776090241_face.mp4
+2026-04-13 15:24:37 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 828 frames (30.0s) to unknown3_lid3_1776090241_face.mp4
+2026-04-13 15:24:37 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [FaceRollingBuffer] Alarm clip saved: unknown3_lid3_1776090241_face.mp4
+2026-04-13 15:24:43 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:24:43 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-13 15:24:43 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:24:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 1508 frames, 4 subscribers
+2026-04-13 15:24:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 5607 frames, avg_dist=0.2398
+2026-04-13 15:24:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 6, Errors: 0
+2026-04-13 15:24:43 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 4 mismatches
+2026-04-13 15:24:43 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 495 frames (24.8s) to c76d7cd4ab524a56_lid1_1776090276_top.mp4
+2026-04-13 15:24:43 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [TopRollingBuffer] Alarm clip saved: c76d7cd4ab524a56_lid1_1776090276_top.mp4
+2026-04-13 15:24:45 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 509 frames (25.4s) to unknown3_lid3_1776090277_top.mp4
+2026-04-13 15:24:45 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [TopRollingBuffer] Alarm clip saved: unknown3_lid3_1776090277_top.mp4
+2026-04-13 15:25:05 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=2000 avg_dist=0.1788 avg_time=1.71ms alarms=1 paused=1 errors=0
+2026-04-13 15:25:05 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=2000 avg_dist=0.1668 avg_time=1.66ms alarms=1 paused=1 errors=0
+2026-04-13 15:25:05 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=2000 avg_dist=0.1619 avg_time=1.54ms alarms=2 paused=1 errors=0
+2026-04-13 15:25:05 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=2000 avg_dist=0.1648 avg_time=1.33ms alarms=2 paused=1 errors=0
+2026-04-13 15:25:13 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:25:13 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-13 15:25:13 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:25:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 2333 frames, 4 subscribers
+2026-04-13 15:25:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 8903 frames, avg_dist=0.1510
+2026-04-13 15:25:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 6, Errors: 0
+2026-04-13 15:25:13 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 4 mismatches
+2026-04-13 15:25:20 - socketio.server - INFO - received event "admin_remove_phone" from Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:25:20 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Recording started: PID=pending-lid1 LID=1  pendinglid1_lid1_1776090320.mp4  (pre-buffer=576 frames)
+2026-04-13 15:25:20 - back_end.slot_monitor.admin.admin_ops_handler - INFO - [AdminSession] 40d5afa1 — object removed from lid=1, auto-starting QR scan
+2026-04-13 15:25:20 - socketio.server - INFO - emitting event "admin_remove_ok" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:25:20 - back_end.slot_monitor.camera.qr_pid_reader - INFO - QR scan started via frame buffer (timeout=90.0s)
+2026-04-13 15:25:29 - back_end.slot_monitor.camera.qr_pid_reader - INFO - QR scan (buffer): PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087
+2026-04-13 15:25:29 - back_end.slot_monitor.camera.qr_pid_reader - INFO - PID c76d7cd4-ab52-4a56-9c66-0c4fb777d087 validated (buffer)
+2026-04-13 15:25:29 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Clip deleted (clean resolution): pendinglid1_lid1_1776090320.mp4
+2026-04-13 15:25:29 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Clip deleted — PID=pending-lid1  duration=8.6s
+2026-04-13 15:25:29 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Recording started: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 LID=1  c76d7cd4ab524a56_lid1_1776090329.mp4  (pre-buffer=575 frames)
+2026-04-13 15:25:29 - socketio.server - INFO - emitting event "admin_qr_result" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:25:29 - back_end.slot_monitor.worker_async - INFO - Worker 1: slot 1 paused
+2026-04-13 15:25:29 - socketio.server - INFO - emitting event "tracking_started" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:25:29 - back_end.slot_monitor.phone_tracker - INFO - [Tracker] PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 LID=1 — detecting phone
+2026-04-13 15:25:33 - back_end.slot_monitor.phone_tracker - INFO - [Tracker] CSRT initialised at bbox=(170, 62, 384, 418)
+2026-04-13 15:25:34 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:25:34 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:25:35 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:25:36 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:25:37 - back_end.slot_monitor.phone_tracker - WARNING - [Tracker] PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 LID=1 failed: qr_lost
+2026-04-13 15:25:37 - back_end.slot_monitor.worker_async - INFO - Worker 1: slot 1 restored (is_occupied=False)
+2026-04-13 15:25:37 - back_end.slot_monitor.admin.admin_ops_handler - WARNING - [AdminSession] 40d5afa1 — placement failed: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 lid=1 reason=qr_lost
+2026-04-13 15:25:37 - socketio.server - INFO - emitting event "admin_operation_error" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:25:37 - back_end.slot_monitor.worker_async - INFO - Worker 1: baseline adapted LID=1 dist=0.1228
+2026-04-13 15:25:37 - back_end.slot_monitor.admin.evidence_recorder - WARNING - [Evidence] Top-cam clip KEPT: c76d7cd4ab524a56_lid1_1776090329.mp4 (575 frames, 8.4s)
+2026-04-13 15:25:37 - back_end.slot_monitor.admin.evidence_recorder - WARNING - [Evidence] Clip kept — reason='placement_failed_qr_lost'  PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087  duration=8.4s
+2026-04-13 15:25:40 - back_end.slot_monitor.alarm_controller - WARNING - Mismatch added: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087, LID=1
+2026-04-13 15:25:40 - socketio.server - INFO - emitting event "alarm_updated" to all [/]
+2026-04-13 15:25:40 - back_end.slot_monitor.worker_async - CRITICAL - Worker 1: ALARM! LID=1 PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 dist=0.2112
+2026-04-13 15:25:42 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=3000 avg_dist=0.1192 avg_time=1.14ms alarms=1 paused=1 errors=0
+2026-04-13 15:25:42 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=3000 avg_dist=0.1112 avg_time=1.11ms alarms=1 paused=1 errors=0
+2026-04-13 15:25:42 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=3000 avg_dist=0.1080 avg_time=1.03ms alarms=2 paused=1 errors=0
+2026-04-13 15:25:42 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=3000 avg_dist=0.1184 avg_time=1.20ms alarms=3 paused=0 errors=0
+2026-04-13 15:25:43 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:25:43 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-13 15:25:43 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:25:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 3148 frames, 4 subscribers
+2026-04-13 15:25:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 12163 frames, avg_dist=0.1134
+2026-04-13 15:25:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 7, Errors: 0
+2026-04-13 15:25:43 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 4 mismatches
+2026-04-13 15:25:45 - socketio.server - INFO - received event "admin_remove_phone" from Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:25:45 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Recording started: PID=pending-lid1 LID=1  pendinglid1_lid1_1776090345.mp4  (pre-buffer=571 frames)
+2026-04-13 15:25:45 - back_end.slot_monitor.admin.admin_ops_handler - INFO - [AdminSession] 40d5afa1 — object removed from lid=1, auto-starting QR scan
+2026-04-13 15:25:45 - socketio.server - INFO - emitting event "admin_remove_ok" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:25:45 - back_end.slot_monitor.camera.qr_pid_reader - INFO - QR scan started via frame buffer (timeout=90.0s)
+2026-04-13 15:25:45 - back_end.slot_monitor.alarm_controller - INFO - Mismatch resolved: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087, LID=1
+2026-04-13 15:25:45 - back_end.slot_monitor.worker_async - INFO - Worker 1: mismatch resolved for LID=1
+2026-04-13 15:25:45 - back_end.slot_monitor.worker_async - INFO - Worker 1: baseline adapted LID=1 dist=0.1379
+2026-04-13 15:25:55 - back_end.slot_monitor.camera.qr_pid_reader - INFO - QR scan (buffer): PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087
+2026-04-13 15:25:55 - back_end.slot_monitor.camera.qr_pid_reader - INFO - PID c76d7cd4-ab52-4a56-9c66-0c4fb777d087 validated (buffer)
+2026-04-13 15:25:55 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Clip deleted (clean resolution): pendinglid1_lid1_1776090345.mp4
+2026-04-13 15:25:55 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Clip deleted — PID=pending-lid1  duration=10.0s
+2026-04-13 15:25:55 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Recording started: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 LID=1  c76d7cd4ab524a56_lid1_1776090355.mp4  (pre-buffer=564 frames)
+2026-04-13 15:25:55 - socketio.server - INFO - emitting event "admin_qr_result" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:25:55 - back_end.slot_monitor.worker_async - INFO - Worker 1: slot 1 paused
+2026-04-13 15:25:55 - socketio.server - INFO - emitting event "tracking_started" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:25:55 - back_end.slot_monitor.phone_tracker - INFO - [Tracker] PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 LID=1 — detecting phone
+2026-04-13 15:25:55 - back_end.slot_monitor.phone_tracker - INFO - [Tracker] CSRT initialised at bbox=(194, 165, 130, 171)
+2026-04-13 15:25:55 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:25:56 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:25:56 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:25:57 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:25:58 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:25:59 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:25:59 - back_end.slot_monitor.phone_tracker - WARNING - [Tracker] PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 LID=1 failed: stabilization_timeout
+2026-04-13 15:25:59 - back_end.slot_monitor.worker_async - INFO - Worker 1: slot 1 restored (is_occupied=False)
+2026-04-13 15:25:59 - back_end.slot_monitor.admin.admin_ops_handler - WARNING - [AdminSession] 40d5afa1 — placement failed: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 lid=1 reason=stabilization_timeout
+2026-04-13 15:25:59 - socketio.server - INFO - emitting event "admin_operation_error" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:26:02 - back_end.slot_monitor.admin.evidence_recorder - WARNING - [Evidence] Top-cam clip KEPT: c76d7cd4ab524a56_lid1_1776090355.mp4 (465 frames, 7.3s)
+2026-04-13 15:26:02 - back_end.slot_monitor.alarm_controller - WARNING - Mismatch added: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087, LID=1
+2026-04-13 15:26:02 - socketio.server - INFO - emitting event "alarm_updated" to all [/]
+2026-04-13 15:26:02 - back_end.slot_monitor.admin.evidence_recorder - WARNING - [Evidence] Clip kept — reason='placement_failed_stabilization_timeout'  PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087  duration=7.3s
+2026-04-13 15:26:02 - back_end.slot_monitor.worker_async - CRITICAL - Worker 1: ALARM! LID=1 PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 dist=0.2211
+2026-04-13 15:26:06 - socketio.server - INFO - received event "admin_remove_phone" from Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:26:06 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Recording started: PID=pending-lid1 LID=1  pendinglid1_lid1_1776090366.mp4  (pre-buffer=555 frames)
+2026-04-13 15:26:06 - back_end.slot_monitor.admin.admin_ops_handler - INFO - [AdminSession] 40d5afa1 — object removed from lid=1, auto-starting QR scan
+2026-04-13 15:26:06 - socketio.server - INFO - emitting event "admin_remove_ok" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:26:06 - back_end.slot_monitor.camera.qr_pid_reader - INFO - QR scan started via frame buffer (timeout=90.0s)
+2026-04-13 15:26:06 - back_end.slot_monitor.camera.qr_pid_reader - INFO - QR scan (buffer): PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087
+2026-04-13 15:26:06 - back_end.slot_monitor.camera.qr_pid_reader - INFO - PID c76d7cd4-ab52-4a56-9c66-0c4fb777d087 validated (buffer)
+2026-04-13 15:26:06 - back_end.slot_monitor.alarm_controller - INFO - Mismatch resolved: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087, LID=1
+2026-04-13 15:26:06 - back_end.slot_monitor.worker_async - INFO - Worker 1: mismatch resolved for LID=1
+2026-04-13 15:26:06 - back_end.slot_monitor.worker_async - INFO - Worker 1: baseline adapted LID=1 dist=0.1346
+2026-04-13 15:26:09 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Clip deleted (clean resolution): pendinglid1_lid1_1776090366.mp4
+2026-04-13 15:26:09 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Clip deleted — PID=pending-lid1  duration=3.2s
+2026-04-13 15:26:09 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Recording started: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 LID=1  c76d7cd4ab524a56_lid1_1776090369.mp4  (pre-buffer=538 frames)
+2026-04-13 15:26:09 - socketio.server - INFO - emitting event "admin_qr_result" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:26:09 - back_end.slot_monitor.worker_async - INFO - Worker 1: slot 1 paused
+2026-04-13 15:26:09 - socketio.server - INFO - emitting event "tracking_started" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:26:09 - back_end.slot_monitor.phone_tracker - INFO - [Tracker] PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 LID=1 — detecting phone
+2026-04-13 15:26:10 - back_end.slot_monitor.phone_tracker - INFO - [Tracker] CSRT initialised at bbox=(96, 6, 464, 474)
+2026-04-13 15:26:10 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 880 frames (29.9s) to c76d7cd4ab524a56_face_1776090337.mp4
+2026-04-13 15:26:10 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [FaceRollingBuffer] Session clip saved: c76d7cd4ab524a56_face_1776090337.mp4
+2026-04-13 15:26:11 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:26:13 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:26:13 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:26:13 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-13 15:26:13 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:26:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 3928 frames, 4 subscribers
+2026-04-13 15:26:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 15274 frames, avg_dist=0.0954
+2026-04-13 15:26:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 8, Errors: 0
+2026-04-13 15:26:13 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 4 mismatches
+2026-04-13 15:26:13 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 879 frames (30.0s) to c76d7cd4ab524a56_lid1_1776090340_face.mp4
+2026-04-13 15:26:13 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [FaceRollingBuffer] Alarm clip saved: c76d7cd4ab524a56_lid1_1776090340_face.mp4
+2026-04-13 15:26:14 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:26:15 - back_end.slot_monitor.phone_tracker - WARNING - [Tracker] PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 LID=1 failed: qr_lost
+2026-04-13 15:26:15 - back_end.slot_monitor.worker_async - INFO - Worker 1: slot 1 restored (is_occupied=False)
+2026-04-13 15:26:15 - back_end.slot_monitor.admin.admin_ops_handler - WARNING - [AdminSession] 40d5afa1 — placement failed: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 lid=1 reason=qr_lost
+2026-04-13 15:26:15 - socketio.server - INFO - emitting event "admin_operation_error" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:26:18 - back_end.slot_monitor.admin.evidence_recorder - WARNING - [Evidence] Top-cam clip KEPT: c76d7cd4ab524a56_lid1_1776090369.mp4 (495 frames, 9.5s)
+2026-04-13 15:26:18 - back_end.slot_monitor.admin.evidence_recorder - WARNING - [Evidence] Clip kept — reason='placement_failed_qr_lost'  PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087  duration=9.5s
+2026-04-13 15:26:18 - back_end.slot_monitor.alarm_controller - WARNING - Mismatch added: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087, LID=1
+2026-04-13 15:26:18 - socketio.server - INFO - emitting event "alarm_updated" to all [/]
+2026-04-13 15:26:18 - back_end.slot_monitor.worker_async - CRITICAL - Worker 1: ALARM! LID=1 PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 dist=0.1703
+2026-04-13 15:26:20 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=4000 avg_dist=0.0894 avg_time=0.86ms alarms=1 paused=1 errors=0
+2026-04-13 15:26:20 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=4000 avg_dist=0.0834 avg_time=0.83ms alarms=1 paused=1 errors=0
+2026-04-13 15:26:20 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=4000 avg_dist=0.0810 avg_time=0.77ms alarms=2 paused=1 errors=0
+2026-04-13 15:26:20 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=4000 avg_dist=0.1159 avg_time=2.64ms alarms=5 paused=0 errors=0
+2026-04-13 15:26:22 - socketio.server - INFO - received event "admin_remove_phone" from Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:26:22 - back_end.slot_monitor.admin.admin_ops_handler - WARNING - [AdminSession] 40d5afa1 — session exceeded timeout (elapsed=136s)
+2026-04-13 15:26:22 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Recording started: PID=pending-lid1 LID=1  pendinglid1_lid1_1776090382.mp4  (pre-buffer=516 frames)
+2026-04-13 15:26:22 - back_end.slot_monitor.admin.admin_ops_handler - INFO - [AdminSession] 40d5afa1 — object removed from lid=1, auto-starting QR scan
+2026-04-13 15:26:22 - socketio.server - INFO - emitting event "admin_remove_ok" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:26:22 - back_end.slot_monitor.camera.qr_pid_reader - INFO - QR scan started via frame buffer (timeout=90.0s)
+2026-04-13 15:26:22 - back_end.slot_monitor.alarm_controller - INFO - Mismatch resolved: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087, LID=1
+2026-04-13 15:26:22 - back_end.slot_monitor.worker_async - INFO - Worker 1: mismatch resolved for LID=1
+2026-04-13 15:26:22 - back_end.slot_monitor.worker_async - INFO - Worker 1: baseline adapted LID=1 dist=0.1463
+2026-04-13 15:26:23 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 522 frames (26.1s) to c76d7cd4ab524a56_lid1_1776090374_top.mp4
+2026-04-13 15:26:23 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [TopRollingBuffer] Alarm clip saved: c76d7cd4ab524a56_lid1_1776090374_top.mp4
+2026-04-13 15:26:25 - back_end.slot_monitor.camera.qr_pid_reader - INFO - QR scan (buffer): PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087
+2026-04-13 15:26:25 - back_end.slot_monitor.camera.qr_pid_reader - INFO - PID c76d7cd4-ab52-4a56-9c66-0c4fb777d087 validated (buffer)
+2026-04-13 15:26:25 - back_end.slot_monitor.alarm_controller - WARNING - Mismatch added: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087, LID=1
+2026-04-13 15:26:25 - socketio.server - INFO - emitting event "alarm_updated" to all [/]
+2026-04-13 15:26:25 - back_end.slot_monitor.worker_async - CRITICAL - Worker 1: ALARM! LID=1 PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 dist=0.2531
+2026-04-13 15:26:28 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Clip deleted (clean resolution): pendinglid1_lid1_1776090382.mp4
+2026-04-13 15:26:28 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Clip deleted — PID=pending-lid1  duration=6.3s
+2026-04-13 15:26:28 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Recording started: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 LID=1  c76d7cd4ab524a56_lid1_1776090388.mp4  (pre-buffer=485 frames)
+2026-04-13 15:26:28 - socketio.server - INFO - emitting event "admin_qr_result" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:26:28 - back_end.slot_monitor.worker_async - INFO - Worker 1: slot 1 paused
+2026-04-13 15:26:28 - socketio.server - INFO - emitting event "tracking_started" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:26:28 - back_end.slot_monitor.phone_tracker - INFO - [Tracker] PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 LID=1 — detecting phone
+2026-04-13 15:26:34 - back_end.slot_monitor.phone_tracker - INFO - [Tracker] CSRT initialised at bbox=(111, 11, 419, 469)
+2026-04-13 15:26:35 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:26:36 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:26:37 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:26:38 - back_end.slot_monitor.phone_tracker - WARNING - [Tracker] PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 LID=1 failed: qr_lost
+2026-04-13 15:26:38 - back_end.slot_monitor.worker_async - INFO - Worker 1: slot 1 restored (is_occupied=False)
+2026-04-13 15:26:38 - back_end.slot_monitor.admin.admin_ops_handler - WARNING - [AdminSession] 40d5afa1 — placement failed: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 lid=1 reason=qr_lost
+2026-04-13 15:26:38 - socketio.server - INFO - emitting event "admin_operation_error" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:26:38 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 844 frames (30.0s) to c76d7cd4ab524a56_face_1776090362.mp4
+2026-04-13 15:26:38 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [FaceRollingBuffer] Session clip saved: c76d7cd4ab524a56_face_1776090362.mp4
+2026-04-13 15:26:38 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 843 frames (30.0s) to c76d7cd4ab524a56_lid1_1776090362_face.mp4
+2026-04-13 15:26:38 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [FaceRollingBuffer] Alarm clip saved: c76d7cd4ab524a56_lid1_1776090362_face.mp4
+2026-04-13 15:26:38 - back_end.slot_monitor.admin.evidence_recorder - WARNING - [Evidence] Top-cam clip KEPT: c76d7cd4ab524a56_lid1_1776090388.mp4 (485 frames, 10.3s)
+2026-04-13 15:26:38 - back_end.slot_monitor.admin.evidence_recorder - WARNING - [Evidence] Clip kept — reason='placement_failed_qr_lost'  PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087  duration=10.3s
+2026-04-13 15:26:41 - back_end.slot_monitor.alarm_controller - WARNING - Mismatch added: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087, LID=1
+2026-04-13 15:26:41 - socketio.server - INFO - emitting event "alarm_updated" to all [/]
+2026-04-13 15:26:41 - back_end.slot_monitor.worker_async - CRITICAL - Worker 1: ALARM! LID=1 PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 dist=0.1745
+2026-04-13 15:26:43 - socketio.server - INFO - received event "admin_remove_phone" from Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:26:43 - back_end.slot_monitor.admin.admin_ops_handler - WARNING - [AdminSession] 40d5afa1 — session exceeded timeout (elapsed=157s)
+2026-04-13 15:26:43 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Recording started: PID=pending-lid1 LID=1  pendinglid1_lid1_1776090403.mp4  (pre-buffer=437 frames)
+2026-04-13 15:26:43 - back_end.slot_monitor.admin.admin_ops_handler - INFO - [AdminSession] 40d5afa1 — object removed from lid=1, auto-starting QR scan
+2026-04-13 15:26:43 - socketio.server - INFO - emitting event "admin_remove_ok" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:26:43 - back_end.slot_monitor.camera.qr_pid_reader - INFO - QR scan started via frame buffer (timeout=90.0s)
+2026-04-13 15:26:43 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:26:43 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-13 15:26:43 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:26:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 4691 frames, 4 subscribers
+2026-04-13 15:26:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 18313 frames, avg_dist=0.0845
+2026-04-13 15:26:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 11, Errors: 0
+2026-04-13 15:26:43 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 4 mismatches
+2026-04-13 15:26:44 - back_end.slot_monitor.alarm_controller - INFO - Mismatch resolved: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087, LID=1
+2026-04-13 15:26:44 - back_end.slot_monitor.worker_async - INFO - Worker 1: mismatch resolved for LID=1
+2026-04-13 15:26:44 - back_end.slot_monitor.worker_async - INFO - Worker 1: baseline adapted LID=1 dist=0.1439
+2026-04-13 15:26:48 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 428 frames (21.4s) to c76d7cd4ab524a56_lid1_1776090398_top.mp4
+2026-04-13 15:26:48 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [TopRollingBuffer] Alarm clip saved: c76d7cd4ab524a56_lid1_1776090398_top.mp4
+2026-04-13 15:26:48 - back_end.slot_monitor.camera.qr_pid_reader - INFO - QR scan (buffer): PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087
+2026-04-13 15:26:48 - back_end.slot_monitor.camera.qr_pid_reader - INFO - PID c76d7cd4-ab52-4a56-9c66-0c4fb777d087 validated (buffer)
+2026-04-13 15:26:51 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Clip deleted (clean resolution): pendinglid1_lid1_1776090403.mp4
+2026-04-13 15:26:51 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Clip deleted — PID=pending-lid1  duration=8.0s
+2026-04-13 15:26:51 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Recording started: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 LID=1  c76d7cd4ab524a56_lid1_1776090411.mp4  (pre-buffer=375 frames)
+2026-04-13 15:26:51 - socketio.server - INFO - emitting event "admin_qr_result" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:26:51 - back_end.slot_monitor.worker_async - INFO - Worker 1: slot 1 paused
+2026-04-13 15:26:51 - socketio.server - INFO - emitting event "tracking_started" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:26:51 - back_end.slot_monitor.phone_tracker - INFO - [Tracker] PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 LID=1 — detecting phone
+2026-04-13 15:26:51 - back_end.slot_monitor.phone_tracker - INFO - [Tracker] CSRT initialised at bbox=(189, 206, 138, 177)
+2026-04-13 15:26:52 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:26:52 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 795 frames (30.0s) to c76d7cd4ab524a56_lid1_1776090378_face.mp4
+2026-04-13 15:26:52 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [FaceRollingBuffer] Alarm clip saved: c76d7cd4ab524a56_lid1_1776090378_face.mp4
+2026-04-13 15:26:52 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:26:53 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:26:54 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 795 frames (30.0s) to c76d7cd4ab524a56_face_1776090378.mp4
+2026-04-13 15:26:54 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:26:54 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [FaceRollingBuffer] Session clip saved: c76d7cd4ab524a56_face_1776090378.mp4
+2026-04-13 15:26:55 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:26:55 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:26:56 - back_end.slot_monitor.phone_tracker - WARNING - [Tracker] PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 LID=1 failed: stabilization_timeout
+2026-04-13 15:26:56 - back_end.slot_monitor.worker_async - INFO - Worker 1: slot 1 restored (is_occupied=False)
+2026-04-13 15:26:56 - back_end.slot_monitor.admin.admin_ops_handler - WARNING - [AdminSession] 40d5afa1 — placement failed: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 lid=1 reason=stabilization_timeout
+2026-04-13 15:26:56 - socketio.server - INFO - emitting event "admin_operation_error" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:26:58 - back_end.slot_monitor.admin.evidence_recorder - WARNING - [Evidence] Top-cam clip KEPT: c76d7cd4ab524a56_lid1_1776090411.mp4 (375 frames, 7.3s)
+2026-04-13 15:26:58 - back_end.slot_monitor.admin.evidence_recorder - WARNING - [Evidence] Clip kept — reason='placement_failed_stabilization_timeout'  PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087  duration=7.3s
+2026-04-13 15:26:59 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 366 frames (18.3s) to c76d7cd4ab524a56_lid1_1776090412_top.mp4
+2026-04-13 15:26:59 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [TopRollingBuffer] Alarm clip saved: c76d7cd4ab524a56_lid1_1776090412_top.mp4
+2026-04-13 15:26:59 - back_end.slot_monitor.alarm_controller - WARNING - Mismatch added: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087, LID=1
+2026-04-13 15:26:59 - socketio.server - INFO - emitting event "alarm_updated" to all [/]
+2026-04-13 15:26:59 - back_end.slot_monitor.worker_async - CRITICAL - Worker 1: ALARM! LID=1 PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 dist=0.2704
+2026-04-13 15:27:00 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 786 frames (30.0s) to c76d7cd4ab524a56_lid1_1776090385_face.mp4
+2026-04-13 15:27:00 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [FaceRollingBuffer] Alarm clip saved: c76d7cd4ab524a56_lid1_1776090385_face.mp4
+2026-04-13 15:27:00 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=5000 avg_dist=0.0715 avg_time=0.69ms alarms=1 paused=1 errors=0
+2026-04-13 15:27:00 - socketio.server - INFO - received event "admin_remove_phone" from Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:27:00 - back_end.slot_monitor.admin.admin_ops_handler - WARNING - [AdminSession] 40d5afa1 — session exceeded timeout (elapsed=174s)
+2026-04-13 15:27:00 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Recording started: PID=pending-lid1 LID=1  pendinglid1_lid1_1776090420.mp4  (pre-buffer=386 frames)
+2026-04-13 15:27:00 - back_end.slot_monitor.admin.admin_ops_handler - INFO - [AdminSession] 40d5afa1 — object removed from lid=1, auto-starting QR scan
+2026-04-13 15:27:00 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=5000 avg_dist=0.0667 avg_time=0.67ms alarms=1 paused=1 errors=0
+2026-04-13 15:27:00 - socketio.server - INFO - emitting event "admin_remove_ok" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:27:00 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=5000 avg_dist=0.0648 avg_time=0.62ms alarms=2 paused=1 errors=0
+2026-04-13 15:27:00 - back_end.slot_monitor.camera.qr_pid_reader - INFO - QR scan started via frame buffer (timeout=90.0s)
+2026-04-13 15:27:00 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=5000 avg_dist=0.1130 avg_time=3.84ms alarms=8 paused=0 errors=0
+2026-04-13 15:27:04 - back_end.slot_monitor.camera.qr_pid_reader - INFO - QR scan (buffer): PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087
+2026-04-13 15:27:04 - back_end.slot_monitor.camera.qr_pid_reader - INFO - PID c76d7cd4-ab52-4a56-9c66-0c4fb777d087 validated (buffer)
+2026-04-13 15:27:07 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Clip deleted (clean resolution): pendinglid1_lid1_1776090420.mp4
+2026-04-13 15:27:07 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Clip deleted — PID=pending-lid1  duration=7.3s
+2026-04-13 15:27:07 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Recording started: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 LID=1  c76d7cd4ab524a56_lid1_1776090427.mp4  (pre-buffer=375 frames)
+2026-04-13 15:27:07 - socketio.server - INFO - emitting event "admin_qr_result" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:27:07 - back_end.slot_monitor.worker_async - INFO - Worker 1: slot 1 paused
+2026-04-13 15:27:07 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 384 frames (19.2s) to c76d7cd4ab524a56_lid1_1776090420_top.mp4
+2026-04-13 15:27:07 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [TopRollingBuffer] Alarm clip saved: c76d7cd4ab524a56_lid1_1776090420_top.mp4
+2026-04-13 15:27:07 - socketio.server - INFO - emitting event "tracking_started" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:27:07 - back_end.slot_monitor.phone_tracker - INFO - [Tracker] PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 LID=1 — detecting phone
+2026-04-13 15:27:09 - back_end.slot_monitor.phone_tracker - INFO - [Tracker] CSRT initialised at bbox=(30, 53, 377, 419)
+2026-04-13 15:27:09 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 722 frames (30.0s) to c76d7cd4ab524a56_face_1776090398.mp4
+2026-04-13 15:27:09 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [FaceRollingBuffer] Session clip saved: c76d7cd4ab524a56_face_1776090398.mp4
+2026-04-13 15:27:10 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:27:10 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:27:11 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:27:12 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:27:12 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 725 frames (30.0s) to c76d7cd4ab524a56_lid1_1776090401_face.mp4
+2026-04-13 15:27:12 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [FaceRollingBuffer] Alarm clip saved: c76d7cd4ab524a56_lid1_1776090401_face.mp4
+2026-04-13 15:27:13 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:27:13 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:27:13 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-13 15:27:13 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:27:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 5437 frames, 4 subscribers
+2026-04-13 15:27:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 21296 frames, avg_dist=0.0760
+2026-04-13 15:27:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 12, Errors: 0
+2026-04-13 15:27:13 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 4 mismatches
+2026-04-13 15:27:14 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:27:15 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:27:15 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:27:16 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:27:17 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:27:17 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:27:18 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:27:19 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:27:19 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 372 frames (18.6s) to c76d7cd4ab524a56_lid1_1776090432_top.mp4
+2026-04-13 15:27:19 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [TopRollingBuffer] Alarm clip saved: c76d7cd4ab524a56_lid1_1776090432_top.mp4
+2026-04-13 15:27:19 - back_end.slot_monitor.phone_tracker - WARNING - [Tracker] PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 LID=1 failed: stabilization_timeout
+2026-04-13 15:27:19 - back_end.slot_monitor.worker_async - INFO - Worker 1: slot 1 restored (is_occupied=False)
+2026-04-13 15:27:19 - back_end.slot_monitor.admin.admin_ops_handler - WARNING - [AdminSession] 40d5afa1 — placement failed: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 lid=1 reason=stabilization_timeout
+2026-04-13 15:27:19 - socketio.server - INFO - emitting event "admin_operation_error" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:27:20 - back_end.slot_monitor.admin.evidence_recorder - WARNING - [Evidence] Top-cam clip KEPT: c76d7cd4ab524a56_lid1_1776090427.mp4 (465 frames, 12.1s)
+2026-04-13 15:27:20 - back_end.slot_monitor.admin.evidence_recorder - WARNING - [Evidence] Clip kept — reason='placement_failed_stabilization_timeout'  PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087  duration=12.1s
+2026-04-13 15:27:23 - back_end.slot_monitor.alarm_controller - WARNING - Mismatch added: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087, LID=1
+2026-04-13 15:27:23 - socketio.server - INFO - emitting event "alarm_updated" to all [/]
+2026-04-13 15:27:23 - back_end.slot_monitor.worker_async - CRITICAL - Worker 1: ALARM! LID=1 PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 dist=0.3079
+2026-04-13 15:27:25 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 686 frames (30.0s) to c76d7cd4ab524a56_face_1776090418.mp4
+2026-04-13 15:27:25 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [FaceRollingBuffer] Session clip saved: c76d7cd4ab524a56_face_1776090418.mp4
+2026-04-13 15:27:25 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 685 frames (29.9s) to c76d7cd4ab524a56_lid1_1776090419_face.mp4
+2026-04-13 15:27:25 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [FaceRollingBuffer] Alarm clip saved: c76d7cd4ab524a56_lid1_1776090419_face.mp4
+2026-04-13 15:27:28 - socketio.server - INFO - received event "admin_remove_phone" from Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:27:28 - back_end.slot_monitor.admin.admin_ops_handler - WARNING - [AdminSession] 40d5afa1 — session exceeded timeout (elapsed=201s)
+2026-04-13 15:27:28 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Recording started: PID=pending-lid1 LID=1  pendinglid1_lid1_1776090448.mp4  (pre-buffer=470 frames)
+2026-04-13 15:27:28 - back_end.slot_monitor.admin.admin_ops_handler - INFO - [AdminSession] 40d5afa1 — object removed from lid=1, auto-starting QR scan
+2026-04-13 15:27:28 - socketio.server - INFO - emitting event "admin_remove_ok" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:27:28 - back_end.slot_monitor.camera.qr_pid_reader - INFO - QR scan started via frame buffer (timeout=90.0s)
+2026-04-13 15:27:28 - back_end.slot_monitor.camera.qr_pid_reader - INFO - QR scan (buffer): PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087
+2026-04-13 15:27:28 - back_end.slot_monitor.camera.qr_pid_reader - INFO - PID c76d7cd4-ab52-4a56-9c66-0c4fb777d087 validated (buffer)
+2026-04-13 15:27:31 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Clip deleted (clean resolution): pendinglid1_lid1_1776090448.mp4
+2026-04-13 15:27:31 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Clip deleted — PID=pending-lid1  duration=3.2s
+2026-04-13 15:27:31 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Recording started: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 LID=1  c76d7cd4ab524a56_lid1_1776090451.mp4  (pre-buffer=474 frames)
+2026-04-13 15:27:31 - socketio.server - INFO - emitting event "admin_qr_result" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:27:31 - back_end.slot_monitor.worker_async - INFO - Worker 1: slot 1 paused
+2026-04-13 15:27:31 - socketio.server - INFO - emitting event "tracking_started" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:27:31 - back_end.slot_monitor.phone_tracker - INFO - [Tracker] PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 LID=1 — detecting phone
+2026-04-13 15:27:33 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 469 frames (23.4s) to c76d7cd4ab524a56_lid1_1776090445_top.mp4
+2026-04-13 15:27:33 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [TopRollingBuffer] Alarm clip saved: c76d7cd4ab524a56_lid1_1776090445_top.mp4
+2026-04-13 15:27:34 - back_end.slot_monitor.phone_tracker - INFO - [Tracker] CSRT initialised at bbox=(143, 158, 154, 207)
+2026-04-13 15:27:34 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:27:35 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:27:36 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:27:36 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:27:37 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:27:38 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:27:38 - back_end.slot_monitor.phone_tracker - WARNING - [Tracker] PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 LID=1 failed: stabilization_timeout
+2026-04-13 15:27:38 - back_end.slot_monitor.worker_async - INFO - Worker 1: slot 1 restored (is_occupied=False)
+2026-04-13 15:27:38 - back_end.slot_monitor.admin.admin_ops_handler - WARNING - [AdminSession] 40d5afa1 — placement failed: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 lid=1 reason=stabilization_timeout
+2026-04-13 15:27:38 - socketio.server - INFO - emitting event "admin_operation_error" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:27:39 - back_end.slot_monitor.admin.evidence_recorder - WARNING - [Evidence] Top-cam clip KEPT: c76d7cd4ab524a56_lid1_1776090451.mp4 (474 frames, 7.7s)
+2026-04-13 15:27:39 - back_end.slot_monitor.admin.evidence_recorder - WARNING - [Evidence] Clip kept — reason='placement_failed_stabilization_timeout'  PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087  duration=7.7s
+2026-04-13 15:27:39 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=6000 avg_dist=0.0596 avg_time=0.58ms alarms=1 paused=1 errors=0
+2026-04-13 15:27:39 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=6000 avg_dist=0.0556 avg_time=0.56ms alarms=1 paused=1 errors=0
+2026-04-13 15:27:39 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=6000 avg_dist=0.0540 avg_time=0.52ms alarms=2 paused=1 errors=0
+2026-04-13 15:27:39 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=6000 avg_dist=0.1163 avg_time=4.13ms alarms=9 paused=0 errors=0
+2026-04-13 15:27:41 - back_end.slot_monitor.alarm_controller - WARNING - Mismatch added: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087, LID=1
+2026-04-13 15:27:41 - socketio.server - INFO - emitting event "alarm_updated" to all [/]
+2026-04-13 15:27:41 - back_end.slot_monitor.worker_async - CRITICAL - Worker 1: ALARM! LID=1 PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 dist=0.2710
+2026-04-13 15:27:43 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:27:43 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-13 15:27:43 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:27:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 6218 frames, 4 subscribers
+2026-04-13 15:27:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 24420 frames, avg_dist=0.0713
+2026-04-13 15:27:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 14, Errors: 0
+2026-04-13 15:27:43 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 4 mismatches
+2026-04-13 15:27:47 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 741 frames (30.0s) to c76d7cd4ab524a56_face_1776090440.mp4
+2026-04-13 15:27:47 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [FaceRollingBuffer] Session clip saved: c76d7cd4ab524a56_face_1776090440.mp4
+2026-04-13 15:27:51 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 761 frames (30.0s) to c76d7cd4ab524a56_lid1_1776090443_face.mp4
+2026-04-13 15:27:51 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [FaceRollingBuffer] Alarm clip saved: c76d7cd4ab524a56_lid1_1776090443_face.mp4
+2026-04-13 15:27:59 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 537 frames (26.9s) to c76d7cd4ab524a56_lid1_1776090471_top.mp4
+2026-04-13 15:27:59 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [TopRollingBuffer] Alarm clip saved: c76d7cd4ab524a56_lid1_1776090471_top.mp4
+2026-04-13 15:28:11 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 812 frames (30.0s) to c76d7cd4ab524a56_face_1776090459.mp4
+2026-04-13 15:28:11 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [FaceRollingBuffer] Session clip saved: c76d7cd4ab524a56_face_1776090459.mp4
+2026-04-13 15:28:13 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:28:13 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-13 15:28:13 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:28:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 7008 frames, 4 subscribers
+2026-04-13 15:28:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 27580 frames, avg_dist=0.0710
+2026-04-13 15:28:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 14, Errors: 0
+2026-04-13 15:28:13 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 4 mismatches
+2026-04-13 15:28:14 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 813 frames (30.0s) to c76d7cd4ab524a56_lid1_1776090461_face.mp4
+2026-04-13 15:28:14 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [FaceRollingBuffer] Alarm clip saved: c76d7cd4ab524a56_lid1_1776090461_face.mp4
+2026-04-13 15:28:17 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=7000 avg_dist=0.0511 avg_time=0.50ms alarms=1 paused=1 errors=0
+2026-04-13 15:28:17 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=7000 avg_dist=0.0477 avg_time=0.48ms alarms=1 paused=1 errors=0
+2026-04-13 15:28:17 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=7000 avg_dist=0.0463 avg_time=0.44ms alarms=2 paused=1 errors=0
+2026-04-13 15:28:17 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=7000 avg_dist=0.1392 avg_time=4.75ms alarms=10 paused=0 errors=0
+2026-04-13 15:28:21 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 556 frames (27.8s) to c76d7cd4ab524a56_lid1_1776090494_top.mp4
+2026-04-13 15:28:21 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [TopRollingBuffer] Alarm clip saved: c76d7cd4ab524a56_lid1_1776090494_top.mp4
+2026-04-13 15:28:31 - socketio.server - INFO - received event "admin_remove_phone" from Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:28:31 - back_end.slot_monitor.admin.admin_ops_handler - WARNING - [AdminSession] 40d5afa1 — session exceeded timeout (elapsed=264s)
+2026-04-13 15:28:31 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Recording started: PID=pending-lid1 LID=1  pendinglid1_lid1_1776090511.mp4  (pre-buffer=569 frames)
+2026-04-13 15:28:31 - back_end.slot_monitor.admin.admin_ops_handler - INFO - [AdminSession] 40d5afa1 — object removed from lid=1, auto-starting QR scan
+2026-04-13 15:28:31 - socketio.server - INFO - emitting event "admin_remove_ok" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:28:31 - back_end.slot_monitor.camera.qr_pid_reader - INFO - QR scan started via frame buffer (timeout=90.0s)
+2026-04-13 15:28:31 - back_end.slot_monitor.camera.qr_pid_reader - INFO - QR scan (buffer): PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087
+2026-04-13 15:28:31 - back_end.slot_monitor.camera.qr_pid_reader - INFO - PID c76d7cd4-ab52-4a56-9c66-0c4fb777d087 validated (buffer)
+2026-04-13 15:28:34 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Clip deleted (clean resolution): pendinglid1_lid1_1776090511.mp4
+2026-04-13 15:28:34 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Clip deleted — PID=pending-lid1  duration=3.1s
+2026-04-13 15:28:34 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Recording started: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 LID=1  c76d7cd4ab524a56_lid1_1776090514.mp4  (pre-buffer=570 frames)
+2026-04-13 15:28:34 - socketio.server - INFO - emitting event "admin_qr_result" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:28:34 - back_end.slot_monitor.worker_async - INFO - Worker 1: slot 1 paused
+2026-04-13 15:28:34 - socketio.server - INFO - emitting event "tracking_started" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:28:34 - back_end.slot_monitor.phone_tracker - INFO - [Tracker] PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 LID=1 — detecting phone
+2026-04-13 15:28:35 - back_end.slot_monitor.phone_tracker - INFO - [Tracker] CSRT initialised at bbox=(163, 187, 120, 146)
+2026-04-13 15:28:35 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:28:36 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:28:36 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:28:37 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:28:37 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:28:38 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:28:38 - back_end.slot_monitor.phone_tracker - INFO - [Tracker] PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 QR gone inside ROI -> SUCCESS GLOBAL
+2026-04-13 15:28:38 - back_end.slot_monitor.alarm_controller - INFO - Mismatch resolved: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087, LID=1
+2026-04-13 15:28:38 - back_end.slot_monitor.alarm_controller - INFO - Mismatch resolved: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087, LID=1
+2026-04-13 15:28:41 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Clip deleted (clean resolution): c76d7cd4ab524a56_lid1_1776090514.mp4
+2026-04-13 15:28:41 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Clip deleted — PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087  duration=7.3s
+2026-04-13 15:28:41 - back_end.slot_monitor.admin.admin_ops_handler - INFO - [AdminSession] 40d5afa1 — PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 placed lid=1. remaining=['4877f4c1-0fd5-49b0-ac1a-2db9eafa8249', 'unknown-2', 'unknown-3'] staged=[]
+2026-04-13 15:28:41 - socketio.server - INFO - emitting event "admin_place_result" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:28:41 - back_end.slot_monitor.slot_operations - INFO - Capturing baseline LID=1 is_occupied=True wait=1.5s
+2026-04-13 15:28:41 - socketio.server - INFO - received event "admin_pre_highlight_slot" from Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:28:43 - back_end.slot_monitor.slot_operations - INFO - Baseline saved for LID=1
+2026-04-13 15:28:43 - back_end.slot_monitor.worker_async - INFO - Worker 1: slot 1 resumed
+2026-04-13 15:28:43 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:28:43 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-13 15:28:43 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:28:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 7831 frames, 4 subscribers
+2026-04-13 15:28:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 30872 frames, avg_dist=0.0684
+2026-04-13 15:28:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 14, Errors: 0
+2026-04-13 15:28:43 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 3 mismatches
+2026-04-13 15:28:53 - socketio.server - INFO - received event "admin_remove_phone" from Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:28:53 - back_end.slot_monitor.admin.admin_ops_handler - WARNING - [AdminSession] 40d5afa1 — session exceeded timeout (elapsed=286s)
+2026-04-13 15:28:53 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Recording started: PID=pending-lid0 LID=0  pendinglid0_lid0_1776090533.mp4  (pre-buffer=576 frames)
+2026-04-13 15:28:53 - back_end.slot_monitor.admin.admin_ops_handler - INFO - [AdminSession] 40d5afa1 — object removed from lid=0, auto-starting QR scan
+2026-04-13 15:28:53 - socketio.server - INFO - emitting event "admin_remove_ok" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:28:53 - back_end.slot_monitor.camera.qr_pid_reader - INFO - QR scan started via frame buffer (timeout=90.0s)
+2026-04-13 15:28:53 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=8000 avg_dist=0.0447 avg_time=0.44ms alarms=1 paused=1 errors=0
+2026-04-13 15:28:53 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=8000 avg_dist=0.0417 avg_time=0.42ms alarms=1 paused=1 errors=0
+2026-04-13 15:28:53 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=8000 avg_dist=0.0405 avg_time=0.39ms alarms=2 paused=1 errors=0
+2026-04-13 15:28:53 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=8000 avg_dist=0.1372 avg_time=4.70ms alarms=10 paused=0 errors=0
+2026-04-13 15:28:54 - back_end.slot_monitor.camera.qr_pid_reader - INFO - QR scan (buffer): PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087
+2026-04-13 15:28:54 - back_end.slot_monitor.camera.qr_pid_reader - INFO - PID c76d7cd4-ab52-4a56-9c66-0c4fb777d087 validated (buffer)
+2026-04-13 15:28:56 - back_end.slot_monitor.alarm_controller - WARNING - Mismatch added: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087, LID=1
+2026-04-13 15:28:56 - socketio.server - INFO - emitting event "alarm_updated" to all [/]
+2026-04-13 15:28:56 - back_end.slot_monitor.worker_async - CRITICAL - Worker 1: ALARM! LID=1 PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 dist=0.1705
+2026-04-13 15:28:57 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Clip deleted (clean resolution): pendinglid0_lid0_1776090533.mp4
+2026-04-13 15:28:57 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Clip deleted — PID=pending-lid0  duration=4.4s
+2026-04-13 15:28:57 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Recording started: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 LID=0  c76d7cd4ab524a56_lid0_1776090537.mp4  (pre-buffer=575 frames)
+2026-04-13 15:28:57 - socketio.server - INFO - emitting event "admin_qr_result" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:28:57 - back_end.slot_monitor.worker_async - INFO - Worker 1: slot 1 paused
+2026-04-13 15:28:57 - socketio.server - INFO - emitting event "tracking_started" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:28:57 - back_end.slot_monitor.phone_tracker - INFO - [Tracker] PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 LID=1 — detecting phone
+2026-04-13 15:29:02 - back_end.slot_monitor.phone_tracker - INFO - [Tracker] CSRT initialised at bbox=(69, 91, 261, 338)
+2026-04-13 15:29:02 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:03 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:03 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:04 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:04 - back_end.slot_monitor.phone_tracker - INFO - [Tracker] PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 QR gone inside ROI -> SUCCESS GLOBAL
+2026-04-13 15:29:04 - back_end.slot_monitor.alarm_controller - INFO - Mismatch resolved: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087, LID=0
+2026-04-13 15:29:04 - back_end.slot_monitor.alarm_controller - INFO - Mismatch resolved: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087, LID=1
+2026-04-13 15:29:05 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Clip deleted (clean resolution): c76d7cd4ab524a56_lid0_1776090537.mp4
+2026-04-13 15:29:05 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Clip deleted — PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087  duration=7.9s
+2026-04-13 15:29:05 - back_end.slot_monitor.admin.admin_ops_handler - INFO - [AdminSession] 40d5afa1 — PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 placed lid=1. remaining=['4877f4c1-0fd5-49b0-ac1a-2db9eafa8249', 'unknown-2', 'unknown-3'] staged=[]
+2026-04-13 15:29:05 - socketio.server - INFO - emitting event "admin_place_result" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:05 - back_end.slot_monitor.slot_operations - INFO - Capturing baseline LID=1 is_occupied=True wait=1.5s
+2026-04-13 15:29:05 - socketio.server - INFO - received event "admin_pre_highlight_slot" from Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:06 - back_end.slot_monitor.slot_operations - INFO - Baseline saved for LID=1
+2026-04-13 15:29:06 - back_end.slot_monitor.worker_async - INFO - Worker 1: slot 1 resumed
+2026-04-13 15:29:06 - back_end.slot_monitor.slot_operations - INFO - Capturing baseline LID=0 is_occupied=False wait=1.5s
+2026-04-13 15:29:08 - back_end.slot_monitor.slot_operations - INFO - Baseline saved for LID=0
+2026-04-13 15:29:08 - back_end.slot_monitor.worker_async - INFO - Worker 0: slot 0 resumed
+2026-04-13 15:29:13 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:29:13 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-13 15:29:13 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:29:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 8648 frames, 4 subscribers
+2026-04-13 15:29:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 34140 frames, avg_dist=0.0624
+2026-04-13 15:29:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 15, Errors: 0
+2026-04-13 15:29:13 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 3 mismatches
+2026-04-13 15:29:20 - socketio.server - INFO - received event "admin_remove_phone" from Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:20 - back_end.slot_monitor.admin.admin_ops_handler - WARNING - [AdminSession] 40d5afa1 — session exceeded timeout (elapsed=313s)
+2026-04-13 15:29:20 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Recording started: PID=pending-lid0 LID=0  pendinglid0_lid0_1776090560.mp4  (pre-buffer=565 frames)
+2026-04-13 15:29:20 - back_end.slot_monitor.admin.admin_ops_handler - INFO - [AdminSession] 40d5afa1 — object removed from lid=0, auto-starting QR scan
+2026-04-13 15:29:20 - socketio.server - INFO - emitting event "admin_remove_ok" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:20 - back_end.slot_monitor.camera.qr_pid_reader - INFO - QR scan started via frame buffer (timeout=90.0s)
+2026-04-13 15:29:20 - back_end.slot_monitor.camera.qr_pid_reader - INFO - QR scan (buffer): PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087
+2026-04-13 15:29:20 - back_end.slot_monitor.camera.qr_pid_reader - INFO - PID c76d7cd4-ab52-4a56-9c66-0c4fb777d087 validated (buffer)
+2026-04-13 15:29:23 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Clip deleted (clean resolution): pendinglid0_lid0_1776090560.mp4
+2026-04-13 15:29:23 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Clip deleted — PID=pending-lid0  duration=3.1s
+2026-04-13 15:29:23 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Recording started: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 LID=0  c76d7cd4ab524a56_lid0_1776090563.mp4  (pre-buffer=563 frames)
+2026-04-13 15:29:23 - socketio.server - INFO - emitting event "admin_qr_result" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:23 - back_end.slot_monitor.worker_async - INFO - Worker 1: slot 1 paused
+2026-04-13 15:29:23 - socketio.server - INFO - emitting event "tracking_started" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:23 - back_end.slot_monitor.phone_tracker - INFO - [Tracker] PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 LID=1 — detecting phone
+2026-04-13 15:29:23 - back_end.slot_monitor.alarm_controller - WARNING - Mismatch added: PID=4877f4c1-0fd5-49b0-ac1a-2db9eafa8249, LID=0
+2026-04-13 15:29:23 - socketio.server - INFO - emitting event "alarm_updated" to all [/]
+2026-04-13 15:29:23 - back_end.slot_monitor.worker_async - CRITICAL - Worker 0: ALARM! LID=0 PID=4877f4c1-0fd5-49b0-ac1a-2db9eafa8249 dist=0.3840
+2026-04-13 15:29:24 - back_end.slot_monitor.phone_tracker - INFO - [Tracker] CSRT initialised at bbox=(11, 0, 393, 480)
+2026-04-13 15:29:25 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:26 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:27 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:28 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 900 frames (30.0s) to c76d7cd4ab524a56_lid1_1776090536_face.mp4
+2026-04-13 15:29:28 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [FaceRollingBuffer] Alarm clip saved: c76d7cd4ab524a56_lid1_1776090536_face.mp4
+2026-04-13 15:29:29 - back_end.slot_monitor.phone_tracker - WARNING - [Tracker] PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 LID=1 failed: qr_lost
+2026-04-13 15:29:29 - back_end.slot_monitor.worker_async - INFO - Worker 1: slot 1 restored (is_occupied=False)
+2026-04-13 15:29:29 - back_end.slot_monitor.admin.admin_ops_handler - WARNING - [AdminSession] 40d5afa1 — placement failed: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 lid=1 reason=qr_lost
+2026-04-13 15:29:29 - socketio.server - INFO - emitting event "admin_operation_error" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:29 - back_end.slot_monitor.worker_async - INFO - Worker 1: baseline adapted LID=1 dist=0.0701
+2026-04-13 15:29:31 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=9000 avg_dist=0.0510 avg_time=0.90ms alarms=2 paused=0 errors=0
+2026-04-13 15:29:31 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=9000 avg_dist=0.0371 avg_time=0.37ms alarms=1 paused=1 errors=0
+2026-04-13 15:29:31 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=9000 avg_dist=0.0360 avg_time=0.35ms alarms=2 paused=1 errors=0
+2026-04-13 15:29:31 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=9000 avg_dist=0.1253 avg_time=4.68ms alarms=11 paused=0 errors=0
+2026-04-13 15:29:32 - back_end.slot_monitor.admin.evidence_recorder - WARNING - [Evidence] Top-cam clip KEPT: c76d7cd4ab524a56_lid0_1776090563.mp4 (485 frames, 8.7s)
+2026-04-13 15:29:32 - back_end.slot_monitor.admin.evidence_recorder - WARNING - [Evidence] Clip kept — reason='placement_failed_qr_lost'  PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087  duration=8.7s
+2026-04-13 15:29:33 - socketio.server - INFO - received event "admin_remove_phone" from Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:33 - back_end.slot_monitor.admin.admin_ops_handler - WARNING - [AdminSession] 40d5afa1 — session exceeded timeout (elapsed=327s)
+2026-04-13 15:29:33 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Recording started: PID=pending-lid0 LID=0  pendinglid0_lid0_1776090573.mp4  (pre-buffer=527 frames)
+2026-04-13 15:29:33 - back_end.slot_monitor.admin.admin_ops_handler - INFO - [AdminSession] 40d5afa1 — object removed from lid=0, auto-starting QR scan
+2026-04-13 15:29:33 - socketio.server - INFO - emitting event "admin_remove_ok" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:33 - back_end.slot_monitor.camera.qr_pid_reader - INFO - QR scan started via frame buffer (timeout=90.0s)
+2026-04-13 15:29:33 - back_end.slot_monitor.camera.qr_pid_reader - INFO - QR scan (buffer): PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087
+2026-04-13 15:29:33 - back_end.slot_monitor.camera.qr_pid_reader - INFO - PID c76d7cd4-ab52-4a56-9c66-0c4fb777d087 validated (buffer)
+2026-04-13 15:29:34 - back_end.slot_monitor.worker_async - INFO - Worker 1: baseline adapted LID=1 dist=0.0758
+2026-04-13 15:29:36 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Clip deleted (clean resolution): pendinglid0_lid0_1776090573.mp4
+2026-04-13 15:29:36 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Clip deleted — PID=pending-lid0  duration=3.1s
+2026-04-13 15:29:36 - back_end.slot_monitor.admin.evidence_recorder - INFO - [Evidence] Recording started: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 LID=0  c76d7cd4ab524a56_lid0_1776090576.mp4  (pre-buffer=527 frames)
+2026-04-13 15:29:36 - socketio.server - INFO - emitting event "admin_qr_result" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:36 - back_end.slot_monitor.worker_async - INFO - Worker 1: slot 1 paused
+2026-04-13 15:29:36 - socketio.server - INFO - emitting event "tracking_started" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:36 - back_end.slot_monitor.phone_tracker - INFO - [Tracker] PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 LID=1 — detecting phone
+2026-04-13 15:29:36 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 535 frames (26.8s) to c76d7cd4ab524a56_lid1_1776090568_top.mp4
+2026-04-13 15:29:36 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [TopRollingBuffer] Alarm clip saved: c76d7cd4ab524a56_lid1_1776090568_top.mp4
+2026-04-13 15:29:37 - back_end.slot_monitor.phone_tracker - INFO - [Tracker] CSRT initialised at bbox=(3, 327, 104, 48)
+2026-04-13 15:29:37 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:38 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:38 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:39 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:40 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:40 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:41 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:42 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:42 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:43 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:43 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:29:43 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-13 15:29:43 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:29:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 9440 frames, 4 subscribers
+2026-04-13 15:29:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 37292 frames, avg_dist=0.0641
+2026-04-13 15:29:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 16, Errors: 0
+2026-04-13 15:29:43 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 3 mismatches
+2026-04-13 15:29:44 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:44 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:45 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:46 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:46 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:47 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:48 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:48 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:49 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:50 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:51 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:51 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:52 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:52 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:53 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:53 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 879 frames (30.0s) to 4877f4c10fd549b0_lid0_1776090563_face.mp4
+2026-04-13 15:29:53 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [FaceRollingBuffer] Alarm clip saved: 4877f4c10fd549b0_lid0_1776090563_face.mp4
+2026-04-13 15:29:54 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:54 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:55 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:56 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:56 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:57 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:57 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:58 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:58 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:29:59 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:30:00 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:30:00 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:30:00 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 868 frames (30.0s) to c76d7cd4ab524a56_face_1776090572.mp4
+2026-04-13 15:30:00 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [FaceRollingBuffer] Session clip saved: c76d7cd4ab524a56_face_1776090572.mp4
+2026-04-13 15:30:01 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:30:01 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 502 frames (25.1s) to 4877f4c10fd549b0_lid0_1776090593_top.mp4
+2026-04-13 15:30:01 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [TopRollingBuffer] Alarm clip saved: 4877f4c10fd549b0_lid0_1776090593_top.mp4
+2026-04-13 15:30:02 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:30:02 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:30:03 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:30:03 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:30:04 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:30:04 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:30:05 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:30:06 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:30:06 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:30:07 - socketio.server - INFO - emitting event "tracking_update" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:30:07 - back_end.slot_monitor.phone_tracker - WARNING - [Tracker] PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 LID=1 failed: timeout
+2026-04-13 15:30:07 - back_end.slot_monitor.worker_async - INFO - Worker 1: slot 1 restored (is_occupied=False)
+2026-04-13 15:30:07 - back_end.slot_monitor.admin.admin_ops_handler - WARNING - [AdminSession] 40d5afa1 — placement failed: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 lid=1 reason=timeout
+2026-04-13 15:30:07 - socketio.server - INFO - emitting event "admin_operation_error" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:30:07 - back_end.slot_monitor.admin.evidence_recorder - WARNING - [Evidence] Top-cam clip KEPT: c76d7cd4ab524a56_lid0_1776090576.mp4 (944 frames, 31.1s)
+2026-04-13 15:30:07 - back_end.slot_monitor.admin.evidence_recorder - WARNING - [Evidence] Clip kept — reason='placement_failed_timeout'  PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087  duration=31.1s
+2026-04-13 15:30:07 - back_end.slot_monitor.worker_async - INFO - Worker 1: baseline adapted LID=1 dist=0.1437
+2026-04-13 15:30:08 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=10000 avg_dist=0.0836 avg_time=1.47ms alarms=2 paused=0 errors=0
+2026-04-13 15:30:08 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=10000 avg_dist=0.0334 avg_time=0.34ms alarms=1 paused=1 errors=0
+2026-04-13 15:30:08 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=10000 avg_dist=0.0324 avg_time=0.31ms alarms=2 paused=1 errors=0
+2026-04-13 15:30:09 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=10000 avg_dist=0.1140 avg_time=4.33ms alarms=11 paused=0 errors=0
+2026-04-13 15:30:11 - back_end.slot_monitor.alarm_controller - WARNING - Mismatch added: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087, LID=1
+2026-04-13 15:30:11 - socketio.server - INFO - emitting event "alarm_updated" to all [/]
+2026-04-13 15:30:11 - back_end.slot_monitor.worker_async - CRITICAL - Worker 1: ALARM! LID=1 PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 dist=0.2290
+2026-04-13 15:30:13 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:30:13 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-13 15:30:13 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:30:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 10247 frames, 4 subscribers
+2026-04-13 15:30:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 40507 frames, avg_dist=0.0665
+2026-04-13 15:30:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 17, Errors: 0
+2026-04-13 15:30:13 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 4 mismatches
+2026-04-13 15:30:22 - back_end.slot_monitor.alarm_controller - INFO - Mismatch resolved: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087, LID=1
+2026-04-13 15:30:22 - back_end.slot_monitor.worker_async - INFO - Worker 1: mismatch resolved for LID=1
+2026-04-13 15:30:22 - back_end.slot_monitor.worker_async - INFO - Worker 1: baseline adapted LID=1 dist=0.1142
+2026-04-13 15:30:30 - socketio.server - INFO - received event "admin_force_close_session" from Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:30:30 - back_end.slot_monitor.admin.admin_ops_handler - WARNING - [AdminSession] 40d5afa1 — UNSAFE force-close requested
+2026-04-13 15:30:30 - back_end.slot_monitor.worker_async - INFO - Worker 3: slot 3 restored (is_occupied=False)
+2026-04-13 15:30:30 - back_end.slot_monitor.worker_async - INFO - Worker 2: slot 2 restored (is_occupied=False)
+2026-04-13 15:30:30 - back_end.slot_monitor.worker_async - INFO - Worker 1: slot 1 restored (is_occupied=True)
+2026-04-13 15:30:30 - back_end.slot_monitor.worker_async - INFO - Worker 0: slot 0 restored (is_occupied=True)
+2026-04-13 15:30:30 - back_end.slot_monitor.admin.evidence_recorder - ERROR - [Evidence] Failed to rename session dir: [WinError 5] Access is denied: 'evidence\\40d5afa1' -> 'evidence\\NotFullyResolved-20260413-143030-40d5afa1'
+2026-04-13 15:30:30 - back_end.slot_monitor.admin.evidence_recorder - WARNING - [Evidence] Session 40d5afa1 evidence KEPT outcome='force_closed' warnings=1
+2026-04-13 15:30:30 - back_end.slot_monitor.camera.rolling_buffer - INFO - [TopRollingBuffer] Idle mode (5 fps)
+2026-04-13 15:30:30 - back_end.slot_monitor.admin.resolution_session - INFO - [AdminSessionContext] Session 40d5afa1 closed
+2026-04-13 15:30:30 - back_end.slot_monitor.admin.admin_ops_handler - WARNING - [AdminSession] 40d5afa1 — FORCE CLOSED (safe=False, remaining=['4877f4c1-0fd5-49b0-ac1a-2db9eafa8249', 'unknown-2', 'unknown-3'])
+2026-04-13 15:30:30 - back_end.slot_monitor.alarm_controller - WARNING - Physical alarm started
+2026-04-13 15:30:30 - back_end.slot_monitor.alarm_controller - WARNING - Alarm unsilenced — admin quit resolution without finishing
+2026-04-13 15:30:30 - socketio.server - INFO - emitting event "admin_session_closed" to Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:30:31 - back_end.slot_monitor.worker_async - INFO - Worker 3: baseline adapted LID=3 dist=0.1058
+2026-04-13 15:30:31 - back_end.slot_monitor.worker_async - INFO - Worker 3: baseline adapted LID=3 dist=0.0670
+2026-04-13 15:30:31 - back_end.slot_monitor.worker_async - INFO - Worker 1: baseline adapted LID=1 dist=0.0553
+2026-04-13 15:30:32 - back_end.slot_monitor.worker_async - INFO - Worker 3: baseline adapted LID=3 dist=0.0571
+2026-04-13 15:30:32 - back_end.slot_monitor.worker_async - INFO - Worker 3: baseline adapted LID=3 dist=0.0991
+2026-04-13 15:30:33 - back_end.slot_monitor.alarm_controller - WARNING - Mismatch added: PID=unknown-2, LID=2
+2026-04-13 15:30:33 - socketio.server - INFO - emitting event "alarm_updated" to all [/]
+2026-04-13 15:30:33 - back_end.slot_monitor.worker_async - CRITICAL - Worker 2: ALARM! LID=2 PID=unknown-2 dist=0.2803
+2026-04-13 15:30:33 - back_end.slot_monitor.alarm_controller - WARNING - Mismatch added: PID=4877f4c1-0fd5-49b0-ac1a-2db9eafa8249, LID=0
+2026-04-13 15:30:33 - socketio.server - INFO - emitting event "alarm_updated" to all [/]
+2026-04-13 15:30:33 - back_end.slot_monitor.worker_async - CRITICAL - Worker 0: ALARM! LID=0 PID=4877f4c1-0fd5-49b0-ac1a-2db9eafa8249 dist=0.2368
+2026-04-13 15:30:34 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 833 frames (30.0s) to c76d7cd4ab524a56_face_1776090607.mp4
+2026-04-13 15:30:34 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [FaceRollingBuffer] Session clip saved: c76d7cd4ab524a56_face_1776090607.mp4
+2026-04-13 15:30:35 - socketio.server - INFO - received event "alarm_unsilence" from Gu0WPhA3pvEzCjACAAAB [/]
+2026-04-13 15:30:36 - werkzeug - INFO - 127.0.0.1 - - [13/Apr/2026 15:30:36] "POST /webrtc/cancel/admin HTTP/1.1" 200 -
+2026-04-13 15:30:38 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 837 frames (30.0s) to c76d7cd4ab524a56_lid1_1776090611_face.mp4
+2026-04-13 15:30:38 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [FaceRollingBuffer] Alarm clip saved: c76d7cd4ab524a56_lid1_1776090611_face.mp4
+2026-04-13 15:30:39 - back_end.slot_monitor.alarm_controller - WARNING - Mismatch added: PID=unknown-3, LID=3
+2026-04-13 15:30:39 - socketio.server - INFO - emitting event "alarm_updated" to all [/]
+2026-04-13 15:30:39 - back_end.slot_monitor.worker_async - CRITICAL - Worker 3: ALARM! LID=3 PID=unknown-3 dist=1.0000
+2026-04-13 15:30:39 - back_end.slot_monitor.alarm_controller - WARNING - Mismatch added: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087, LID=1
+2026-04-13 15:30:39 - socketio.server - INFO - emitting event "alarm_updated" to all [/]
+2026-04-13 15:30:39 - back_end.slot_monitor.worker_async - CRITICAL - Worker 1: ALARM! LID=1 PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087 dist=0.8583
+2026-04-13 15:30:43 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:30:43 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-13 15:30:43 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:30:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 11038 frames, 4 subscribers
+2026-04-13 15:30:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 43423 frames, avg_dist=0.0797
+2026-04-13 15:30:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 21, Errors: 0
+2026-04-13 15:30:43 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 4 mismatches
+2026-04-13 15:30:44 - back_end.slot_monitor.alarm_controller - INFO - Mismatch resolved: PID=c76d7cd4-ab52-4a56-9c66-0c4fb777d087, LID=1
+2026-04-13 15:30:44 - back_end.slot_monitor.worker_async - INFO - Worker 1: mismatch resolved for LID=1
+2026-04-13 15:30:44 - back_end.slot_monitor.alarm_controller - INFO - Mismatch resolved: PID=unknown-3, LID=3
+2026-04-13 15:30:44 - back_end.slot_monitor.worker_async - INFO - Worker 3: mismatch resolved for LID=3
+2026-04-13 15:30:47 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 460 frames (92.0s) to c76d7cd4ab524a56_lid1_1776090638_top.mp4
+2026-04-13 15:30:47 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [TopRollingBuffer] Alarm clip saved: c76d7cd4ab524a56_lid1_1776090638_top.mp4
+2026-04-13 15:30:49 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=11000 avg_dist=0.1062 avg_time=1.97ms alarms=3 paused=0 errors=0
+2026-04-13 15:30:49 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=11000 avg_dist=0.0471 avg_time=0.60ms alarms=2 paused=0 errors=0
+2026-04-13 15:30:50 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=11000 avg_dist=0.1249 avg_time=4.65ms alarms=13 paused=0 errors=0
+2026-04-13 15:30:50 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=11000 avg_dist=0.0458 avg_time=0.68ms alarms=3 paused=0 errors=0
+2026-04-13 15:30:58 - back_end.slot_monitor.worker_async - INFO - Worker 1: baseline adapted LID=1 dist=0.0681
+2026-04-13 15:31:07 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 866 frames (30.0s) to 4877f4c10fd549b0_lid0_1776090633_face.mp4
+2026-04-13 15:31:07 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [FaceRollingBuffer] Alarm clip saved: 4877f4c10fd549b0_lid0_1776090633_face.mp4
+2026-04-13 15:31:08 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 866 frames (30.0s) to unknown2_lid2_1776090633_face.mp4
+2026-04-13 15:31:08 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [FaceRollingBuffer] Alarm clip saved: unknown2_lid2_1776090633_face.mp4
+2026-04-13 15:31:09 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 147 frames (29.4s) to 4877f4c10fd549b0_lid0_1776090667_top.mp4
+2026-04-13 15:31:09 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [TopRollingBuffer] Alarm clip saved: 4877f4c10fd549b0_lid0_1776090667_top.mp4
+2026-04-13 15:31:10 - back_end.slot_monitor.worker_async - INFO - Worker 3: baseline adapted LID=3 dist=0.0790
+2026-04-13 15:31:10 - back_end.slot_monitor.worker_async - INFO - Worker 1: baseline adapted LID=1 dist=0.1045
+2026-04-13 15:31:10 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 147 frames (29.4s) to unknown2_lid2_1776090668_top.mp4
+2026-04-13 15:31:10 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [TopRollingBuffer] Alarm clip saved: unknown2_lid2_1776090668_top.mp4
+2026-04-13 15:31:12 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 859 frames (30.0s) to c76d7cd4ab524a56_lid1_1776090639_face.mp4
+2026-04-13 15:31:12 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [FaceRollingBuffer] Alarm clip saved: c76d7cd4ab524a56_lid1_1776090639_face.mp4
+2026-04-13 15:31:13 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 859 frames (30.0s) to unknown3_lid3_1776090639_face.mp4
+2026-04-13 15:31:13 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [FaceRollingBuffer] Alarm clip saved: unknown3_lid3_1776090639_face.mp4
+2026-04-13 15:31:13 - aioice.ice - INFO - Connection(0) Consent to send expired
+2026-04-13 15:31:13 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:31:13 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-13 15:31:13 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:31:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 11816 frames, 4 subscribers
+2026-04-13 15:31:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 46417 frames, avg_dist=0.0841
+2026-04-13 15:31:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 21, Errors: 0
+2026-04-13 15:31:13 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 3 mismatches
+2026-04-13 15:31:14 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 147 frames (29.4s) to c76d7cd4ab524a56_lid1_1776090672_top.mp4
+2026-04-13 15:31:14 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [TopRollingBuffer] Alarm clip saved: c76d7cd4ab524a56_lid1_1776090672_top.mp4
+2026-04-13 15:31:14 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 147 frames (29.4s) to unknown3_lid3_1776090673_top.mp4
+2026-04-13 15:31:14 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [TopRollingBuffer] Alarm clip saved: unknown3_lid3_1776090673_top.mp4
+2026-04-13 15:31:27 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=12000 avg_dist=0.1177 avg_time=2.17ms alarms=3 paused=0 errors=0
+2026-04-13 15:31:27 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=12000 avg_dist=0.0656 avg_time=0.83ms alarms=2 paused=0 errors=0
+2026-04-13 15:31:27 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=12000 avg_dist=0.1164 avg_time=4.62ms alarms=13 paused=0 errors=0
+2026-04-13 15:31:28 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=12000 avg_dist=0.0427 avg_time=0.96ms alarms=3 paused=0 errors=0
+2026-04-13 15:31:43 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:31:43 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-13 15:31:43 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:31:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 12681 frames, 4 subscribers
+2026-04-13 15:31:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 49877 frames, avg_dist=0.0874
+2026-04-13 15:31:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 21, Errors: 0
+2026-04-13 15:31:43 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 3 mismatches
+2026-04-13 15:32:01 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=13000 avg_dist=0.1269 avg_time=2.14ms alarms=3 paused=0 errors=0
+2026-04-13 15:32:01 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=13000 avg_dist=0.0815 avg_time=0.85ms alarms=2 paused=0 errors=0
+2026-04-13 15:32:02 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=13000 avg_dist=0.1087 avg_time=4.35ms alarms=13 paused=0 errors=0
+2026-04-13 15:32:02 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=13000 avg_dist=0.0394 avg_time=0.95ms alarms=3 paused=0 errors=0
+2026-04-13 15:32:13 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:32:13 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-13 15:32:13 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:32:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 13559 frames, 4 subscribers
+2026-04-13 15:32:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 53389 frames, avg_dist=0.0903
+2026-04-13 15:32:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 21, Errors: 0
+2026-04-13 15:32:13 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 3 mismatches
+2026-04-13 15:32:31 - back_end.slot_monitor.worker_async - INFO - Worker 1: baseline adapted LID=1 dist=0.0713
+2026-04-13 15:32:31 - back_end.slot_monitor.worker_async - INFO - Worker 3: baseline adapted LID=3 dist=0.1140
+2026-04-13 15:32:32 - back_end.slot_monitor.worker_async - INFO - Worker 3: baseline adapted LID=3 dist=0.1206
+2026-04-13 15:32:33 - back_end.slot_monitor.worker_async - INFO - Worker 1: baseline adapted LID=1 dist=0.0543
+2026-04-13 15:32:35 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=14000 avg_dist=0.1348 avg_time=2.12ms alarms=3 paused=0 errors=0
+2026-04-13 15:32:36 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=14000 avg_dist=0.0955 avg_time=0.87ms alarms=2 paused=0 errors=0
+2026-04-13 15:32:36 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=14000 avg_dist=0.1022 avg_time=4.12ms alarms=13 paused=0 errors=0
+2026-04-13 15:32:36 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=14000 avg_dist=0.0388 avg_time=0.95ms alarms=3 paused=0 errors=0
+2026-04-13 15:32:36 - back_end.slot_monitor.alarm_controller - WARNING - Mismatch added: PID=unknown-3, LID=3
+2026-04-13 15:32:36 - socketio.server - INFO - emitting event "alarm_updated" to all [/]
+2026-04-13 15:32:36 - back_end.slot_monitor.worker_async - CRITICAL - Worker 3: ALARM! LID=3 PID=unknown-3 dist=0.1794
+2026-04-13 15:32:43 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:32:43 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-13 15:32:43 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:32:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 14430 frames, 4 subscribers
+2026-04-13 15:32:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 56873 frames, avg_dist=0.0942
+2026-04-13 15:32:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 22, Errors: 0
+2026-04-13 15:32:43 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 4 mismatches
+2026-04-13 15:33:08 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 898 frames (30.0s) to unknown3_lid3_1776090756_face.mp4
+2026-04-13 15:33:08 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [FaceRollingBuffer] Alarm clip saved: unknown3_lid3_1776090756_face.mp4
+2026-04-13 15:33:09 - back_end.slot_monitor.camera.rolling_buffer - INFO - [RollingBuffer] Saved 149 frames (29.8s) to unknown3_lid3_1776090788_top.mp4
+2026-04-13 15:33:09 - back_end.slot_monitor.camera.rolling_buffer - WARNING - [TopRollingBuffer] Alarm clip saved: unknown3_lid3_1776090788_top.mp4
+2026-04-13 15:33:10 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=15000 avg_dist=0.1411 avg_time=2.16ms alarms=3 paused=0 errors=0
+2026-04-13 15:33:10 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=15000 avg_dist=0.1076 avg_time=0.95ms alarms=2 paused=0 errors=0
+2026-04-13 15:33:11 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=15000 avg_dist=0.0974 avg_time=4.01ms alarms=13 paused=0 errors=0
+2026-04-13 15:33:11 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=15000 avg_dist=0.0482 avg_time=1.01ms alarms=4 paused=0 errors=0
+2026-04-13 15:33:13 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:33:13 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-13 15:33:13 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:33:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 15292 frames, 4 subscribers
+2026-04-13 15:33:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 60321 frames, avg_dist=0.0990
+2026-04-13 15:33:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 22, Errors: 0
+2026-04-13 15:33:13 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 4 mismatches
+2026-04-13 15:33:43 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:33:43 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-13 15:33:43 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:33:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 16161 frames, 4 subscribers
+2026-04-13 15:33:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 63797 frames, avg_dist=0.1034
+2026-04-13 15:33:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 22, Errors: 0
+2026-04-13 15:33:43 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 4 mismatches
+2026-04-13 15:33:45 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=16000 avg_dist=0.1466 avg_time=2.19ms alarms=3 paused=0 errors=0
+2026-04-13 15:33:45 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=16000 avg_dist=0.1181 avg_time=1.02ms alarms=2 paused=0 errors=0
+2026-04-13 15:33:45 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=16000 avg_dist=0.0933 avg_time=3.91ms alarms=13 paused=0 errors=0
+2026-04-13 15:33:45 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=16000 avg_dist=0.0564 avg_time=1.07ms alarms=4 paused=0 errors=0
+2026-04-13 15:34:13 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:34:13 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-13 15:34:13 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:34:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 17036 frames, 4 subscribers
+2026-04-13 15:34:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 67297 frames, avg_dist=0.1073
+2026-04-13 15:34:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 22, Errors: 0
+2026-04-13 15:34:13 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 4 mismatches
+2026-04-13 15:34:19 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=17000 avg_dist=0.1514 avg_time=2.20ms alarms=3 paused=0 errors=0
+2026-04-13 15:34:19 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=17000 avg_dist=0.1275 avg_time=1.08ms alarms=2 paused=0 errors=0
+2026-04-13 15:34:20 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=17000 avg_dist=0.0896 avg_time=3.81ms alarms=13 paused=0 errors=0
+2026-04-13 15:34:20 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=17000 avg_dist=0.0636 avg_time=1.12ms alarms=4 paused=0 errors=0
+2026-04-13 15:34:43 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:34:43 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-13 15:34:43 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:34:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 17910 frames, 4 subscribers
+2026-04-13 15:34:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 70793 frames, avg_dist=0.1109
+2026-04-13 15:34:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 22, Errors: 0
+2026-04-13 15:34:43 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 4 mismatches
+2026-04-13 15:34:53 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=18000 avg_dist=0.1557 avg_time=2.22ms alarms=3 paused=0 errors=0
+2026-04-13 15:34:53 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=18000 avg_dist=0.1358 avg_time=1.13ms alarms=2 paused=0 errors=0
+2026-04-13 15:34:54 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=18000 avg_dist=0.0863 avg_time=3.73ms alarms=13 paused=0 errors=0
+2026-04-13 15:34:54 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=18000 avg_dist=0.0701 avg_time=1.16ms alarms=4 paused=0 errors=0
+2026-04-13 15:35:13 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:35:13 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-13 15:35:13 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:35:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 18782 frames, 4 subscribers
+2026-04-13 15:35:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 74281 frames, avg_dist=0.1141
+2026-04-13 15:35:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 22, Errors: 0
+2026-04-13 15:35:13 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 4 mismatches
+2026-04-13 15:35:28 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=19000 avg_dist=0.1596 avg_time=2.24ms alarms=3 paused=0 errors=0
+2026-04-13 15:35:28 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=19000 avg_dist=0.1432 avg_time=1.18ms alarms=2 paused=0 errors=0
+2026-04-13 15:35:28 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=19000 avg_dist=0.0834 avg_time=3.66ms alarms=13 paused=0 errors=0
+2026-04-13 15:35:28 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=19000 avg_dist=0.0758 avg_time=1.21ms alarms=4 paused=0 errors=0
+2026-04-13 15:35:43 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:35:43 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-13 15:35:43 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:35:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 19657 frames, 4 subscribers
+2026-04-13 15:35:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 77781 frames, avg_dist=0.1170
+2026-04-13 15:35:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 22, Errors: 0
+2026-04-13 15:35:43 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 4 mismatches
+2026-04-13 15:36:02 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=20000 avg_dist=0.1630 avg_time=2.25ms alarms=3 paused=0 errors=0
+2026-04-13 15:36:02 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=20000 avg_dist=0.1499 avg_time=1.23ms alarms=2 paused=0 errors=0
+2026-04-13 15:36:03 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=20000 avg_dist=0.0808 avg_time=3.60ms alarms=13 paused=0 errors=0
+2026-04-13 15:36:03 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=20000 avg_dist=0.0810 avg_time=1.25ms alarms=4 paused=0 errors=0
+2026-04-13 15:36:13 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:36:13 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-13 15:36:13 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:36:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 20529 frames, 4 subscribers
+2026-04-13 15:36:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 81269 frames, avg_dist=0.1197
+2026-04-13 15:36:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 22, Errors: 0
+2026-04-13 15:36:13 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 4 mismatches
+2026-04-13 15:36:36 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=21000 avg_dist=0.1662 avg_time=2.27ms alarms=3 paused=0 errors=0
+2026-04-13 15:36:37 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=21000 avg_dist=0.1559 avg_time=1.27ms alarms=2 paused=0 errors=0
+2026-04-13 15:36:37 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=21000 avg_dist=0.0784 avg_time=3.54ms alarms=13 paused=0 errors=0
+2026-04-13 15:36:37 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=21000 avg_dist=0.0857 avg_time=1.28ms alarms=4 paused=0 errors=0
+2026-04-13 15:36:43 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:36:43 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-13 15:36:43 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:36:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 21404 frames, 4 subscribers
+2026-04-13 15:36:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 84765 frames, avg_dist=0.1221
+2026-04-13 15:36:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 22, Errors: 0
+2026-04-13 15:36:43 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 4 mismatches
+2026-04-13 15:37:11 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=22000 avg_dist=0.1690 avg_time=2.28ms alarms=3 paused=0 errors=0
+2026-04-13 15:37:11 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=22000 avg_dist=0.1614 avg_time=1.31ms alarms=2 paused=0 errors=0
+2026-04-13 15:37:11 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=22000 avg_dist=0.0763 avg_time=3.49ms alarms=13 paused=0 errors=0
+2026-04-13 15:37:11 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=22000 avg_dist=0.0900 avg_time=1.31ms alarms=4 paused=0 errors=0
+2026-04-13 15:37:13 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:37:13 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-13 15:37:13 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:37:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 22278 frames, 4 subscribers
+2026-04-13 15:37:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 88265 frames, avg_dist=0.1244
+2026-04-13 15:37:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 22, Errors: 0
+2026-04-13 15:37:13 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 4 mismatches
+2026-04-13 15:37:43 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:37:43 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-13 15:37:43 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:37:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 23153 frames, 4 subscribers
+2026-04-13 15:37:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 91765 frames, avg_dist=0.1265
+2026-04-13 15:37:43 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 22, Errors: 0
+2026-04-13 15:37:43 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 4 mismatches
+2026-04-13 15:37:45 - back_end.slot_monitor.worker_async - INFO - Worker 0: frames=23000 avg_dist=0.1716 avg_time=2.29ms alarms=3 paused=0 errors=0
+2026-04-13 15:37:45 - back_end.slot_monitor.worker_async - INFO - Worker 2: frames=23000 avg_dist=0.1665 avg_time=1.34ms alarms=2 paused=0 errors=0
+2026-04-13 15:37:46 - back_end.slot_monitor.worker_async - INFO - Worker 1: frames=23000 avg_dist=0.0743 avg_time=3.44ms alarms=13 paused=0 errors=0
+2026-04-13 15:37:46 - back_end.slot_monitor.worker_async - INFO - Worker 3: frames=23000 avg_dist=0.0938 avg_time=1.33ms alarms=4 paused=0 errors=0
+2026-04-13 15:38:13 - back_end.slot_monitor.alarm_controller - INFO - Mismatch resolved: PID=unknown-3, LID=3
+2026-04-13 15:38:13 - back_end.slot_monitor.worker_async - INFO - Worker 3: mismatch resolved for LID=3
+2026-04-13 15:38:13 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:38:13 - back_end.slot_monitor.headless_slot_monitor - INFO - SLOT MONITOR STATUS
+2026-04-13 15:38:13 - back_end.slot_monitor.headless_slot_monitor - INFO - ======================================================================
+2026-04-13 15:38:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Camera: 24027 frames, 4 subscribers
+2026-04-13 15:38:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Workers: 95236 frames, avg_dist=0.1284
+2026-04-13 15:38:13 - back_end.slot_monitor.headless_slot_monitor - INFO - Alarms: 22, Errors: 0
+2026-04-13 15:38:13 - back_end.slot_monitor.headless_slot_monitor - WARNING - ALARM ACTIVE: 3 mismatches
+2026-04-13 15:38:13 - back_end.slot_monitor.worker_async - INFO - Worker 3: baseline adapted LID=3 dist=0.1170
+2026-04-13 15:38:19 - __main__ - INFO - ============================================================
+2026-04-13 15:38:19 - __main__ - INFO - Signal 2 received — shutting down
+2026-04-13 15:38:19 - __main__ - INFO - ============================================================
+2026-04-13 15:38:19 - back_end.server.webrtc_handler - INFO - Shutting down WebRTC handler...
+2026-04-13 15:38:19 - back_end.server.webrtc_handler - INFO - WebRTC handler shutdown complete
+2026-04-13 15:38:19 - back_end.slot_monitor.camera.top_camera - INFO - [TopCamera] Stopped
+2026-04-13 15:38:19 - back_end.slot_monitor.headless_slot_monitor - INFO - Stop event received — shutting down slot monitor
+2026-04-13 15:38:19 - back_end.slot_monitor.headless_slot_monitor - INFO - Shutting down slot monitor...
+2026-04-13 15:38:19 - back_end.slot_monitor.worker_async - INFO - Stopping worker pool...
+2026-04-13 15:38:19 - back_end.slot_monitor.worker_async - INFO - Worker 0 cancelled
+2026-04-13 15:38:19 - back_end.slot_monitor.worker_async - INFO - Worker 1 cancelled
+2026-04-13 15:38:19 - back_end.slot_monitor.worker_async - INFO - Worker 2 cancelled
+2026-04-13 15:38:19 - back_end.slot_monitor.worker_async - INFO - Worker 3 cancelled
+2026-04-13 15:38:19 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 0 stopped
+2026-04-13 15:38:19 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 1 stopped
+2026-04-13 15:38:19 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 2 stopped
+2026-04-13 15:38:19 - back_end.slot_monitor.worker_async - INFO - AsyncWorker 3 stopped
+2026-04-13 15:38:19 - back_end.slot_monitor.worker_async - INFO - 4 workers stopped
+2026-04-13 15:38:19 - back_end.slot_monitor.camera.camera_async - INFO - Async camera capture stopped
+2026-04-13 15:38:19 - back_end.slot_monitor.camera.rolling_buffer - INFO - [TopRollingBuffer] Stopped
+2026-04-13 15:38:19 - back_end.slot_monitor.camera.camera_async - INFO - Async camera released
+2026-04-13 15:38:19 - back_end.slot_monitor.services.operation_context - INFO - Operation cleanup thread stopped
+2026-04-13 15:38:19 - back_end.slot_monitor.db_interface - INFO - AsyncPG pool closed
+2026-04-13 15:38:19 - back_end.slot_monitor.headless_slot_monitor - INFO - Slot monitor shutdown complete
+2026-04-13 15:38:19 - __main__ - INFO - All modules stopped — exiting

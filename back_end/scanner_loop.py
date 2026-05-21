@@ -4,12 +4,13 @@
 import time
 import threading
 import cv2
-from Backup.back_end.scanner_state import scanner_state
-from Backup.back_end.scanner_worker import stop_scan
-from Backup.back_end.config import CameraConfig as _CC, ScannerConfig as _SC
+from back_end.scanner_state import scanner_state
+from back_end.scanner_worker import stop_scan
+from back_end.camera_manager import cam_mgr
+from back_end.config import CameraConfig as _CC, ScannerConfig as _SC
 
 try:
-    from Backup.back_end.slot_monitor.camera.rolling_buffer import face_rolling_buffer as _face_buf
+    from back_end.slot_monitor.camera.rolling_buffer import face_rolling_buffer as _face_buf
     _FACE_BUF_AVAILABLE = True
 except Exception:
     _face_buf = None

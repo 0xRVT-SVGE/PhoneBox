@@ -16,22 +16,22 @@ from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-from Backup.back_end.slot_monitor.camera.camera_async import AsyncFrameBuffer, AsyncCameraCapture
-from Backup.back_end.slot_monitor.worker_async import WorkerPool
-from Backup.back_end.slot_monitor.slots import Slot, generate_grid_rois
-from Backup.back_end.slot_monitor.alarm_controller import AlarmController
-from Backup.back_end.slot_monitor.db_interface import AsyncSlotMonitorDB
-from Backup.back_end.config import (
+from back_end.slot_monitor.camera.camera_async import AsyncFrameBuffer, AsyncCameraCapture
+from back_end.slot_monitor.worker_async import WorkerPool
+from back_end.slot_monitor.slots import Slot, generate_grid_rois
+from back_end.slot_monitor.alarm_controller import AlarmController
+from back_end.slot_monitor.db_interface import AsyncSlotMonitorDB
+from back_end.config import (
     CameraConfig        as _CC,
     DatabaseConfig      as _DC,
     SlotMonitorConfig   as _SMC,
     CameraProcessConfig as _CPC,
 )
-from Backup.back_end.secrets import Secrets
+from back_end.secrets import Secrets
 
 # Opt #1: use multi-process camera when CameraProcessConfig.ENABLED is True.
 if _CPC.ENABLED:
-    from Backup.back_end.camera_process import SharedFrameBuffer as _FrameBufferClass
+    from back_end.camera_process import SharedFrameBuffer as _FrameBufferClass
     _USING_PROCESS = True
 else:
     _FrameBufferClass = AsyncFrameBuffer   # type: ignore[assignment]
@@ -124,7 +124,7 @@ class HeadlessSlotMonitor:
         await self._initialize_monitoring()
         await self._create_workers()
 
-        from Backup.back_end.slot_monitor.services.operation_context import op_ctx
+        from back_end.slot_monitor.services.operation_context import op_ctx
         op_ctx.set_worker_pool(self.worker_pool)
 
         logger.info("Setup complete")

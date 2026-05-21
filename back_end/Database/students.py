@@ -1,5 +1,5 @@
 # back_end/Database/students.py
-from Backup.back_end.Database.db import get_conn, put_conn
+from back_end.Database.db import get_conn, put_conn
 import re
 import logging
 
@@ -13,20 +13,23 @@ def create_student(data):
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                        INSERT INTO students (sid, last_name, first_name, embed, year_group)
-                        VALUES (%s, %s, %s, %s, %s)
+                        INSERT INTO students (sid, last_name, first_name, embed,
+                                             year_code, sub_group_codes)
+                        VALUES (%s, %s, %s, %s, %s, %s)
                         RETURNING sid;
                         """, (data["sid"],
                               data.get("last_name"),
                               data["first_name"],
                               data["embed"],
-                              data.get("year_group"),   # None = unrestricted
+                              data.get("year_code"),          # e.g. 'year1'
+                              data.get("sub_group_codes"),   # e.g. ['year1.1'] or None
                               ))
             sid = cur.fetchone()[0]
             conn.commit()
 
             logger.info(f"Created student {sid}: {data.get('first_name')} {data.get('last_name')} "
-                        f"(year_group={data.get('year_group')})")
+                        f"(year_code={data.get('year_code')}, "
+                        f"sub_group_codes={data.get('sub_group_codes')})")
             return {"status": "success", "data": {"sid": sid}}, 201
     except Exception as e:
         conn.rollback()
@@ -71,12 +74,17 @@ def update_student(sid, data):
             new_sid = data.get("sid") or None
             cur.execute("""
                         UPDATE students
-                        SET sid        = COALESCE(%s, sid),
-                            last_name  = COALESCE(%s, last_name),
-                            first_name = COALESCE(%s, first_name),
-                            embed      = COALESCE(%s, embed),
-                            year_group = CASE
-                                WHEN %s IS NULL THEN year_group
+                        SET sid             = COALESCE(%s, sid),
+                            last_name       = COALESCE(%s, last_name),
+                            first_name      = COALESCE(%s, first_name),
+                            embed           = COALESCE(%s, embed),
+                            year_code       = CASE
+                                WHEN %s IS NULL THEN year_code
+                                ELSE %s
+                            END,
+                            sub_group_codes = CASE
+                                WHEN %s IS NULL THEN sub_group_codes
+                                WHEN %s = '{}' THEN NULL
                                 ELSE %s
                             END
                         WHERE sid = %s
@@ -86,9 +94,14 @@ def update_student(sid, data):
                             data.get("last_name"),
                             data.get("first_name"),
                             data.get("embed"),
-                            # year_group: pass an int to set, omit/None to leave unchanged
-                            data.get("year_group"),
-                            data.get("year_group"),
+                            # year_code: pass value to set, omit/None to leave unchanged
+                            data.get("year_code"),
+                            data.get("year_code"),
+                            # sub_group_codes: pass [] to clear to NULL, list to set,
+                            # omit/None to leave unchanged
+                            data.get("sub_group_codes"),
+                            data.get("sub_group_codes"),
+                            data.get("sub_group_codes"),
                             sid
                         ))
 

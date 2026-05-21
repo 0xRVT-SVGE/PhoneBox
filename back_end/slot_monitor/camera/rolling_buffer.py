@@ -38,7 +38,7 @@ from pathlib import Path
 from typing import Optional, List, Tuple
 
 import numpy as np
-from Backup.back_end.config import RollingBufferConfig as _RBC, EvidenceConfig as _EC
+from back_end.config import RollingBufferConfig as _RBC, EvidenceConfig as _EC
 
 logger = logging.getLogger(__name__)
 
@@ -295,7 +295,7 @@ class FaceRollingBuffer:
                 logger.warning(f"[FaceRollingBuffer] Raw alarm clip saved: {path.name}")
                 return path
             return None
-        from Backup.back_end.slot_monitor.admin.background_encoder import BackgroundEncoder
+        from back_end.slot_monitor.admin.background_encoder import BackgroundEncoder
         ok = BackgroundEncoder.instance().submit(snapshot, path, fps)
         if ok:
             logger.warning(f"[FaceRollingBuffer] Alarm clip queued: {path.name}")
@@ -319,7 +319,7 @@ class FaceRollingBuffer:
                 except Exception as e:
                     logger.warning(f"[FaceRollingBuffer] Session clip callback error: {e}")
             return path if ok else None
-        from Backup.back_end.slot_monitor.admin.background_encoder import BackgroundEncoder
+        from back_end.slot_monitor.admin.background_encoder import BackgroundEncoder
         ok = BackgroundEncoder.instance().submit(
             snapshot, path, fps, callback=callback
         )
@@ -385,7 +385,7 @@ class TopRollingBuffer:
 
     def _feed_loop(self) -> None:
         """Opt #19: event-driven — blocks on frame event, no unconditional sleep."""
-        from Backup.back_end.slot_monitor.camera.top_camera import top_camera
+        from back_end.slot_monitor.camera.top_camera import top_camera
         last_push = 0.0
         while self._running:
             fps      = TOP_FPS if self._active else TOP_FPS_IDLE
@@ -426,7 +426,7 @@ class TopRollingBuffer:
                 logger.warning(f"[TopRollingBuffer] Raw alarm clip saved: {path.name}")
                 return path
             return None
-        from Backup.back_end.slot_monitor.admin.background_encoder import BackgroundEncoder
+        from back_end.slot_monitor.admin.background_encoder import BackgroundEncoder
         ok = BackgroundEncoder.instance().submit(snapshot, path, fps)
         if ok:
             logger.warning(f"[TopRollingBuffer] Alarm clip queued: {path.name}")

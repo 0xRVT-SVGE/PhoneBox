@@ -8,17 +8,17 @@ from typing import Optional
 from flask_socketio import emit, SocketIO
 from flask import request
 
-from Backup.back_end.slot_monitor.services.operation_context import op_ctx
-from Backup.back_end.slot_monitor.camera.qr_pid_reader import scan_and_validate_pid_from_buffer
-from Backup.back_end.slot_monitor.camera.top_camera import top_camera
-from Backup.back_end.slot_monitor.slot_operations import SlotOperations
-from Backup.back_end.slot_monitor.db_interface import SlotMonitorDB
-from Backup.back_end.slot_monitor.phone_tracker import (
+from back_end.slot_monitor.services.operation_context import op_ctx
+from back_end.slot_monitor.camera.qr_pid_reader import scan_and_validate_pid_from_buffer
+from back_end.slot_monitor.camera.top_camera import top_camera
+from back_end.slot_monitor.slot_operations import SlotOperations
+from back_end.slot_monitor.db_interface import SlotMonitorDB
+from back_end.slot_monitor.phone_tracker import (
     create_tracker_for_operation,
     make_dvw_context_overlay,
     load_all_top_rois,
 )
-from Backup.back_end.config import QRConfig as _QRC
+from back_end.config import QRConfig as _QRC
 
 logger = logging.getLogger(__name__)
 
@@ -348,7 +348,7 @@ class DVWSocketHandler:
 
         top_camera.start()
         try:
-            from Backup.back_end.slot_monitor.camera.rolling_buffer import top_rolling_buffer
+            from back_end.slot_monitor.camera.rolling_buffer import top_rolling_buffer
             top_rolling_buffer.set_active(True)
         except Exception:
             pass
@@ -440,63 +440,40 @@ class DVWSocketHandler:
             on_failure = lambda reason: self._on_tracking_failed(op, reason),
         )
 
-    # ── Box acceptance check ──────────────────────────────────────────────────
+    # ── Phone-fit check (deposit guard) ───────────────────────────────────────
 
-    def _check_box_acceptance(self, pid: str) -> Optional[str]:
+    def _check_phone_fits_box(self, pid: str) -> Optional[str]:
         """
-        Verify the phone (and its student) are permitted in THIS box.
+        Verify the phone's size is accepted by the CURRENT box cabinet.
 
-        Rules (either can independently reject):
-          1. phones.allowed_box_slugs:   NULL = any box; non-null list must
-             include the current PHONEBOX_BOX_SLUG.
-          2. boxes.accept_year_groups:   NULL = any year; non-null list must
-             include the student's year_group.
+        Student group access is checked at badge-scan time (scanner_worker.py).
+        This guard only concerns physical hardware fit — phone_size must be in
+        boxes.accepted_phone_sizes (NULL = any size accepted).
 
-        Returns None on success, or a human-readable rejection reason.
+        Returns None if the phone fits, or a human-readable rejection reason.
         """
-        from Backup.back_end.config import ServerConfig as _SVC
-        from Backup.back_end.slot_monitor.db_interface import _BOX_ID
-        from Backup.back_end.Database.db import get_conn, put_conn
+        import back_end.access_control as ac
+        from back_end.Database.db import get_conn, put_conn
 
         conn = get_conn()
         try:
             with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT ph.allowed_box_slugs,
-                           st.year_group,
-                           b.accept_year_groups
-                    FROM   phones ph
-                    JOIN   students st ON ph.sid = st.sid
-                    CROSS  JOIN boxes b
-                    WHERE  ph.pid   = %s
-                      AND  b.box_id = %s;
-                """, (pid, _BOX_ID))
+                cur.execute(
+                    "SELECT phone_size FROM phones WHERE pid = %s;",
+                    (pid,),
+                )
                 row = cur.fetchone()
                 if not row:
-                    return f"Phone {pid} not found or box_id={_BOX_ID} not in registry"
+                    return f"Phone {pid} not found in registry"
 
-                allowed_slugs, year_group, accept_years = row
-                slug = _SVC.BOX_SLUG
+                phone_size = row[0] or "standard"
+                if not ac.check_phone_fits(phone_size):
+                    return ac.build_size_mismatch_message(phone_size)
 
-                # Rule 1 — phone-level slug allowlist
-                if allowed_slugs is not None and slug not in allowed_slugs:
-                    return (
-                        f"Phone not permitted in this box "
-                        f"(allowed: {allowed_slugs}, this box: {slug!r})"
-                    )
-
-                # Rule 2 — box-level year group filter
-                if accept_years is not None and year_group is not None:
-                    if year_group not in accept_years:
-                        return (
-                            f"Student year group {year_group} not accepted by this box "
-                            f"(accepted: {list(accept_years)})"
-                        )
-
-                return None   # all checks passed
+                return None   # phone fits this box
         except Exception as exc:
-            logger.error(f"[OpsHandler] Box acceptance check failed: {exc}")
-            return None   # fail-open: don't block deposit on DB errors
+            logger.error(f"[OpsHandler] Phone-fit check failed: {exc}")
+            return None   # fail-open: don't block deposit on transient DB errors
         finally:
             put_conn(conn)
 
@@ -507,13 +484,14 @@ class DVWSocketHandler:
 
         top_camera.clear_context_overlay()
 
-        # Box acceptance check — runs before any DB write
-        rejection = self._check_box_acceptance(pid)
+        # Phone-fit check: verify phone size is accepted by this cabinet.
+        # (Student group access was already verified at badge-scan time.)
+        rejection = self._check_phone_fits_box(pid)
         if rejection:
             logger.warning(f"[OpsHandler] Deposit REJECTED PID={pid}: {rejection}")
             self.socketio.emit(
                 "deposit_result",
-                {"status": "error", "message": "box_not_allowed",
+                {"status": "error", "message": "size_not_accepted",
                  "reason": rejection, "pid": pid, "lid": lid},
                 to=client_id, namespace="/",
             )
@@ -740,7 +718,7 @@ class DVWSocketHandler:
 
     def _top_buffer_idle(self):
         try:
-            from Backup.back_end.slot_monitor.camera.rolling_buffer import top_rolling_buffer
+            from back_end.slot_monitor.camera.rolling_buffer import top_rolling_buffer
             top_rolling_buffer.set_active(False)
         except Exception:
             pass

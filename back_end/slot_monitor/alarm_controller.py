@@ -29,8 +29,8 @@ import logging
 import threading
 import time
 
-from Backup.back_end.secrets import Secrets
-from Backup.back_end.config import AlarmConfig as _AC
+from back_end.secrets import Secrets
+from back_end.config import AlarmConfig as _AC
 
 logger = logging.getLogger(__name__)
 
@@ -277,7 +277,7 @@ class AlarmController:
         self._last_clip_time[key] = now
 
         try:
-            from Backup.back_end.slot_monitor.camera.rolling_buffer import (
+            from back_end.slot_monitor.camera.rolling_buffer import (
                 face_rolling_buffer, top_rolling_buffer,
             )
             face_rolling_buffer.save_alarm_clip(pid=pid, lid=lid)

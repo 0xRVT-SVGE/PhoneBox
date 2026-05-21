@@ -15,7 +15,7 @@ import threading
 import time
 from typing import List, Optional, Set
 import numpy as np
-from Backup.back_end.config import SlotMonitorConfig as _SMC
+from back_end.config import SlotMonitorConfig as _SMC
 
 logger = logging.getLogger(__name__)
 

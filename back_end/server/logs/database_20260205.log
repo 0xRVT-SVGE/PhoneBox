@@ -1,0 +1,23 @@
+2026-02-05 10:44:48 - tensorflow - WARNING - From C:\Users\enpei\PycharmProjects\PhoneBox\.venv\Lib\site-packages\tf_keras\src\losses.py:2976: The name tf.losses.sparse_softmax_cross_entropy is deprecated. Please use tf.compat.v1.losses.sparse_softmax_cross_entropy instead.
+
+2026-02-05 10:44:49 - back_end.server.app - INFO - ============================================================
+2026-02-05 10:44:49 - back_end.server.app - INFO - Flask application initializing...
+2026-02-05 10:44:49 - back_end.server.app - INFO - ============================================================
+2026-02-05 10:44:49 - back_end.server.app - ERROR - Failed to initialize slot monitoring: cannot import name 'generate_grid_rois' from 'back_end.slot_monitor.slot_camera' (C:\Users\enpei\PycharmProjects\PhoneBox\back_end\slot_monitor\slot_camera.py)
+Traceback (most recent call last):
+  File "C:\Users\enpei\PycharmProjects\PhoneBox\back_end\server\app.py", line 45, in create_app
+    from back_end.slot_monitor.slot_camera import generate_grid_rois
+ImportError: cannot import name 'generate_grid_rois' from 'back_end.slot_monitor.slot_camera' (C:\Users\enpei\PycharmProjects\PhoneBox\back_end\slot_monitor\slot_camera.py)
+2026-02-05 10:44:49 - back_end.server.app - INFO - Flask application initialized successfully
+2026-02-05 10:44:49 - __main__ - INFO - ============================================================
+2026-02-05 10:44:49 - __main__ - INFO - Starting server threads...
+2026-02-05 10:44:49 - __main__ - INFO - ============================================================
+2026-02-05 10:44:49 - __main__ - INFO - ============================================================
+2026-02-05 10:44:49 - __main__ - INFO - Starting Flask-SocketIO on 0.0.0.0:5000
+2026-02-05 10:44:49 - __main__ - INFO - ============================================================
+2026-02-05 10:44:49 - werkzeug - WARNING - Werkzeug appears to be used in a production deployment. Consider switching to a production web server instead.
+2026-02-05 10:44:49 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.0.2:5000
+2026-02-05 10:44:49 - werkzeug - INFO - [33mPress CTRL+C to quit[0m

@@ -247,7 +247,7 @@ def _collect_alarm_metrics(slot_monitor) -> None:
 def _collect_dvw_metrics() -> None:
     """Count active DVW operations from op_ctx."""
     try:
-        from Backup.back_end.slot_monitor.services.operation_context import op_ctx
+        from back_end.slot_monitor.services.operation_context import op_ctx
         ops = op_ctx.get_all_operations()
         _dvw_operations_active.set(len(ops))
     except Exception as exc:
@@ -258,7 +258,7 @@ def _collect_encoder_metrics() -> None:
     """Pull queue depth and dropped count from BackgroundEncoder."""
     global _prev_encoder_dropped
     try:
-        from Backup.back_end.slot_monitor.admin.background_encoder import BackgroundEncoder
+        from back_end.slot_monitor.admin.background_encoder import BackgroundEncoder
         st = BackgroundEncoder.instance().status()
         _encoder_queue_depth.set(st.get('queued', 0))
         curr_d = st.get('dropped', 0)
@@ -275,11 +275,11 @@ def _collect_camera_metrics(slot_monitor) -> None:
 
     # Top camera — uses a simple frame event counter stored on top_camera
     try:
-        from Backup.back_end.slot_monitor.camera.top_camera import top_camera
+        from back_end.slot_monitor.camera.top_camera import top_camera
         # top_camera doesn't expose a frame count directly; we proxy via
         # rolling buffer which stores timestamps.  Use buffer frame_count()
         # as an approximation of total delivered frames since last scrape.
-        from Backup.back_end.slot_monitor.camera.rolling_buffer import top_rolling_buffer
+        from back_end.slot_monitor.camera.rolling_buffer import top_rolling_buffer
         curr_top = top_rolling_buffer.frame_count()
         if curr_top > _prev_top_frames:
             _top_cam_frames.inc(curr_top - _prev_top_frames)

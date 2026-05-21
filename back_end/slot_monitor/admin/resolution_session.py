@@ -20,7 +20,7 @@ import secrets
 import threading
 import time
 from typing import Dict, Optional, Set
-from Backup.back_end.config import AdminConfig as _ADM
+from back_end.config import AdminConfig as _ADM
 
 logger = logging.getLogger(__name__)
 

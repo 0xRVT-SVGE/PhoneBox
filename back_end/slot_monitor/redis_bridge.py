@@ -58,7 +58,7 @@ except ImportError:
         "Install with: pip install redis"
     )
 
-from Backup.back_end.config import MonitorServiceConfig as _MSC
+from back_end.config import MonitorServiceConfig as _MSC
 
 
 # ── Publisher ─────────────────────────────────────────────────────────────────
