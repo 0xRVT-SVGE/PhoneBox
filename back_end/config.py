@@ -52,8 +52,8 @@ _MODELS_DIR = _REPO_ROOT / "back_end" / "models"
 class CameraConfig:
     # ── Device indices ────────────────────────────────────
     FRONT_CAM_INDEX  = 0   # scanner_loop.py  — face + barcode
-    TOP_CAM_INDEX    = 1   # top_camera.py    — QR scan + phone tracking
-    BOTTOM_CAM_INDEX = 2   # headless_slot_monitor.py — slot embedding
+    TOP_CAM_INDEX    = 2   # top_camera.py    — QR scan + phone tracking
+    BOTTOM_CAM_INDEX = 1   # headless_slot_monitor.py — slot embedding
 
     # ── Bottom camera (slot monitor) resolution ───────────
     BOTTOM_CAM_WIDTH  = 1280
@@ -92,9 +92,9 @@ class CameraConfig:
     #   PHONEBOX_CAM_BACKEND_FRONT   e.g. "dshow"
     #   PHONEBOX_CAM_BACKEND_TOP     e.g. "auto"
     #   PHONEBOX_CAM_BACKEND_BOTTOM  e.g. "dshow"
-    FRONT_CAM_BACKEND  = os.environ.get("PHONEBOX_CAM_BACKEND_FRONT",  "auto").lower()
-    TOP_CAM_BACKEND    = os.environ.get("PHONEBOX_CAM_BACKEND_TOP",    "auto").lower()
-    BOTTOM_CAM_BACKEND = os.environ.get("PHONEBOX_CAM_BACKEND_BOTTOM", "dshow").lower()
+    FRONT_CAM_BACKEND  = os.environ.get("PHONEBOX_CAM_BACKEND_FRONT",  "msmf").lower()
+    TOP_CAM_BACKEND    = os.environ.get("PHONEBOX_CAM_BACKEND_TOP",    "dshow").lower()
+    BOTTOM_CAM_BACKEND = os.environ.get("PHONEBOX_CAM_BACKEND_BOTTOM", "auto").lower()
 
     # ── Backend resolver ──────────────────────────────────
     # Use CameraConfig.resolve_backend(name) to get the cv2 integer constant.

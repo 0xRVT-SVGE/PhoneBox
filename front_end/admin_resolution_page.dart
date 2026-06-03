@@ -19,6 +19,7 @@ enum _Step {
   depositInProgress,
   declaringMissing,
   noQrHandled,
+  crossBox,       // phone must be carried to a different box
   sessionDone,
   error,
 }
@@ -59,6 +60,11 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
   bool    _qrVisible     = true;
 
   String? _needsDepositPid;
+
+  // Cross-box transfer state
+  String? _crossBoxPid;
+  String? _crossBoxName;
+  String? _crossBoxSlug;
 
   Map<String, dynamic>? _summary;
   bool _evidenceKept     = false;
@@ -224,11 +230,29 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
       _noQrButtonTimer?.cancel();
       final pid      = data['pid'].toString();
       final needsDep = data['needs_deposit'] == true;
+      final isCrossBox = data['cross_box'] == true;
+
       _currentPid  = pid;
       _sameSlot    = data['same_slot'] == true;
       _expectedLid = data['expected_lid'] != null
           ? int.parse(data['expected_lid'].toString())
           : null;
+
+      if (isCrossBox) {
+        // Phone belongs to a different box — remove from our remaining list
+        // and show the carry-to-other-box directive.
+        _remaining.remove(pid);
+        setState(() {
+          _crossBoxPid  = pid;
+          _crossBoxName = data['canonical_box_name']?.toString() ?? 'another box';
+          _crossBoxSlug = data['canonical_box_slug']?.toString();
+          _step         = _Step.crossBox;
+          _scanError    = null;
+        });
+        _cardAnim.forward(from: 0);
+        return;
+      }
+
       if (needsDep) {
         _needsDepositPid = pid;
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -846,9 +870,88 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
           title: 'Declaring phone as missing...',
           subtitle: 'Updating the database and saving evidence. Please wait.',
           loading: true, actions: const []);
+      case _Step.crossBox:        return _crossBoxContent();
       case _Step.sessionDone:    return _doneContent();
       case _Step.error:          return _errorContent();
     }
+  }
+
+  Widget _crossBoxContent() {
+    final boxName = _crossBoxName ?? 'another box';
+    final pid     = _crossBoxPid;
+    return Column(mainAxisSize: MainAxisSize.min, children: [
+      // Orange banner
+      Container(
+        width:  double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color:        const Color(0xFFFF9800).withOpacity(0.15),
+          border:       Border.all(color: const Color(0xFFFF9800), width: 1.5),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Row(children: [
+          const Icon(Icons.swap_horiz_rounded, color: Color(0xFFFF9800), size: 32),
+          const SizedBox(width: 12),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(
+              'Wrong box — carry to $boxName',
+              style: const TextStyle(
+                color:       Color(0xFFFF9800),
+                fontWeight:  FontWeight.bold,
+                fontSize:    15,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'This phone is registered in $boxName. '  
+              'The alarm here will clear automatically once '  
+              'it is deposited there.',
+              style: const TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+          ])),
+        ]),
+      ),
+      const SizedBox(height: 16),
+      // Phone ID chip
+      if (pid != null)
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color:        Colors.white10,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Text(
+            'Phone: ${_displayPid(pid)}',
+            style: const TextStyle(color: Colors.white60, fontSize: 12,
+                fontFamily: 'monospace'),
+          ),
+        ),
+      const SizedBox(height: 8),
+      const Text(
+        'Keep the QR code visible as you carry it.\n'
+        'Deposit it using the normal flow at its home box.',
+        textAlign: TextAlign.center,
+        style: TextStyle(color: Colors.white54, fontSize: 13),
+      ),
+      const SizedBox(height: 20),
+      _primaryBtn(
+        'Understood — taking it to $boxName',
+        const Color(0xFFFF9800),
+        () {
+          setState(() {
+            _crossBoxPid  = null;
+            _crossBoxName = null;
+            _crossBoxSlug = null;
+          });
+          if (_remaining.isEmpty && _staged.isEmpty) {
+            _socket.adminSessionClose();
+          } else {
+            _scheduleCameraIdle();
+            _autoSelect();
+          }
+        },
+      ),
+    ]);
   }
 
   Widget _openingContent() {

@@ -611,6 +611,82 @@ class AdminOpsHandler:
             ).start()
             return
 
+        # ── Cross-box detection ──────────────────────────────────────────────
+        # get_active_storage() has NO box_id filter: it returns wherever the
+        # phone is currently recorded across the entire shared DB.
+        #
+        # Backwards-compatible behaviour per deployment mode:
+        #   Single-box (1 DB):     storage.box_id == _BOX_ID → skip this block
+        #   Separate DBs:          is_phone_stored() returned True but storage
+        #                          will also equal current box → skip this block
+        #                          (no cross-box row exists in this DB)
+        #   Shared DB, wrong box:  storage.box_id != _BOX_ID → enter block ✓
+        storage = SlotMonitorDB.get_active_storage(pid)
+        if storage is not None and storage["box_id"] != _BOX_ID:
+            canonical_box_name = storage["box_name"]
+            canonical_box_slug = storage["box_slug"]
+            logger.warning(
+                f"[AdminSession] {session.session_id} — "
+                f"PID={pid} scanned at box_id={_BOX_ID} but is recorded in "
+                f"box_id={storage['box_id']} ({canonical_box_name}). "
+                "Issuing cross-box transfer directive."
+            )
+
+            # Record in session so pending_pids() / summary() / watchdog
+            # all treat this phone as "handled".
+            session.cross_box_pids[pid] = canonical_box_name
+
+            # Reset in-transit state — the admin now carries it to the other box.
+            session.in_transit_pid          = None
+            session.in_transit_from_lid     = None
+            session.in_transit_qr_confirmed = False
+            self._stop_clip(keep=True, reason="cross_box_transfer")
+            self._refresh_overlay(session)
+
+            # Register PID for NOTIFY auto-resolution on this box when the
+            # destination box's deposit confirms arrival (JSON payload).
+            # _cross_box_pending lives on the AsyncSlotMonitorDB instance; we
+            # locate it via the monitor reference on slot_ops.
+            try:
+                db = getattr(
+                    getattr(self.slot_ops, "monitor", None), "db", None
+                )
+                if db is not None:
+                    if not hasattr(db, "_cross_box_pending"):
+                        db._cross_box_pending = {}
+                    if not hasattr(db, "_alarm_ref"):
+                        db._alarm_ref = self.alarm
+                    # Store the FROM lid so resolve() gets the right (pid, lid) pair
+                    db._cross_box_pending[pid] = from_lid
+                    logger.debug(
+                        f"[AdminSession] Registered cross-box NOTIFY watch: "
+                        f"PID={pid} from_lid={from_lid}"
+                    )
+            except Exception as exc:
+                logger.warning(
+                    f"[AdminSession] Could not register NOTIFY watch: {exc}"
+                )
+
+            # Silence (not resolve) the alarm — it will auto-resolve via NOTIFY
+            # when the destination box confirms the deposit, or the admin can
+            # manually close the session (which calls alarm.resolve() directly).
+            self.alarm.silence()
+
+            self.socketio.emit("admin_qr_result", {
+                "pid":               pid,
+                "cross_box":         True,
+                "canonical_box_name": canonical_box_name,
+                "canonical_box_slug": canonical_box_slug,
+                "needs_deposit":     False,
+                "from_lid":          from_lid,
+                "message": (
+                    f"Phone {pid} belongs in {canonical_box_name}. "
+                    f"Carry it to {canonical_box_name} and deposit it there."
+                ),
+            }, to=client_id, namespace="/")
+            return
+        # ── End cross-box detection ──────────────────────────────────────────
+
         self._stop_clip(keep=False, reason="restarting_with_real_pid")
         self._start_clip(pid=pid, lid=from_lid)
 

@@ -356,6 +356,22 @@ class AdminVideoTrack(HWAccelVideoTrack):
 # ============================================================
 
 async def _handle_offer(offer_sdp, offer_type, mode):
+    # ── Evict stale connections for this mode ────────────────────────────────
+    # If the client reconnects (e.g. page-return flush) or a previous close
+    # never propagated a terminal ICE state, ghost recv() coroutines would
+    # accumulate and saturate the ThreadPoolExecutor.  Closing them here
+    # guarantees at most one active VideoTrack per mode at any time.
+    existing = list(_pcs_for_mode(mode))
+    if existing:
+        logger.debug(
+            f"[WebRTC] Evicting {len(existing)} stale {mode!r} "
+            f"connection(s) before new offer"
+        )
+        await asyncio.gather(
+            *[pc.close() for pc in existing], return_exceptions=True
+        )
+        _pcs_for_mode(mode).clear()
+
     pc = RTCPeerConnection()
 
     if mode == "main":

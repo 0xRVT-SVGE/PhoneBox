@@ -363,6 +363,55 @@ class SlotMonitorDB:
         finally:
             put_conn(conn)
 
+    @staticmethod
+    def get_active_storage(pid: str) -> Optional[Dict]:
+        """
+        Return the active storage record for *pid* across ALL boxes.
+
+        Unlike get_lid_for_pid() this query carries NO box_id filter —
+        it is intentionally cross-box so that a shared-DB deployment can
+        detect "this phone is currently recorded in a different box".
+
+        Returns a dict with keys:
+            lid, box_id, box_name, box_slug
+        or None when the phone has no active storage record in any box.
+
+        Backwards-compatible:
+        - Single-box (1 DB): always returns current box → cross-box path
+          never fires because box_id == _BOX_ID.
+        - Separate DBs: returns None when P not in this DB → falls through
+          to existing needs_deposit=True path.
+        - Shared DB: returns foreign box row → cross-box path fires.
+        """
+        conn = get_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT ps.lid,
+                           ps.box_id,
+                           b.box_name,
+                           b.box_slug
+                    FROM phone_storage ps
+                    LEFT JOIN boxes b ON b.box_id = ps.box_id
+                    WHERE ps.pid = %s AND ps.retrieved_at IS NULL
+                    LIMIT 1;
+                """, (pid,))
+                row = cur.fetchone()
+                if not row:
+                    return None
+                lid, box_id, box_name, box_slug = row
+                return {
+                    "lid":      lid,
+                    "box_id":   box_id,
+                    "box_name": box_name or f"Box {box_id}",
+                    "box_slug": box_slug or str(box_id),
+                }
+        except Exception as e:
+            logger.error(f"[DB] get_active_storage PID={pid}: {e}")
+            return None
+        finally:
+            put_conn(conn)
+
 
 # ============================================================
 # ASYNC DATABASE INTERFACE  (asyncpg, used by HeadlessSlotMonitor)
@@ -500,9 +549,66 @@ class AsyncSlotMonitorDB:
 
     def _on_storage_notify(self, conn, pid, channel, payload: str) -> None:
         """
-        Callback from asyncpg when PostgreSQL sends NOTIFY.
-        Runs in the asyncpg event-loop thread; dict.pop is GIL-safe.
+        Callback from asyncpg when PostgreSQL sends NOTIFY on
+        'phonebox_storage_change'.  Runs in the asyncpg event-loop thread.
+
+        Payload formats supported
+        ─────────────────────────
+        Legacy (integer):  "7"
+            → invalidate cache for LID 7 (Opt #25 original behaviour)
+
+        Extended (JSON):   {"event":"insert","pid":"<uuid>","lid":7,"box_id":1}
+            → invalidate cache for lid
+            → if pid is in _cross_box_pending: auto-resolve the local alarm
+              (the phone arrived at its destination box, Box B's alarm clears)
         """
+        import json as _json
+
+        # ── Try JSON first (extended format) ──────────────────────────────────
+        try:
+            data = _json.loads(payload)
+            lid     = data.get("lid")
+            ev_pid  = data.get("pid")
+            ev_box  = data.get("box_id")
+
+            # Cache invalidation (same as before)
+            if lid is not None:
+                try:
+                    self.invalidate_pid_cache_sync(int(lid))
+                    logger.debug(
+                        f"[AsyncDB] Opt #25: cache invalidated via NOTIFY "
+                        f"LID={lid} (JSON payload)"
+                    )
+                except Exception:
+                    pass
+
+            # Cross-box auto-resolution
+            # _cross_box_pending: set of PIDs this box dispatched elsewhere
+            # _alarm_ref:         AlarmController set by admin_ops_handler
+            if (
+                data.get("event") == "insert"
+                and ev_pid
+                and ev_box is not None
+                and ev_box != self._box_id          # arrived in a DIFFERENT box
+                and hasattr(self, "_cross_box_pending")
+                and ev_pid in self._cross_box_pending
+                and hasattr(self, "_alarm_ref")
+                and self._alarm_ref is not None
+            ):
+                expected_lid = self._cross_box_pending.pop(ev_pid, None)
+                if expected_lid is not None:
+                    self._alarm_ref.resolve(ev_pid, expected_lid)
+                    logger.info(
+                        f"[AsyncDB] Cross-box auto-resolve: PID={ev_pid} "
+                        f"confirmed in box_id={ev_box} — alarm cleared for "
+                        f"lid={expected_lid} on this box (box_id={self._box_id})"
+                    )
+            return
+
+        except (_json.JSONDecodeError, AttributeError, TypeError):
+            pass  # not JSON — fall through to legacy integer parse
+
+        # ── Legacy integer payload ─────────────────────────────────────────────
         try:
             lid = int(payload)
             self.invalidate_pid_cache_sync(lid)

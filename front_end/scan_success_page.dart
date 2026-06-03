@@ -89,6 +89,11 @@ class _ScanSuccessPageState extends State<ScanSuccessPage> {
     _topRenderer.srcObject = null;
     _topRenderer.dispose();
     _topConnected.dispose();
+    // Explicitly tell the server to close the admin WebRTC connection.
+    // _topPc?.close() sends a DTLS close but is not awaited, so if Flutter
+    // destroys this widget before the handshake completes the server never
+    // receives a terminal ICE state and the AdminVideoTrack ghost persists.
+    ApiService.cancelAdmin();
     // DVWBottomSheet manages its own subscriptions — nothing to cancel here
     super.dispose();
   }

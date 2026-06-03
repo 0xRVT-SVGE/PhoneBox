@@ -136,7 +136,14 @@ class _ScanPageState extends State<ScanPage> {
           MaterialPageRoute(
             builder: (_) => ScanSuccessPage(sid: user, studentName: currentName),
           ),
-        ).then((_) => _navigating = false);
+        ).then((_) {
+          _navigating = false;
+          // Flush the WebRTC jitter buffer that accumulated while ScanSuccessPage
+          // was on top. A fresh connection gives zero-lag video immediately.
+          if (mounted && !viewDisposed && !_alarmPageOpen) {
+            _flushAndReconnectMain();
+          }
+        });
         scanning   = false;
         scanStatus = "Idle";
       } else if (timeout) {
@@ -209,6 +216,28 @@ class _ScanPageState extends State<ScanPage> {
       }
     } catch (_) {
       if (mounted) setState(() => webrtcStatus = "WebRTC Error");
+    }
+  }
+
+  /// Flush the accumulated WebRTC jitter buffer by tearing down the current
+  /// peer connection and opening a fresh one.  Called every time ScanPage
+  /// becomes the top route again (returning from admin menu / scan-success
+  /// page), because Flutter's native WebRTC jitter buffer never resets itself
+  /// and grows with every second spent on another page.
+  ///
+  /// The old [_remoteRenderer] stream is left intact until [_startWebRTC]
+  /// delivers a new one via [onTrack], so the user never sees a black frame.
+  Future<void> _flushAndReconnectMain() async {
+    if (_isReconnecting || viewDisposed) return;
+    _isReconnecting = true;
+    try {
+      _peerConnection?.onTrack           = null;
+      _peerConnection?.onConnectionState = null;
+      await _peerConnection?.close();
+      _peerConnection = null;
+      if (!viewDisposed) await _startWebRTC();
+    } finally {
+      _isReconnecting = false;
     }
   }
 
@@ -286,8 +315,15 @@ class _ScanPageState extends State<ScanPage> {
       if (!loginSuccess) return;
     }
     if (!mounted) return;
-    Navigator.push(context,
-        MaterialPageRoute(builder: (_) => const AdminMenuPage())); // ← fixed #28 + naming
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const AdminMenuPage()),
+    ).then((_) {
+      // Flush stale jitter buffer accumulated while AdminMenuPage was on top.
+      if (mounted && !viewDisposed && !_alarmPageOpen) {
+        _flushAndReconnectMain();
+      }
+    });
   }
 
   @override

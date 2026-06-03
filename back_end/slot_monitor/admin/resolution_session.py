@@ -68,6 +68,11 @@ class ResolutionSession:
 
     placement_cancel_event  Event|None  Set to abort an in-flight placement
                                        tracker; cleared on completion.
+
+    cross_box_pids          dict       {pid: canonical_box_name}  — phones
+                                       the admin is carrying to another box.
+                                       Alarm is silenced (not resolved) until
+                                       the destination box confirms deposit.
     """
 
     def __init__(
@@ -90,6 +95,9 @@ class ResolutionSession:
         self.resolved_pids:          Set[str]       = set()
         self.declared_missing_pids:  Set[str]       = set()
         self.needs_deposit_pids:     Set[str]       = set()
+        # {pid: canonical_box_name} — dispatched to another box, pending
+        # confirmation from that box's deposit flow via LISTEN/NOTIFY.
+        self.cross_box_pids:         Dict[str, str] = {}
 
         # Current phone in hand
         self.in_transit_pid:          Optional[str] = None
@@ -115,10 +123,15 @@ class ResolutionSession:
     def pending_pids(self) -> list:
         """
         PIDs from the initial mismatch list that are not yet resolved,
-        declared missing, or flagged for deposit.
+        declared missing, flagged for deposit, or sent to another box.
         Also includes staged phones that haven't been placed yet.
         """
-        handled = self.resolved_pids | self.declared_missing_pids | self.needs_deposit_pids
+        handled = (
+            self.resolved_pids
+            | self.declared_missing_pids
+            | self.needs_deposit_pids
+            | set(self.cross_box_pids)  # dispatched to another box
+        )
         pending = [
             pid for pid in self.initial_mismatches
             if pid not in handled
@@ -127,8 +140,13 @@ class ResolutionSession:
 
     @property
     def resolve_count(self) -> int:
-        """Number of phones fully resolved (placed or declared missing)."""
-        return len(self.resolved_pids) + len(self.declared_missing_pids)
+        """Number of phones fully resolved (placed, declared missing, or
+        dispatched cross-box — the destination box will confirm arrival)."""
+        return (
+            len(self.resolved_pids)
+            + len(self.declared_missing_pids)
+            + len(self.cross_box_pids)
+        )
 
     def is_expired(self) -> bool:
         """
@@ -149,6 +167,7 @@ class ResolutionSession:
             "resolved":           sorted(self.resolved_pids),
             "declared_missing":   sorted(self.declared_missing_pids),
             "needs_deposit":      sorted(self.needs_deposit_pids),
+            "cross_box_pending":  dict(self.cross_box_pids),  # {pid: box_name}
             "unresolved":         sorted(self.pending_pids()),
         }
 
