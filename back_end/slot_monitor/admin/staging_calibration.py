@@ -9,16 +9,16 @@ staging zones on the box lid as seen by the top-down camera.
 
 What it shows
 ─────────────
-  ● Slot ROIs (from rois_top.json)   — GREEN, read-only reference.
+  ● Slot ROIs (from rois_top_{slug}.json)   — GREEN, read-only reference.
     These are the slot destination zones used by the phone tracker.
     They cannot be selected or moved — they are shown only so the
     admin knows where slots are when positioning staging zones.
 
-  ● Staging zone ROIs               — BLUE (zone 1) and ORANGE (zone 2).
-    These are what the tool edits. They are saved to staging_rois.json.
+  ● Staging zone ROIs                       — BLUE (zone 1) and ORANGE (zone 2).
+    These are what the tool edits. They are saved to staging_rois_{slug}.json.
 
 Controls
-─────────
+────────
   TAB / 1 / 2              → switch selected staging zone
   Left-drag inside box     → move selected zone
   Left-drag bottom-right ▪ → resize selected zone
@@ -29,7 +29,7 @@ Controls
 
 Output
 ──────
-  back_end/slot_monitor/admin/staging_rois.json
+  back_end/slot_monitor/admin/staging_rois_{slug}.json
 
   Format: list of exactly 2 entries, each [x, y, w, h] (0-based pixels).
   Example:
@@ -39,15 +39,15 @@ Output
 
 Usage
 ─────
-  python -m back_end.slot_monitor.admin.staging_calibration
+  PHONEBOX_BOX_SLUG=year_3 python -m back_end.slot_monitor.admin.staging_calibration
   # or
-  python back_end/slot_monitor/admin/staging_calibration.py
+  PHONEBOX_BOX_SLUG=year_3 python back_end/slot_monitor/admin/staging_calibration.py
 """
-
+import os
 import cv2
 import json
 import logging
-import os
+import os as _os
 import sys
 from typing import List, Optional, Tuple
 from back_end.config import CameraConfig as _CC, CalibrationConfig as _CAL
@@ -60,11 +60,20 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ── File paths ────────────────────────────────────────────
-_ADMIN_DIR       = os.path.dirname(os.path.abspath(__file__))
-_TOOLS_DIR       = os.path.normpath(os.path.join(_ADMIN_DIR, "..", "tools"))
-STAGING_ROI_FILE = os.path.join(_ADMIN_DIR, "staging_rois.json")
-SLOT_ROI_FILE    = os.path.join(_TOOLS_DIR, "rois_top.json")
+# ── Box slug (resolved once at startup) ──────────────────────────────────
+_BOX_SLUG = _os.getenv("PHONEBOX_BOX_SLUG", "")
+if not _BOX_SLUG:
+    try:
+        from back_end.config import ServerConfig as _SVC
+        _BOX_SLUG = getattr(_SVC, "BOX_SLUG", "") or "box_1"
+    except Exception:
+        _BOX_SLUG = "box_1"
+
+# ── File paths (box-specific) ────────────────────────────────────────────
+_ADMIN_DIR       = _os.path.dirname(_os.path.abspath(__file__))
+_TOOLS_DIR       = _os.path.normpath(_os.path.join(_ADMIN_DIR, "..", "tools"))
+STAGING_ROI_FILE = _os.path.join(_ADMIN_DIR, f"staging_rois_{_BOX_SLUG}.json")
+SLOT_ROI_FILE    = _os.path.join(_TOOLS_DIR, f"rois_top_{_BOX_SLUG}.json")
 
 # ── Camera ────────────────────────────────────────────────
 TOP_CAMERA_INDEX = _CC.TOP_CAM_INDEX
@@ -113,7 +122,7 @@ def _load_slot_rois(filepath: str) -> List[Tuple[int, int, int, int]]:
     """Load slot ROIs for reference display. Returns [] on any failure."""
     if not os.path.exists(filepath):
         logger.warning(
-            f"[Staging] rois_top.json not found at {filepath} — "
+            f"[Staging] {os.path.basename(filepath)} not found — "
             "slot reference overlays will not be shown."
         )
         return []
@@ -148,7 +157,7 @@ def _load_staging_rois(filepath: str, fw: int, fh: int) -> List[List[int]]:
             if isinstance(data, list) and len(data) == 2:
                 return [[int(v) for v in r] for r in data]
             logger.info(
-                "[Staging] staging_rois.json had wrong entry count — "
+                f"[Staging] {os.path.basename(filepath)} had wrong entry count — "
                 "using defaults."
             )
         except Exception as e:
@@ -198,7 +207,7 @@ class _StagingEditor:
     Esc                            → abort (no save)
     """
 
-    TITLE = "Staging Zone Calibration — X/Enter: save   Esc: cancel"
+    TITLE = f"Staging Zone Calibration [{_BOX_SLUG}] — X/Enter: save   Esc: cancel"
 
     def __init__(
         self,
@@ -398,10 +407,10 @@ class _StagingEditor:
         sel_color = _brighten(_ZONE_COLORS[self._sel], _ZONE_SEL_BOOST)
 
         lines = [
-            "GREEN boxes = slot ROIs (read-only reference from rois_top.json)",
+            f"BOX: {_BOX_SLUG}   |   GREEN = slot ROIs (read-only, from rois_top_{_BOX_SLUG}.json)",
             f"Editing: {sel_name}   |   TAB / 1 / 2 : switch zone   R : reset",
             "L-drag inside: move   L-drag corner: resize   R-drag anywhere: move",
-            "X / Enter : save & exit        Esc : cancel (no save)",
+            f"X / Enter : save to staging_rois_{_BOX_SLUG}.json        Esc : cancel (no save)",
         ]
         for j, line in enumerate(lines):
             yy = 20 + j * 19
@@ -428,6 +437,9 @@ class _StagingEditor:
 # ══════════════════════════════════════════════════════════
 
 def run() -> None:
+    logger.info(f"[Staging] Box slug: {_BOX_SLUG!r}")
+    logger.info(f"[Staging] Staging ROI file : {STAGING_ROI_FILE}")
+    logger.info(f"[Staging] Slot ROI file    : {SLOT_ROI_FILE}")
     logger.info("[Staging] Capturing top camera frame…")
     frame = _capture_frame(TOP_CAMERA_INDEX, warmup=WARMUP_FRAMES)
 
@@ -447,7 +459,10 @@ def run() -> None:
     if slot_rois:
         logger.info(f"[Staging] Showing {len(slot_rois)} slot ROIs as reference")
     else:
-        logger.info("[Staging] No slot ROIs to show (run roi_calibration.py first)")
+        logger.info(
+            "[Staging] No slot ROIs to show — run roi_calibration.py with "
+            f"PHONEBOX_BOX_SLUG={_BOX_SLUG!r} first."
+        )
 
     logger.info(
         "[Staging] Editor open — position the two staging zones, "
@@ -467,7 +482,7 @@ def run() -> None:
 
     result = [_clamp(r, fw, fh) for r in result]
     _save_staging_rois(STAGING_ROI_FILE, result)
-    logger.info("[Staging] Done.")
+    logger.info(f"[Staging] Done. Saved to {_os.path.basename(STAGING_ROI_FILE)}.")
 
 
 if __name__ == "__main__":

@@ -356,30 +356,67 @@ def _pulse(base, period=1.2, lo=0.55, hi=1.0):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# ROI FILE LOADER
+# ROI FILE LOADER  (box-specific)
 # ══════════════════════════════════════════════════════════════════════════════
+# Reads from rois_top_{slug}.json so each cabinet uses its own calibration.
+# The slug is resolved from ServerConfig.BOX_SLUG at first call, then cached.
+# If the process is restarted with a different slug the cache reloads
+# automatically because _roi_slug won't match.
 
 _roi_cache: Optional[Dict[int,Tuple]] = None
 _roi_lock  = threading.Lock()
+_roi_slug:  Optional[str]             = None   # slug that is currently loaded
+
+
+def _top_roi_path(slug: str) -> str:
+    """Absolute path to rois_top_{slug}.json in the tools/ directory."""
+    return os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "tools",
+        f"rois_top_{slug}.json",
+    )
+
 
 def _ensure_cache() -> None:
-    global _roi_cache
-    if _roi_cache is not None: return
-    roi_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools", "rois_top.json")
+    """Load (or reload) the top-cam ROI cache for the current BOX_SLUG."""
+    global _roi_cache, _roi_slug
+    from back_end.config import ServerConfig as _SVC
+    slug = getattr(_SVC, "BOX_SLUG", None) or "box_1"
+    if _roi_cache is not None and _roi_slug == slug:
+        return   # already loaded for this slug
+    roi_file = _top_roi_path(slug)
+    _roi_slug = slug
     if not os.path.exists(roi_file):
-        logger.warning(f"[Tracker] rois_top.json not found"); _roi_cache = {}; return
+        logger.warning(
+            f"[Tracker] {os.path.basename(roi_file)} not found — "
+            "run roi_calibration.py with PHONEBOX_BOX_SLUG set."
+        )
+        _roi_cache = {}
+        return
     try:
-        with open(roi_file) as f: data = json.load(f)
-        _roi_cache = {i: tuple(int(v) for v in r) for i,r in enumerate(data)}
-        logger.info(f"[Tracker] Loaded {len(_roi_cache)} top-cam ROIs")
+        with open(roi_file) as f:
+            data = json.load(f)
+        _roi_cache = {i: tuple(int(v) for v in r) for i, r in enumerate(data)}
+        logger.info(
+            f"[Tracker] Loaded {len(_roi_cache)} top-cam ROIs "
+            f"from {os.path.basename(roi_file)} (slug={slug!r})"
+        )
     except Exception as e:
-        logger.error(f"[Tracker] Failed to load rois_top.json: {e}"); _roi_cache = {}
+        logger.error(f"[Tracker] Failed to load {os.path.basename(roi_file)}: {e}")
+        _roi_cache = {}
+
 
 def _load_top_roi(lid: int) -> Optional[Tuple]:
-    with _roi_lock: _ensure_cache(); return _roi_cache.get(lid)
+    with _roi_lock:
+        _ensure_cache()
+        return _roi_cache.get(lid)
 
-def load_all_top_rois() -> Dict[int,Tuple]:
-    with _roi_lock: _ensure_cache(); return dict(_roi_cache) if _roi_cache else {}
+
+def load_all_top_rois() -> Dict[int, Tuple]:
+    """Return a snapshot of {lid: (x, y, w, h)} for the current box slug."""
+    with _roi_lock:
+        _ensure_cache()
+        return dict(_roi_cache) if _roi_cache else {}
 
 
 # ══════════════════════════════════════════════════════════════════════════════

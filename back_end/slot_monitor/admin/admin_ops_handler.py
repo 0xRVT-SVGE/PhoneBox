@@ -64,35 +64,67 @@ NO_QR_BUTTON_DELAY_S = _ADM.NO_QR_BUTTON_DELAY_S
 
 # ── StagingConfig ─────────────────────────────────────────
 
-_ADMIN_DIR        = os.path.dirname(os.path.abspath(__file__))
-_STAGING_ROI_FILE = os.path.join(_ADMIN_DIR, "staging_rois.json")
-_FALLBACK_ROIS    = [(50, 50, 150, 150), (250, 50, 150, 150)]
+_ADMIN_DIR     = os.path.dirname(os.path.abspath(__file__))
+_FALLBACK_ROIS = [(50, 50, 150, 150), (250, 50, 150, 150)]
+
+
+def _staging_roi_path() -> str:
+    """
+    Return the box-specific staging ROI file path.
+
+    Uses ServerConfig.BOX_SLUG so each cabinet saves its own
+    staging_rois_{slug}.json instead of a shared staging_rois.json.
+    Falls back to "box_1" when the slug is not configured.
+    """
+    try:
+        from back_end.config import ServerConfig as _SVC
+        slug = getattr(_SVC, "BOX_SLUG", None) or "box_1"
+    except Exception:
+        slug = "box_1"
+    return os.path.join(_ADMIN_DIR, f"staging_rois_{slug}.json")
 
 
 class StagingConfig:
     _rois: Optional[list] = None
+    _slug: Optional[str]  = None   # slug that is currently cached
 
     @classmethod
     def get_rois(cls) -> list:
-        if cls._rois is not None:
+        # Resolve path first so we can detect a slug change and invalidate.
+        try:
+            from back_end.config import ServerConfig as _SVC
+            slug = getattr(_SVC, "BOX_SLUG", None) or "box_1"
+        except Exception:
+            slug = "box_1"
+
+        if cls._rois is not None and cls._slug == slug:
             return cls._rois
-        if os.path.exists(_STAGING_ROI_FILE):
+
+        # Either first call or slug changed — (re)load.
+        cls._rois = None
+        cls._slug = slug
+        filepath  = _staging_roi_path()
+
+        if os.path.exists(filepath):
             try:
-                with open(_STAGING_ROI_FILE) as f:
+                with open(filepath) as f:
                     data = json.load(f)
                 if isinstance(data, list) and len(data) == 2:
                     cls._rois = [tuple(int(v) for v in r) for r in data]
                     logger.info(
                         f"[StagingConfig] Loaded 2 staging ROIs from "
-                        f"{_STAGING_ROI_FILE}"
+                        f"{os.path.basename(filepath)} (slug={slug!r})"
                     )
                     return cls._rois
             except Exception as e:
                 logger.warning(
-                    f"[StagingConfig] Failed to load {_STAGING_ROI_FILE}: {e}"
+                    f"[StagingConfig] Failed to load {os.path.basename(filepath)}: {e}"
                 )
+
         logger.warning(
-            f"[StagingConfig] {_STAGING_ROI_FILE} not found — using fallback ROIs."
+            f"[StagingConfig] {os.path.basename(filepath)} not found — "
+            "using fallback ROIs. Run staging_calibration.py with "
+            f"PHONEBOX_BOX_SLUG={slug!r} to create it."
         )
         cls._rois = list(_FALLBACK_ROIS)
         return cls._rois
@@ -622,12 +654,18 @@ class AdminOpsHandler:
         #                          (no cross-box row exists in this DB)
         #   Shared DB, wrong box:  storage.box_id != _BOX_ID → enter block ✓
         storage = SlotMonitorDB.get_active_storage(pid)
-        if storage is not None and storage["box_id"] != _BOX_ID:
+        # Compare using the integer box_id that was resolved at startup —
+        # NOT BOX_SLUG (str): storage["box_id"] is always an int from the DB.
+        # We re-read the module-level _BOX_ID each call so it reflects any
+        # set_box_id() call made after import time.
+        import back_end.slot_monitor.db_interface as _dbi
+        _current_box_id = _dbi._BOX_ID
+        if storage is not None and storage["box_id"] != _current_box_id:
             canonical_box_name = storage["box_name"]
             canonical_box_slug = storage["box_slug"]
             logger.warning(
                 f"[AdminSession] {session.session_id} — "
-                f"PID={pid} scanned at box_id={_BOX_ID} but is recorded in "
+                f"PID={pid} scanned at box_id={_current_box_id} but is recorded in "
                 f"box_id={storage['box_id']} ({canonical_box_name}). "
                 "Issuing cross-box transfer directive."
             )

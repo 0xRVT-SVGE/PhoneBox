@@ -148,7 +148,7 @@ def main() -> None:
     # ── ROI calibration (headless: skip interactive UI, load json directly) ───
     # When running standalone, calibration must have been done already by the
     # server process (or by running roi_calibration.py manually once).
-    # The monitor reads rois_bottom.json from the tools/ directory.
+    # The monitor reads rois_bottom_{slug}.json from the tools/ directory.
     _check_roi_file()
 
     # ── Start monitor ─────────────────────────────────────────────────────────

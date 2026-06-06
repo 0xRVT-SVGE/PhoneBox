@@ -13,8 +13,8 @@ Startup sequence
 5.  DVW system
 6.  ROI CALIBRATION — two frozen-frame editors (bottom cam, top cam).
     Blocks until the operator confirms both windows.
-    Writes rois_bottom.json and rois_top.json in tools/.
-7.  Slot monitor (reads rois_bottom.json via generate_grid_rois)
+    Writes rois_bottom_{slug}.json and rois_top_{slug}.json in tools/.
+7.  Slot monitor (reads rois_bottom_{slug}.json via generate_grid_rois)
 8.  Admin handlers
 9.  Flask-SocketIO (blocking)
 
@@ -435,7 +435,7 @@ if __name__ == "__main__":
         from back_end.slot_monitor.tools.roi_calibration import run_calibration
         run_calibration(num_lids, box_slug=_SVC.BOX_SLUG)   # blocks until operator confirms both windows
 
-    # 7. Slot monitor (reads rois_bottom.json written by step 6)
+    # 7. Slot monitor (reads rois_bottom_{slug}.json written by step 6)
     slot_monitor = get_slot_monitor()
     if slot_monitor:
         slot_monitor.start()

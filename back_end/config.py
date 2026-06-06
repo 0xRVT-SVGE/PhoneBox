@@ -52,8 +52,8 @@ _MODELS_DIR = _REPO_ROOT / "back_end" / "models"
 class CameraConfig:
     # ── Device indices ────────────────────────────────────
     FRONT_CAM_INDEX  = 0   # scanner_loop.py  — face + barcode
-    TOP_CAM_INDEX    = 2   # top_camera.py    — QR scan + phone tracking
-    BOTTOM_CAM_INDEX = 1   # headless_slot_monitor.py — slot embedding
+    TOP_CAM_INDEX    = 1   # top_camera.py    — QR scan + phone tracking
+    BOTTOM_CAM_INDEX = 2   # headless_slot_monitor.py — slot embedding
 
     # ── Bottom camera (slot monitor) resolution ───────────
     BOTTOM_CAM_WIDTH  = 1280
@@ -92,7 +92,7 @@ class CameraConfig:
     #   PHONEBOX_CAM_BACKEND_FRONT   e.g. "dshow"
     #   PHONEBOX_CAM_BACKEND_TOP     e.g. "auto"
     #   PHONEBOX_CAM_BACKEND_BOTTOM  e.g. "dshow"
-    FRONT_CAM_BACKEND  = os.environ.get("PHONEBOX_CAM_BACKEND_FRONT",  "msmf").lower()
+    FRONT_CAM_BACKEND  = os.environ.get("PHONEBOX_CAM_BACKEND_FRONT",  "auto").lower()
     TOP_CAM_BACKEND    = os.environ.get("PHONEBOX_CAM_BACKEND_TOP",    "dshow").lower()
     BOTTOM_CAM_BACKEND = os.environ.get("PHONEBOX_CAM_BACKEND_BOTTOM", "auto").lower()
 
@@ -170,7 +170,7 @@ class ServerConfig:
     # Each physical box declares its slug, which must exist in the boxes table.
     # Example: PHONEBOX_BOX_SLUG=year_1  (for the Year 1 cabinet)
     # BOX_ID is resolved at startup by server_main._resolve_box_id().
-    BOX_SLUG = os.environ.get("PHONEBOX_BOX_SLUG", "year_3")
+    BOX_SLUG = os.environ.get("PHONEBOX_BOX_SLUG", "box_y3")
 
     # Debug flags for scanner_loop
     DEBUG_ROI    = True   # Draw ROI rectangle on front-camera feed
