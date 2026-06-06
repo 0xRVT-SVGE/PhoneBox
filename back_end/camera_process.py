@@ -65,6 +65,7 @@ import time
 from multiprocessing import shared_memory
 from typing import List, Optional
 
+import cv2
 import numpy as np
 
 from back_end.config import CameraProcessConfig as _CPC

@@ -253,6 +253,7 @@ MOTION_THRESH        = _MC.THRESH
 MOTION_DILATE        = _MC.DILATE
 MOTION_MIN_AREA      = _MC.MIN_AREA
 MOTION_IOU_MERGE     = _MC.IOU_MERGE
+MOTION_MERGE_ALL     = _MC.MOTION_MERGE_ALL
 CSRT_REINIT_INTERVAL = _MC.CSRT_REINIT_INTERVAL
 CSRT_MOTION_GATE_N   = _MC.CSRT_MOTION_GATE_N
 
@@ -489,14 +490,43 @@ def make_admin_session_overlay(all_slot_rois, staging_rois, staged_pids,
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _motion_bbox(prev_gray, curr_gray):
-    diff = cv2.absdiff(prev_gray, curr_gray)
-    blur = cv2.GaussianBlur(diff,(MOTION_BLUR_K,MOTION_BLUR_K),0)
-    _,thr = cv2.threshold(blur,MOTION_THRESH,255,cv2.THRESH_BINARY)
-    thr   = cv2.dilate(thr,None,iterations=MOTION_DILATE)
-    cnts,_ = cv2.findContours(thr,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
-    if not cnts: return None
-    lg = max(cnts,key=cv2.contourArea)
-    return cv2.boundingRect(lg) if cv2.contourArea(lg)>=MOTION_MIN_AREA else None
+    """
+    Detect the moving object and return its bounding box.
+
+    When MOTION_MERGE_ALL is True (default) ALL contours that exceed a
+    per-contour area floor are merged into a single unified bounding rect,
+    so the box covers the whole phone body rather than just the largest
+    individual piece (e.g. the QR sticker when the bezel moves less).
+    """
+    diff   = cv2.absdiff(prev_gray, curr_gray)
+    blur   = cv2.GaussianBlur(diff, (MOTION_BLUR_K, MOTION_BLUR_K), 0)
+    _, thr = cv2.threshold(blur, MOTION_THRESH, 255, cv2.THRESH_BINARY)
+    thr    = cv2.dilate(thr, None, iterations=MOTION_DILATE)
+    cnts, _ = cv2.findContours(thr, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not cnts:
+        return None
+
+    if MOTION_MERGE_ALL:
+        # Collect every contour above the per-contour floor
+        # (1/4 of MIN_AREA so small pieces of the phone still contribute).
+        floor = MOTION_MIN_AREA // 4
+        big   = [c for c in cnts if cv2.contourArea(c) >= floor]
+        if not big:
+            return None
+        # Require the combined area to still exceed the full MIN_AREA threshold
+        # so random background noise (many tiny blobs) can't trigger a false
+        # detection.
+        total = sum(cv2.contourArea(c) for c in big)
+        if total < MOTION_MIN_AREA:
+            return None
+        # Stack all contour points and take the outer bounding rect — this is
+        # equivalent to the convex hull's axis-aligned bbox but O(N) not O(NlogN).
+        all_pts = np.vstack(big)
+        return cv2.boundingRect(all_pts)
+    else:
+        # Legacy: single largest contour only.
+        lg = max(cnts, key=cv2.contourArea)
+        return cv2.boundingRect(lg) if cv2.contourArea(lg) >= MOTION_MIN_AREA else None
 
 
 def _iou(a,b):

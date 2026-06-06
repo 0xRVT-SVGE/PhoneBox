@@ -81,6 +81,10 @@ class _AlarmPageState extends State<AlarmPage>
       CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut),
     );
 
+    // Begin server-side teardown of any prior admin connection NOW, in parallel
+    // with renderer.initialize() — saves ~200 ms of sequential latency.
+    // _startAdminVideo() also calls cancelAdmin() as a safety net.
+    ApiService.cancelAdmin(); // intentionally unawaited
     _preConnectFuture = _adminRenderer
         .initialize()
         .then((_) => _startAdminVideo())

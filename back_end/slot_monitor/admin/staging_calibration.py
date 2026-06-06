@@ -43,7 +43,7 @@ Usage
   # or
   PHONEBOX_BOX_SLUG=year_3 python back_end/slot_monitor/admin/staging_calibration.py
 """
-import os
+
 import cv2
 import json
 import logging

@@ -29,11 +29,18 @@ String phoneLocationLabel(Map<String, dynamic> p) {
 class ScanSuccessPage extends StatefulWidget {
   final String sid;
   final String studentName;
+  // Optional pre-built renderer + notifier from ScanPage.
+  // When provided the page skips its own pre-connect step and adopts the
+  // already-in-flight (or completed) connection from the parent.
+  final RTCVideoRenderer?    sharedTopRenderer;
+  final ValueNotifier<bool>? topConnectedNotifier;
 
   const ScanSuccessPage({
     super.key,
     required this.sid,
     required this.studentName,
+    this.sharedTopRenderer,
+    this.topConnectedNotifier,
   });
 
   @override
@@ -49,12 +56,15 @@ class _ScanSuccessPageState extends State<ScanSuccessPage> {
   // Opt #28: typed stream subscriptions
   final List<StreamSubscription> _subs = [];
 
-  // ── Top-camera pre-connection (Opt #27) ──────────────────────────────────
-  final _topRenderer    = RTCVideoRenderer();
-  RTCPeerConnection?    _topPc;
-  final _topConnected   = ValueNotifier<bool>(false);
+  // ── Top-camera pre-connection (Opt #27) ─────────────────────────────
+  // Use late final so initState can assign either the shared or own renderer.
+  late final RTCVideoRenderer    _topRenderer;
+  late final ValueNotifier<bool> _topConnected;
+  RTCPeerConnection?             _topPc;
   bool _topConnecting   = false;
   bool _topPageDisposed = false;
+  // True when this page created its own renderer and must dispose it.
+  bool _ownsTopRenderer = true;
 
   @override
   void initState() {
@@ -62,9 +72,22 @@ class _ScanSuccessPageState extends State<ScanSuccessPage> {
     // Subscribe to socket-pushed phone statuses (arrives right after auth)
     _subs.add(_socketService.onPhoneStatuses.listen(_handlePhoneStatuses));
     _loadPhones();
-    _topRenderer.initialize().then((_) {
-      if (!_topPageDisposed) _preconnectTopCamera();
-    });
+
+    if (widget.sharedTopRenderer != null) {
+      // Adopt pre-built renderer from ScanPage — connection is already in
+      // flight so no own pre-connect is needed.
+      _topRenderer     = widget.sharedTopRenderer!;
+      _topConnected    = widget.topConnectedNotifier ?? ValueNotifier<bool>(false);
+      _ownsTopRenderer = false;
+    } else {
+      // Fall-back: ScanPage could not pre-connect (e.g. very fast scan).
+      _topRenderer     = RTCVideoRenderer();
+      _topConnected    = ValueNotifier<bool>(false);
+      _ownsTopRenderer = true;
+      _topRenderer.initialize().then((_) {
+        if (!_topPageDisposed) _preconnectTopCamera();
+      });
+    }
   }
 
   void _handlePhoneStatuses(Map<String, dynamic> data) {
@@ -82,19 +105,20 @@ class _ScanSuccessPageState extends State<ScanSuccessPage> {
   void dispose() {
     _topPageDisposed = true;
     for (final s in _subs) s.cancel();
+    // Only close the peer connection and renderer when we own them.
+    // If _ownsTopRenderer == false, ScanPage manages the lifecycle via its
+    // idle timer and will dispose the renderer itself.
     _topPc?.onTrack            = null;
     _topPc?.onConnectionState  = null;
     _topPc?.close();
     _topPc = null;
-    _topRenderer.srcObject = null;
-    _topRenderer.dispose();
-    _topConnected.dispose();
-    // Explicitly tell the server to close the admin WebRTC connection.
-    // _topPc?.close() sends a DTLS close but is not awaited, so if Flutter
-    // destroys this widget before the handshake completes the server never
-    // receives a terminal ICE state and the AdminVideoTrack ghost persists.
-    ApiService.cancelAdmin();
-    // DVWBottomSheet manages its own subscriptions — nothing to cancel here
+    if (_ownsTopRenderer) {
+      _topRenderer.srcObject = null;
+      _topRenderer.dispose();
+      _topConnected.dispose();
+      // Explicitly tell the server to close the admin WebRTC connection.
+      ApiService.cancelAdmin();
+    }
     super.dispose();
   }
 

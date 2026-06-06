@@ -31,7 +31,6 @@ Usage
 
 import json
 import logging
-import os
 import threading
 import time
 from pathlib import Path
@@ -526,4 +525,4 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\nInterrupted.")
     finally:
-        buf.stop()
+        buf.stop()

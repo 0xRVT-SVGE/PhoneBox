@@ -44,6 +44,19 @@ class _ScanPageState extends State<ScanPage> {
   // Opt #28: typed stream subscriptions — cancelled in dispose()
   final List<StreamSubscription> _subs = [];
 
+  // ── Top-camera pre-connection for ScanSuccessPage ────────────────────────
+  /// How long (seconds) the admin WebRTC connection is kept alive after
+  /// leaving ScanSuccessPage before being closed.  Increase if students
+  /// typically deposit/retrieve multiple phones in quick succession.
+  static const int _kTopCamIdleTimeoutSeconds = 30;
+
+  RTCVideoRenderer?    _preTopRenderer;
+  ValueNotifier<bool>? _preTopConnected;
+  RTCPeerConnection?   _preTopPc;
+  bool _preTopConnecting   = false;
+  bool _preTopInitialized  = false;
+  Timer? _preTopIdleTimer;
+
   @override
   void initState() {
     super.initState();
@@ -131,13 +144,24 @@ class _ScanPageState extends State<ScanPage> {
       if (auth && !_navigating) {
         // C2: set guard before pushing — cleared when ScanSuccessPage pops
         _navigating = true;
+        // Pre-connect top camera immediately — connection is already in
+        // flight (or done) before the user can tap Take / Put.
+        _ensureTopCamConnected(); // intentionally unawaited
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (_) => ScanSuccessPage(sid: user, studentName: currentName),
+            builder: (_) => ScanSuccessPage(
+              sid:                  user,
+              studentName:          currentName,
+              sharedTopRenderer:    _preTopRenderer,
+              topConnectedNotifier: _preTopConnected,
+            ),
           ),
         ).then((_) {
           _navigating = false;
+          // Start idle timer — closes admin connection after inactivity window
+          // so the server is not holding a redundant stream.
+          _scheduleTopCamIdle();
           // Flush the WebRTC jitter buffer that accumulated while ScanSuccessPage
           // was on top. A fresh connection gives zero-lag video immediately.
           if (mounted && !viewDisposed && !_alarmPageOpen) {
@@ -241,6 +265,96 @@ class _ScanPageState extends State<ScanPage> {
     }
   }
 
+  // ── Top-camera pre-connection management ───────────────────────────────
+
+  /// Start (or reuse) the admin WebRTC connection for the top camera.
+  /// Called the moment auth succeeds so the handshake is already complete
+  /// by the time the user taps Take / Put inside ScanSuccessPage.
+  Future<void> _ensureTopCamConnected() async {
+    _preTopIdleTimer?.cancel();
+    _preTopIdleTimer = null;
+    if (_preTopConnecting) return;
+    if (_preTopConnected?.value == true) return;
+    _preTopConnecting = true;
+    try {
+      if (!_preTopInitialized) {
+        _preTopRenderer     = RTCVideoRenderer();
+        await _preTopRenderer!.initialize();
+        _preTopConnected    = ValueNotifier<bool>(false);
+        _preTopInitialized  = true;
+      }
+      await ApiService.cancelAdmin();
+      _preTopPc?.onTrack           = null;
+      _preTopPc?.onConnectionState = null;
+      await _preTopPc?.close();
+      _preTopPc                    = null;
+      _preTopRenderer!.srcObject   = null;
+      _preTopConnected!.value      = false;
+
+      _preTopPc = await createPeerConnection(WebRTCConfig.iceConfig);
+      _preTopPc!.onTrack = (event) {
+        if (viewDisposed) return;
+        if (event.streams.isNotEmpty) {
+          _preTopRenderer!.srcObject = event.streams[0];
+          _preTopConnected!.value    = true;
+        }
+      };
+      _preTopPc!.onConnectionState = (state) async {
+        if (viewDisposed) return;
+        if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
+          _preTopConnected?.value = false;
+          _preTopPc?.onTrack           = null;
+          _preTopPc?.onConnectionState = null;
+          await _preTopPc?.close();
+          _preTopPc = null;
+          if (!viewDisposed) _preTopRenderer?.srcObject = null;
+          // Auto-retry once after a brief pause.
+          _preTopConnecting = false;
+          await Future.delayed(const Duration(seconds: 1));
+          if (!viewDisposed) _ensureTopCamConnected();
+          return;
+        }
+      };
+      final offer = await _preTopPc!.createOffer(WebRTCConfig.videoOfferConstraints);
+      await _preTopPc!.setLocalDescription(offer);
+      final sdp = await ApiService.sendOffer(
+        offer.sdp!, mode: 'admin', maxRetries: 2,
+      );
+      if (sdp != null && !viewDisposed) {
+        await _preTopPc!
+            .setRemoteDescription(RTCSessionDescription(sdp, 'answer'));
+      }
+    } catch (_) {
+      _preTopConnected?.value = false;
+    } finally {
+      _preTopConnecting = false;
+    }
+  }
+
+  /// Start the idle countdown after returning from ScanSuccessPage.
+  /// If the user re-scans before the timer fires, [_ensureTopCamConnected]
+  /// cancels it and reuses the existing connection.
+  void _scheduleTopCamIdle() {
+    _preTopIdleTimer?.cancel();
+    _preTopIdleTimer = Timer(
+      const Duration(seconds: _kTopCamIdleTimeoutSeconds),
+      _closeTopCam,
+    );
+  }
+
+  /// Close the top-camera connection and release the server's admin slot.
+  Future<void> _closeTopCam() async {
+    _preTopIdleTimer?.cancel();
+    _preTopIdleTimer = null;
+    _preTopPc?.onTrack           = null;
+    _preTopPc?.onConnectionState = null;
+    await _preTopPc?.close();
+    _preTopPc                  = null;
+    _preTopRenderer?.srcObject = null;
+    _preTopConnected?.value    = false;
+    await ApiService.cancelAdmin();
+  }
+
   void toggleScan() {
     if (scanning) {
       setState(() {
@@ -329,6 +443,15 @@ class _ScanPageState extends State<ScanPage> {
   @override
   void dispose() {
     viewDisposed = true;
+    // Cancel idle timer and tear down pre-connected top camera.
+    _preTopIdleTimer?.cancel();
+    _preTopPc?.onTrack           = null;
+    _preTopPc?.onConnectionState = null;
+    _preTopPc?.close();
+    _preTopPc = null;
+    _preTopRenderer?.srcObject = null;
+    _preTopRenderer?.dispose();
+    _preTopConnected?.dispose();
     // Opt #28: cancel all stream subscriptions — no leaks
     for (final s in _subs) s.cancel();
     _peerConnection?.onTrack           = null;

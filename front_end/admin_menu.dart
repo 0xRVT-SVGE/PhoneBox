@@ -1085,7 +1085,7 @@ class _EditPhonePageState extends State<EditPhonePage> {
 
   bool get _isEdit => widget.phone != null;
 
-  static const _conditions = ['New', 'Good', 'Fair', 'Damaged', 'Broken'];
+  static const _conditions = ['Good', 'Fair', 'Damaged', 'Broken'];
 
   @override
   void initState() {

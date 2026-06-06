@@ -51,8 +51,8 @@ _MODELS_DIR = _REPO_ROOT / "back_end" / "models"
 
 class CameraConfig:
     # ── Device indices ────────────────────────────────────
-    FRONT_CAM_INDEX  = 0   # scanner_loop.py  — face + barcode
-    TOP_CAM_INDEX    = 1   # top_camera.py    — QR scan + phone tracking
+    FRONT_CAM_INDEX  = 1   # scanner_loop.py  — face + barcode
+    TOP_CAM_INDEX    = 0   # top_camera.py    — QR scan + phone tracking
     BOTTOM_CAM_INDEX = 2   # headless_slot_monitor.py — slot embedding
 
     # ── Bottom camera (slot monitor) resolution ───────────
@@ -77,23 +77,26 @@ class CameraConfig:
     # Values:
     #   "auto"  — let OpenCV choose (cv2.CAP_ANY, default behaviour).
     #             Works on most systems; use this unless you hit issues.
-    #   "dshow" — Windows DirectShow (cv2.CAP_DSHOW).  Eliminates the
-    #             ~2 s black-frame delay on USB webcams under Windows.
-    #   "msmf"  — Windows Media Foundation (cv2.CAP_MSMF).  Better for
-    #             H.264/MJPEG streams on some Windows drivers.
-    #   "v4l2"  — Video4Linux2 (cv2.CAP_V4L2).  Standard on Linux.
+    #   "dshow" — Windows DirectShow (cv2.CAP_DSHOW).
+    #             WARNING: dshow enumerates USB cameras in a DIFFERENT ORDER
+    #             than msmf/auto. Index N under dshow may be a different
+    #             physical camera than index N under msmf. If the front camera
+    #             opens but face/barcode scanning doesn't work, switch to msmf.
+    #   "msmf"  — Windows Media Foundation (cv2.CAP_MSMF).  Recommended for
+    #             Windows. Consistent index ordering, better H.264/MJPEG support.
+    #   "auto"  — Let OpenCV choose (cv2.CAP_ANY). Cross-platform default.
+    #   "v4l2"  — Video4Linux2 (cv2.CAP_V4L2). Standard on Linux.
     #   "gstreamer" — GStreamer pipeline (cv2.CAP_GSTREAMER).
     #   "ffmpeg"    — FFmpeg backend (cv2.CAP_FFMPEG).
     #
-    # Each camera can be set independently so you can mix backends
-    # (e.g. DSHOW for the front cam, auto for the others).
+    # Each camera can be set independently so you can mix backends.
     #
     # Environment-variable overrides (string, case-insensitive):
-    #   PHONEBOX_CAM_BACKEND_FRONT   e.g. "dshow"
+    #   PHONEBOX_CAM_BACKEND_FRONT   e.g. "msmf"
     #   PHONEBOX_CAM_BACKEND_TOP     e.g. "auto"
-    #   PHONEBOX_CAM_BACKEND_BOTTOM  e.g. "dshow"
-    FRONT_CAM_BACKEND  = os.environ.get("PHONEBOX_CAM_BACKEND_FRONT",  "auto").lower()
-    TOP_CAM_BACKEND    = os.environ.get("PHONEBOX_CAM_BACKEND_TOP",    "dshow").lower()
+    #   PHONEBOX_CAM_BACKEND_BOTTOM  e.g. "auto"
+    FRONT_CAM_BACKEND  = os.environ.get("PHONEBOX_CAM_BACKEND_FRONT",  "msmf").lower()
+    TOP_CAM_BACKEND    = os.environ.get("PHONEBOX_CAM_BACKEND_TOP",    "auto").lower()
     BOTTOM_CAM_BACKEND = os.environ.get("PHONEBOX_CAM_BACKEND_BOTTOM", "auto").lower()
 
     # ── Backend resolver ──────────────────────────────────
@@ -170,7 +173,7 @@ class ServerConfig:
     # Each physical box declares its slug, which must exist in the boxes table.
     # Example: PHONEBOX_BOX_SLUG=year_1  (for the Year 1 cabinet)
     # BOX_ID is resolved at startup by server_main._resolve_box_id().
-    BOX_SLUG = os.environ.get("PHONEBOX_BOX_SLUG", "box_y3")
+    BOX_SLUG = os.environ.get("PHONEBOX_BOX_SLUG", "year_3")
 
     # Debug flags for scanner_loop
     DEBUG_ROI    = True   # Draw ROI rectangle on front-camera feed
@@ -300,11 +303,20 @@ class TrackerConfig:
 # ============================================================
 
 class MotionConfig:
-    BLUR_K  = 15
-    THRESH  = 20
-    DILATE  = 3
+    BLUR_K   = 15
+    THRESH   = 20
+    DILATE   = 5       # was 3; larger dilation bridges gaps between parts of
+                       # the same phone (screen, bezel, QR sticker) so they
+                       # merge into one contour before bounding-box extraction.
     MIN_AREA = 1500
     IOU_MERGE = 0.20
+
+    # If True, _motion_bbox merges ALL contours above (MIN_AREA // 4) into a
+    # single unified bounding box instead of returning only the largest one.
+    # This ensures the box covers the whole phone, not just the largest piece
+    # (e.g. not just the QR sticker when the phone edge moves less).
+    # Set to False to restore the legacy largest-contour-only behaviour.
+    MOTION_MERGE_ALL = True
 
     # Opt #9: TrackerNano is statistically more stable than CSRT between
     # reinitializations, so we can reinit less aggressively.
