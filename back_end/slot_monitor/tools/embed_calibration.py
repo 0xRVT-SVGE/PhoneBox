@@ -28,7 +28,7 @@ Usage
   # or
   python back_end/slot_monitor/tools/embed_calibration.py
 """
-
+import os
 import json
 import logging
 import threading
@@ -525,4 +525,4 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\nInterrupted.")
     finally:
-        buf.stop()
+        buf.stop()

@@ -17,6 +17,19 @@ B6 — _bf_matcher moved to module level alongside _orb_descriptor
      frames during tracker-loss recovery).
 
 Opt #9: TrackerNano replaces CSRT as the primary tracker (unchanged).
+
+Tracker accuracy improvements (post-session 14)
+────────────────────────────────────────────────
+QR anchor — _check_qr() now returns (confirmed, qr_bbox) so the
+  caller can use the QR centroid to continuously correct tracker
+  drift while the QR is visible.  Every QR_CHECK_EVERY_N frames
+  the tracker bbox is snapped toward the confirmed QR position.
+
+Smart motion selection — _motion_bbox() gains a reference_bbox
+  parameter.  When provided, only contours that overlap the known
+  phone region are merged, preventing hand / shadow contours from
+  inflating the bounding box.  Initial detection (no reference)
+  keeps the original merge-all behaviour.
 """
 
 from __future__ import annotations
@@ -489,14 +502,22 @@ def make_admin_session_overlay(all_slot_rois, staging_rois, staged_pids,
 # LOW-LEVEL TRACKING HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _motion_bbox(prev_gray, curr_gray):
+def _motion_bbox(prev_gray, curr_gray, reference_bbox=None):
     """
     Detect the moving object and return its bounding box.
 
-    When MOTION_MERGE_ALL is True (default) ALL contours that exceed a
-    per-contour area floor are merged into a single unified bounding rect,
-    so the box covers the whole phone body rather than just the largest
-    individual piece (e.g. the QR sticker when the bezel moves less).
+    reference_bbox — (x, y, w, h) of the current predicted phone position.
+      When supplied, only contours that overlap that region are merged,
+      preventing hand / shadow contours (which appear outside the phone
+      region) from inflating the returned bbox.  This fixes the two
+      failure modes observed in testing:
+        • bbox too large  — MOTION_MERGE_ALL was merging hand + phone
+        • bbox too small  — tracker had latched onto only the QR sticker,
+          so the motion diff around it was tiny
+
+      When reference_bbox is None (initial DETECTING phase where we have
+      no predicted position yet) the original MOTION_MERGE_ALL behaviour
+      is used unchanged, so _detect_phone() is not affected.
     """
     diff   = cv2.absdiff(prev_gray, curr_gray)
     blur   = cv2.GaussianBlur(diff, (MOTION_BLUR_K, MOTION_BLUR_K), 0)
@@ -506,11 +527,52 @@ def _motion_bbox(prev_gray, curr_gray):
     if not cnts:
         return None
 
+    floor = MOTION_MIN_AREA // 4
+
+    if reference_bbox is not None:
+        # ── Smart selection: keep only contours near the known phone region ──
+        # Collect candidates above the per-contour area floor.
+        candidates = [c for c in cnts if cv2.contourArea(c) >= floor]
+        if not candidates:
+            return None
+
+        # Prefer contours whose bounding box overlaps the reference region.
+        rx, ry, rw, rh = reference_bbox
+        overlapping = [
+            c for c in candidates
+            if cy_iou((rx, ry, rw, rh), cv2.boundingRect(c)) > 0
+        ]
+
+        if overlapping:
+            # Merge only the overlapping contours — this gives a tight box
+            # that covers the moving phone parts without including hands or
+            # shadows that happen to move in another part of the frame.
+            total = sum(cv2.contourArea(c) for c in overlapping)
+            if total < MOTION_MIN_AREA:
+                return None
+            all_pts = np.vstack(overlapping)
+            return cv2.boundingRect(all_pts)
+
+        # No overlap: fall back to the single closest contour by centroid
+        # distance (handles the case where the phone moved quickly between
+        # frames and the reference is slightly stale).
+        ref_cx = rx + rw // 2
+        ref_cy = ry + rh // 2
+
+        def _dist_to_ref(c):
+            bx, by, bw, bh = cv2.boundingRect(c)
+            return math.hypot(bx + bw / 2 - ref_cx, by + bh / 2 - ref_cy)
+
+        closest = min(candidates, key=_dist_to_ref)
+        if cv2.contourArea(closest) < MOTION_MIN_AREA:
+            return None
+        return cv2.boundingRect(closest)
+
+    # ── Original behaviour (no reference) — used by _detect_phone() ──────────
     if MOTION_MERGE_ALL:
         # Collect every contour above the per-contour floor
         # (1/4 of MIN_AREA so small pieces of the phone still contribute).
-        floor = MOTION_MIN_AREA // 4
-        big   = [c for c in cnts if cv2.contourArea(c) >= floor]
+        big = [c for c in cnts if cv2.contourArea(c) >= floor]
         if not big:
             return None
         # Require the combined area to still exceed the full MIN_AREA threshold
@@ -653,6 +715,12 @@ class PhoneTracker:
     Session 14 changes:
       B1 — _check_qr() uses zxing-cpp via qr_pid_reader._decode_qr dispatcher
       B6 — _orb_reidentify() uses module-level _bf_matcher
+
+    Post-session 14:
+      QR anchor   — _check_qr() returns position; _track() corrects drift.
+      Smart motion — _motion_bbox() selects contours near the phone region.
+      ORB logging  — every ORB attempt, save, and failure is logged so we
+                     can measure whether ORB is worth keeping.
     """
 
     DRAW_TRACKING_BOX: bool = True
@@ -674,6 +742,13 @@ class PhoneTracker:
         self._on_success  = None
         self._on_failure  = None
         self._on_staged   = None
+
+        # ── ORB instrumentation ────────────────────────────
+        # Counts how often the ORB re-ID layer fires (tracker already lost
+        # AND LK failed) and how often it actually recovers the track.
+        # Logged at the end of every deposit in _succeed() and _fail().
+        self._orb_attempts: int = 0
+        self._orb_saves:    int = 0
 
     def start(self, on_success, on_failure, on_staged=None):
         self._on_success = on_success
@@ -768,8 +843,10 @@ class PhoneTracker:
             frame_count+=1
 
             _qr_check_needed = self._state in (_TS.DETECTING, _TS.TRACKING, _TS.ENTERING)
+            _qr_bbox_this_frame = None   # set below if QR detected this frame
             if _qr_check_needed and frame_count % QR_CHECK_EVERY_N == 0:
-                if self._check_qr(frame):
+                _qr_ok, _qr_bbox_this_frame = self._check_qr(frame)
+                if _qr_ok:
                     last_qr_ts = time.time()
                     qr_confirmed = True
             qr_absent = time.time() - last_qr_ts
@@ -787,7 +864,9 @@ class PhoneTracker:
                         if prev_gray is not None and frame_count % CSRT_MOTION_GATE_N == 0:
                             pb=cv2.GaussianBlur(prev_gray,(MOTION_BLUR_K,)*2,0)
                             cb=cv2.GaussianBlur(curr_gray,(MOTION_BLUR_K,)*2,0)
-                            mo=_motion_bbox(pb,cb)
+                            # Pass current tracker bbox as reference so only
+                            # contours near the phone region are considered.
+                            mo=_motion_bbox(pb,cb,reference_bbox=(bx,by,bw,bh))
                             if mo and cy_iou((bx,by,bw,bh),mo)>=MOTION_IOU_MERGE:
                                 bx,by,bw,bh=cy_merge_bbox((bx,by,bw,bh),mo)
                         if reinit_count>=reinit_interval:
@@ -800,7 +879,9 @@ class PhoneTracker:
                 if prev_gray is not None:
                     pb=cv2.GaussianBlur(prev_gray,(MOTION_BLUR_K,)*2,0)
                     cb=cv2.GaussianBlur(curr_gray,(MOTION_BLUR_K,)*2,0)
-                    mo=_motion_bbox(pb,cb)
+                    # Use last known position as reference so we recover the
+                    # phone, not a hand or shadow elsewhere in the frame.
+                    mo=_motion_bbox(pb,cb,reference_bbox=last_bbox)
                 else: mo=None
 
                 if mo:
@@ -812,13 +893,29 @@ class PhoneTracker:
                     if lk_bbox: bx,by,bw,bh=lk_bbox
                     else: bx=by=bw=bh=0
                 elif frame_count%RE_ID_EVERY_N==0 and orb_ref_descs is not None:
+                    self._orb_attempts += 1
+                    logger.info(
+                        f"[Tracker] ORB attempt #{self._orb_attempts} "
+                        f"PID={self._pid} state={self._state.name} "
+                        f"frame={frame_count} last_bbox={last_bbox}"
+                    )
                     rec=_orb_reidentify(curr_gray,orb_ref_descs,last_bbox)
                     if rec:
+                        self._orb_saves += 1
                         bx,by,bw,bh=rec
                         tracker=_make_tracker(); tracker.init(frame,rec)
                         tracker_ok=True; reinit_count=0; lk_pts=None
-                        logger.debug(f"[Tracker] PID={self._pid} ORB re-ID")
+                        logger.info(
+                            f"[Tracker] ORB SAVED track "
+                            f"(save #{self._orb_saves}/{self._orb_attempts}) "
+                            f"PID={self._pid} rec={rec}"
+                        )
                     else:
+                        logger.warning(
+                            f"[Tracker] ORB FAILED to recover track "
+                            f"(0/{self._orb_attempts} saves so far) "
+                            f"PID={self._pid} state={self._state.name}"
+                        )
                         if self._state in (_TS.ENTERING,_TS.INSERTING):
                             placed=self._run_verify(tc)
                             if placed: return self._succeed(tc)
@@ -828,6 +925,44 @@ class PhoneTracker:
                     prev_gray=curr_gray; continue
 
             if bw==0 or bh==0: prev_gray=curr_gray; continue
+
+            # ── QR positional anchor correction ──────────────────────────────
+            # _check_qr() runs every QR_CHECK_EVERY_N frames and, when the
+            # QR is confirmed, returns the QR corner bbox in _qr_bbox_this_frame.
+            # We use that bbox to measure how far the tracker has drifted from
+            # the confirmed phone position and correct it.
+            #
+            # This runs BEFORE LK / ORB descriptors are updated so the anchor
+            # correction propagates into the feature-point seeding step below.
+            if _qr_bbox_this_frame is not None and bw > 0 and bh > 0:
+                qr_cx = _qr_bbox_this_frame[0] + _qr_bbox_this_frame[2] // 2
+                qr_cy = _qr_bbox_this_frame[1] + _qr_bbox_this_frame[3] // 2
+                tracker_cx = bx + bw // 2
+                tracker_cy = by + bh // 2
+                drift = math.hypot(tracker_cx - qr_cx, tracker_cy - qr_cy)
+                if drift >= _TC.QR_ANCHOR_REINIT_DIST:
+                    # Large drift: tracker has wandered (e.g. locked on QR
+                    # sticker alone).  Reinit at the QR-confirmed centroid
+                    # keeping the current size estimate.
+                    bx = max(0, min(qr_cx - bw // 2, fw - bw))
+                    by = max(0, min(qr_cy - bh // 2, fh - bh))
+                    tracker = _make_tracker()
+                    tracker.init(frame, (bx, by, bw, bh))
+                    reinit_count = 0
+                    tracker_ok = True
+                    logger.debug(
+                        f"[Tracker] QR anchor reinit PID={self._pid} "
+                        f"drift={drift:.1f}px bbox=({bx},{by},{bw},{bh})"
+                    )
+                elif drift >= _TC.QR_ANCHOR_BLEND_DIST:
+                    # Moderate drift: soft centroid blend toward QR (65% QR,
+                    # 35% tracker) — corrects gradual drift without a hard
+                    # jump that could disturb the tracker's correlation model.
+                    new_cx = int(tracker_cx * 0.35 + qr_cx * 0.65)
+                    new_cy = int(tracker_cy * 0.35 + qr_cy * 0.65)
+                    bx = max(0, min(new_cx - bw // 2, fw - bw))
+                    by = max(0, min(new_cy - bh // 2, fh - bh))
+                # else: drift < BLEND_DIST — tracker is accurate, no correction
 
             if tracker_ok and (lk_pts is None or frame_count%10==0):
                 new_lk=_lk_init(curr_gray,(bx,by,bw,bh))
@@ -924,32 +1059,71 @@ class PhoneTracker:
             if bw*bh>0 and (ix2-ix1)*(iy2-iy1)/(bw*bh)>=0.30: return i
         return -1
 
-    def _check_qr(self, frame: np.ndarray) -> bool:
+    def _check_qr(self, frame: np.ndarray):
         """
-        B1: use the fast _decode_qr dispatcher from qr_pid_reader
-        (zxing-cpp when installed, cv2 fallback). Previously this always
-        used the slow cv2.QRCodeDetector path.
+        B1 (extended): use the fast _decode_qr dispatcher from qr_pid_reader
+        (zxing-cpp when installed, cv2 fallback).
+
+        Returns
+        -------
+        (confirmed: bool, qr_bbox: Optional[Tuple[int,int,int,int]])
+            confirmed — True when the decoded UUID matches self._pid.
+            qr_bbox   — (x, y, w, h) of the QR code in the frame, or None
+                        when position could not be extracted.  Used by the
+                        caller (_track) as a positional anchor to correct
+                        tracker drift.
         """
         try:
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            qr_pts = None
 
             if _B1_FAST_QR:
-                # B1: fast path — zxing-cpp or cv2 via unified dispatcher
+                # B1: fast decode via zxing-cpp / cv2 dispatcher (text only).
                 raw = _qr_decode_fn(gray)
+                if raw:
+                    # Confirmed text — now run a lightweight cv2.detect() to
+                    # extract corner points for the positional anchor.  This
+                    # is a single C-extension call (~0.2 ms) and only happens
+                    # on the QR_CHECK_EVERY_N cadence, so overhead is minimal.
+                    ok, pts = _qr_detector_tracker.detect(gray)
+                    if ok and pts is not None:
+                        qr_pts = pts
             else:
-                # Fallback: direct cv2 (no zxing-cpp available)
-                data, _, _ = _qr_detector_tracker.detectAndDecode(gray)
+                # Fallback: cv2.detectAndDecode returns text + corners together.
+                data, pts, _ = _qr_detector_tracker.detectAndDecode(gray)
                 raw = data if data else None
+                if raw and pts is not None:
+                    qr_pts = pts
 
             if not raw:
-                return False
+                return False, None
 
             raw = raw.strip()
             if raw.upper().startswith("PID:"):
                 raw = raw[4:].strip()
-            return bool(_UUID_RE_TRACKER.match(raw) and raw.lower() == self._pid.lower())
+            confirmed = bool(
+                _UUID_RE_TRACKER.match(raw) and raw.lower() == self._pid.lower()
+            )
+            if not confirmed:
+                return False, None
+
+            # Convert the 4 QR corner points → axis-aligned (x, y, w, h).
+            qr_bbox = None
+            if qr_pts is not None:
+                try:
+                    pts_2d = qr_pts.reshape(-1, 2).astype(int)
+                    x1 = int(pts_2d[:, 0].min())
+                    y1 = int(pts_2d[:, 1].min())
+                    x2 = int(pts_2d[:, 0].max())
+                    y2 = int(pts_2d[:, 1].max())
+                    if x2 > x1 and y2 > y1:   # sanity: non-degenerate rect
+                        qr_bbox = (x1, y1, x2 - x1, y2 - y1)
+                except Exception:
+                    pass  # position extraction failed; confirmed still valid
+
+            return True, qr_bbox
         except Exception:
-            return False
+            return False, None
 
     def _run_verify(self,tc):
         if self._verify_fn is None:
@@ -967,13 +1141,19 @@ class PhoneTracker:
 
     def _succeed(self,tc):
         tc.clear_tracker_overlay()
-        logger.info(f"[Tracker] PID={self._pid} LID={self._lid} SUCCESS")
+        logger.info(
+            f"[Tracker] PID={self._pid} LID={self._lid} SUCCESS  "
+            f"orb_attempts={self._orb_attempts} orb_saves={self._orb_saves}"
+        )
         self._state=_TS.SUCCESS
         if self._on_success: self._on_success()
 
     def _fail(self,reason,tc=None):
         if tc: tc.clear_tracker_overlay()
-        logger.warning(f"[Tracker] PID={self._pid} LID={self._lid} FAILED: {reason}")
+        logger.warning(
+            f"[Tracker] PID={self._pid} LID={self._lid} FAILED: {reason}  "
+            f"orb_attempts={self._orb_attempts} orb_saves={self._orb_saves}"
+        )
         self._state=_TS.FAILED
         if self._on_failure: self._on_failure(reason)
 

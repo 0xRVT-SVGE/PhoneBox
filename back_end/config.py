@@ -51,8 +51,8 @@ _MODELS_DIR = _REPO_ROOT / "back_end" / "models"
 
 class CameraConfig:
     # ── Device indices ────────────────────────────────────
-    FRONT_CAM_INDEX  = 1   # scanner_loop.py  — face + barcode
-    TOP_CAM_INDEX    = 0   # top_camera.py    — QR scan + phone tracking
+    FRONT_CAM_INDEX  = 0   # scanner_loop.py  — face + barcode
+    TOP_CAM_INDEX    = 1   # top_camera.py    — QR scan + phone tracking
     BOTTOM_CAM_INDEX = 2   # headless_slot_monitor.py — slot embedding
 
     # ── Bottom camera (slot monitor) resolution ───────────
@@ -95,9 +95,9 @@ class CameraConfig:
     #   PHONEBOX_CAM_BACKEND_FRONT   e.g. "msmf"
     #   PHONEBOX_CAM_BACKEND_TOP     e.g. "auto"
     #   PHONEBOX_CAM_BACKEND_BOTTOM  e.g. "auto"
-    FRONT_CAM_BACKEND  = os.environ.get("PHONEBOX_CAM_BACKEND_FRONT",  "msmf").lower()
-    TOP_CAM_BACKEND    = os.environ.get("PHONEBOX_CAM_BACKEND_TOP",    "auto").lower()
-    BOTTOM_CAM_BACKEND = os.environ.get("PHONEBOX_CAM_BACKEND_BOTTOM", "auto").lower()
+    FRONT_CAM_BACKEND  = os.environ.get("PHONEBOX_CAM_BACKEND_FRONT",  "dshow").lower()
+    TOP_CAM_BACKEND    = os.environ.get("PHONEBOX_CAM_BACKEND_TOP",    "msmf").lower()
+    BOTTOM_CAM_BACKEND = os.environ.get("PHONEBOX_CAM_BACKEND_BOTTOM", "dshow").lower()
 
     # ── Backend resolver ──────────────────────────────────
     # Use CameraConfig.resolve_backend(name) to get the cv2 integer constant.
@@ -173,7 +173,7 @@ class ServerConfig:
     # Each physical box declares its slug, which must exist in the boxes table.
     # Example: PHONEBOX_BOX_SLUG=year_1  (for the Year 1 cabinet)
     # BOX_ID is resolved at startup by server_main._resolve_box_id().
-    BOX_SLUG = os.environ.get("PHONEBOX_BOX_SLUG", "year_3")
+    BOX_SLUG = os.environ.get("PHONEBOX_BOX_SLUG", "box_y3")
 
     # Debug flags for scanner_loop
     DEBUG_ROI    = True   # Draw ROI rectangle on front-camera feed
@@ -277,6 +277,18 @@ class TrackerConfig:
 
     STAGING_HOLD_TIME = 1.5   # seconds
     EMIT_INTERVAL     = 0.5   # seconds between tracking_update events
+
+    # ── QR positional anchor ───────────────────────────────
+    # Whenever the QR is successfully decoded the tracker bbox centroid is
+    # compared against the QR centroid.  Three zones:
+    #
+    #   drift < QR_ANCHOR_BLEND_DIST   → trust tracker, no correction
+    #   drift in [BLEND_DIST, REINIT_DIST) → soft centroid blend (65% QR)
+    #   drift ≥ QR_ANCHOR_REINIT_DIST  → full tracker reinit at QR position
+    #
+    # Units: pixels in the top-camera frame (default 1280×720 or similar).
+    QR_ANCHOR_BLEND_DIST  = 20   # px — below this, tracker is trusted
+    QR_ANCHOR_REINIT_DIST = 60   # px — above this, reinit tracker
 
     # ── Opt #9: TrackerNano backend ───────────────────────
     # "nano"  — use TrackerNano (opencv-contrib >= 4.7, ~3-5× lighter than CSRT)
@@ -415,7 +427,7 @@ class AlarmConfig:
 
 class AdminConfig:
     # Base session lifetime before expiry (seconds).
-    SESSION_TIMEOUT = 120   # 2 minutes
+    SESSION_TIMEOUT = 30   # 2 minutes
 
     # Extra seconds added per resolved mismatch.
     SESSION_EXTEND_PER_RESOLVE = 30

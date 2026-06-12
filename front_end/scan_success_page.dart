@@ -690,6 +690,13 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
   Widget build(BuildContext context) {
     final screenH    = MediaQuery.of(context).size.height;
     final showCamera = _step == DvwStep.tracking || _step == DvwStep.autoScanning;
+    // Fixed camera height keeps the video anchored regardless of how many
+    // content widgets appear below. This prevents the video from shifting
+    // when the state transitions from autoScanning → tracking (or vice-versa).
+    final cameraH = screenH * 0.52;
+    // Reserve enough vertical space for the content section so the sheet
+    // height stays stable across states and no reflow occurs.
+    const contentMinH = 140.0;
 
     return Container(
       constraints: BoxConstraints(
@@ -702,6 +709,7 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          // Drag handle
           Padding(
             padding: const EdgeInsets.only(top: 10, bottom: 4),
             child: const SizedBox(
@@ -714,8 +722,10 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
             ),
           ),
 
+          // Camera — fixed height so it NEVER shifts when content changes
           if (showCamera)
-            Expanded(
+            SizedBox(
+              height: cameraH,
               child: Stack(
                 fit: StackFit.expand,
                 children: [
@@ -768,13 +778,21 @@ class _DVWBottomSheetState extends State<DVWBottomSheet> {
               ),
             ),
 
+          // Content — fixed minHeight keeps the sheet stable across states
           Padding(
             padding: EdgeInsets.fromLTRB(
                 24, 12, 24,
                 MediaQuery.of(context).viewInsets.bottom + 24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: _buildContent(),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: contentMinH),
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 250),
+                child: Column(
+                  key: ValueKey(_step),
+                  mainAxisSize: MainAxisSize.min,
+                  children: _buildContent(),
+                ),
+              ),
             ),
           ),
         ],

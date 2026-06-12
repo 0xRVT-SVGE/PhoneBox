@@ -2,10 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'socket_service.dart';
-import 'api_service.dart';
 import 'admin_resolution_page.dart';
-
-import 'webrtc_config.dart';
 
 class AlarmPage extends StatefulWidget {
   final List<dynamic> initialMismatches;
@@ -25,33 +22,23 @@ class AlarmPage extends StatefulWidget {
 
 class _AlarmPageState extends State<AlarmPage>
     with SingleTickerProviderStateMixin {
-  final _socketService = SocketService();
+  final _socketService      = SocketService();
   final _passwordController = TextEditingController();
 
   List<dynamic> _mismatches = [];
-  bool _cleared  = false;
-  bool _loading  = false;
+  bool    _cleared              = false;
+  bool    _loading              = false;
   String? _errorMessage;
-  bool _authenticated = false;
-
-  final RTCVideoRenderer _adminRenderer = RTCVideoRenderer();
-  RTCPeerConnection? _adminPc;
-  bool _adminVideoConnected = false;
-
-  bool _disposed             = false;
-  bool _resolutionInProgress = false;
+  bool    _resolutionInProgress = false;
 
   Timer? _autoPop;
-
-  Future<void>? _preConnectFuture;
 
   late AnimationController _pulseCtrl;
   late Animation<double>   _pulseAnim;
 
-  // Opt #28: typed stream subscriptions
   final List<StreamSubscription> _subs = [];
 
-  // ── Display helpers ───────────────────────────────────────────────────────
+  // ── Helpers ───────────────────────────────────────────────────────────────
 
   static String _slotLabel(dynamic lid, {dynamic x, dynamic y}) {
     final slot = (lid as num).toInt() + 1;
@@ -81,90 +68,20 @@ class _AlarmPageState extends State<AlarmPage>
       CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut),
     );
 
-    // Begin server-side teardown of any prior admin connection NOW, in parallel
-    // with renderer.initialize() — saves ~200 ms of sequential latency.
-    // _startAdminVideo() also calls cancelAdmin() as a safety net.
-    ApiService.cancelAdmin(); // intentionally unawaited
-    _preConnectFuture = _adminRenderer
-        .initialize()
-        .then((_) => _startAdminVideo())
-        .timeout(const Duration(seconds: 6), onTimeout: () {});
-
     _connectSocket();
   }
 
   @override
   void dispose() {
-    _disposed = true;
     _autoPop?.cancel();
     _pulseCtrl.dispose();
     _passwordController.dispose();
-    // Opt #28: cancel all subscriptions
     for (final s in _subs) s.cancel();
-    _adminPc?.onTrack            = null;
-    _adminPc?.onConnectionState  = null;
-    _adminPc?.close();
-    _adminRenderer.srcObject = null;
-    _adminRenderer.dispose();
-    ApiService.cancelAdmin();
     super.dispose();
   }
 
-  // ── Admin camera ──────────────────────────────────────────────────────────
+  // ── Socket ────────────────────────────────────────────────────────────────
 
-  Future<void> _startAdminVideo() async {
-    if (_disposed) return;
-    try {
-      await ApiService.cancelAdmin();
-      _adminPc = await createPeerConnection(WebRTCConfig.iceConfig);
-      _adminPc!.onTrack = (event) {
-        if (_disposed || !mounted) return;
-        if (event.streams.isNotEmpty) {
-          setState(() {
-            _adminRenderer.srcObject = event.streams[0];
-            _adminVideoConnected     = true;
-          });
-        }
-      };
-      _adminPc!.onConnectionState = (state) async {
-        if (_disposed) return;
-        // Only reconnect on 'failed' — 'disconnected' is transient/recoverable.
-        if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
-          if (mounted) setState(() => _adminVideoConnected = false);
-          _adminPc?.onTrack           = null;
-          _adminPc?.onConnectionState = null;
-          await _adminPc?.close();
-          _adminPc = null;
-          await Future.delayed(const Duration(seconds: 1));
-          if (!_disposed) {
-            _adminRenderer.srcObject = null;
-            await _startAdminVideo();
-          }
-        }
-      };
-      final offer = await _adminPc!.createOffer(WebRTCConfig.videoOfferConstraints);
-      await _adminPc!.setLocalDescription(offer);
-      final sdp = await ApiService.sendOffer(offer.sdp!, mode: 'admin',
-          maxRetries: 1);
-      if (sdp != null && !_disposed) {
-        await _adminPc!.setRemoteDescription(RTCSessionDescription(sdp, 'answer'));
-      }
-    } catch (_) {
-      if (mounted) setState(() => _adminVideoConnected = false);
-    }
-  }
-
-  RTCPeerConnection? _detachAdminPc() {
-    final pc = _adminPc;
-    _adminPc?.onTrack            = null;
-    _adminPc?.onConnectionState  = null;
-    _adminPc = null;
-    _adminRenderer.srcObject = null;
-    if (mounted) setState(() => _adminVideoConnected = false);
-    return pc;
-  }
-
-  // ── Opt #28: Socket — stream subscriptions ────────────────────────────────
   void _connectSocket() {
     _socketService.connect();
 
@@ -174,7 +91,7 @@ class _AlarmPageState extends State<AlarmPage>
       _autoPop = null;
       setState(() {
         _cleared    = false;
-        _mismatches = data["mismatches"] ?? [];
+        _mismatches = data['mismatches'] ?? [];
       });
     }));
 
@@ -186,7 +103,7 @@ class _AlarmPageState extends State<AlarmPage>
 
     _subs.add(_socketService.onAlarmStatus.listen((data) {
       if (!mounted) return;
-      if (data["active"] != true) {
+      if (data['active'] != true) {
         setState(() => _cleared = true);
         _maybeAutoPop(delay: const Duration(milliseconds: 300));
       }
@@ -195,10 +112,10 @@ class _AlarmPageState extends State<AlarmPage>
     _subs.add(_socketService.onAlarmAcknowledgeResult.listen((data) {
       if (!mounted) return;
       setState(() => _loading = false);
-      if (data["status"] == "success") {
+      if (data['status'] == 'success') {
         _onAuthSuccess();
       } else {
-        setState(() => _errorMessage = "Wrong password");
+        setState(() => _errorMessage = 'Wrong password');
       }
     }));
 
@@ -206,14 +123,10 @@ class _AlarmPageState extends State<AlarmPage>
   }
 
   void _maybeAutoPop({Duration delay = const Duration(milliseconds: 800)}) {
-    // C3: cancel any pending timer and reschedule unconditionally.
-    // The guard is evaluated INSIDE the callback (when the timer fires),
-    // not here at schedule time — so typing within the delay window is safe.
     _autoPop?.cancel();
     _autoPop = Timer(delay, () {
       final adminEngaged = _resolutionInProgress ||
           _loading ||
-          _authenticated ||
           _passwordController.text.trim().isNotEmpty;
       if (!adminEngaged && mounted) Navigator.of(context).pop();
     });
@@ -231,23 +144,17 @@ class _AlarmPageState extends State<AlarmPage>
     _socketService.acknowledgeAlarm(pw);
   }
 
-  void _onAuthSuccess() {
-    setState(() => _authenticated = true);
-    (_preConnectFuture ?? Future.value()).then((_) {
-      if (mounted) _openResolution();
-    });
-  }
+  void _onAuthSuccess() => _openResolution();
 
   Future<void> _openResolution() async {
-    final existingPc = _detachAdminPc();
     _resolutionInProgress = true;
 
     final resolved = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) => AdminResolutionPage(
-          password:                 _passwordController.text.trim(),
-          mismatches:               List.from(_mismatches),
-          inheritedPeerConnection:  existingPc,
+          password:                _passwordController.text.trim(),
+          mismatches:              List.from(_mismatches),
+          inheritedPeerConnection: null,
         ),
       ),
     );
@@ -259,12 +166,7 @@ class _AlarmPageState extends State<AlarmPage>
       Navigator.of(context).pop();
       return;
     }
-
-    if (resolved == false) {
-      _socketService.unsilenceAlarm();
-    }
-
-    setState(() => _authenticated = false);
+    if (resolved == false) _socketService.unsilenceAlarm();
     if (_cleared && mounted) Navigator.of(context).pop();
   }
 
@@ -277,56 +179,67 @@ class _AlarmPageState extends State<AlarmPage>
       child: Scaffold(
         backgroundColor: const Color(0xFF0D0D0F),
         body: SafeArea(
-          child: Column(
-            children: [
-              Expanded(child: _buildCameraPanel()),
-              _cleared ? _buildClearedView() : _buildAlarmContent(),
-            ],
-          ),
+          child: _cleared
+              ? _buildClearedView()
+              : Column(
+                  children: [
+                    Expanded(child: _buildCameraPanel()),
+                    _buildScrollContent(),
+                  ],
+                ),
         ),
       ),
     );
   }
 
-  // ── Camera panel ──────────────────────────────────────────────────────────
+  // ── Front camera panel ───────────────────────────────────────────────────
 
   Widget _buildCameraPanel() {
-    final bool showAdmin = _authenticated;
-    final renderer  = showAdmin ? _adminRenderer  : widget.mainRenderer;
-    final connected = showAdmin ? _adminVideoConnected : widget.isMainConnected();
-    final camLabel  = showAdmin ? 'TOP CAM'       : 'FRONT CAM';
-    final camIcon   = showAdmin ? Icons.videocam_outlined : Icons.face_outlined;
-
+    final connected = widget.isMainConnected() &&
+        widget.mainRenderer.srcObject != null;
     return Stack(
       fit: StackFit.expand,
       children: [
-        // Opt #30: RepaintBoundary isolates 30fps video repaints
-        connected && renderer.srcObject != null
+        connected
             ? RepaintBoundary(
                 child: RTCVideoView(
-                  renderer,
-                  objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain,
+                  widget.mainRenderer,
+                  objectFit:
+                      RTCVideoViewObjectFit.RTCVideoViewObjectFitContain,
                 ),
               )
             : Container(
                 color: Colors.black,
                 child: Center(
                   child: Column(mainAxisSize: MainAxisSize.min, children: [
-                    const SizedBox(
-                        width: 22, height: 22,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white24)),
-                    const SizedBox(height: 8),
-                    Text('Connecting $camLabel…',
-                        style: const TextStyle(
-                            color: Colors.white38, fontSize: 12)),
+                    Icon(Icons.videocam_off_outlined,
+                        color: Colors.white.withOpacity(0.18), size: 36),
+                    const SizedBox(height: 10),
+                    Text('Front camera',
+                        style: TextStyle(
+                            color: Colors.white.withOpacity(0.25),
+                            fontSize: 13)),
                   ]),
                 ),
               ),
+        // Thin red tint at top to connect visually with alarm theme
         Positioned(
-          bottom: 10, left: 12,
-          child: _camBadge(camIcon, camLabel),
+          top: 0, left: 0, right: 0,
+          child: Container(
+            height: 40,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end:   Alignment.bottomCenter,
+                colors: [
+                  const Color(0xFFE5484D).withOpacity(0.18),
+                  Colors.transparent,
+                ],
+              ),
+            ),
+          ),
         ),
+        // REC badge
         Positioned(
           bottom: 10, right: 12,
           child: AnimatedBuilder(
@@ -338,6 +251,11 @@ class _AlarmPageState extends State<AlarmPage>
             ),
           ),
         ),
+        // FRONT CAM badge
+        Positioned(
+          bottom: 10, left: 12,
+          child: _camBadge(Icons.face_outlined, 'FRONT CAM'),
+        ),
       ],
     );
   }
@@ -348,7 +266,7 @@ class _AlarmPageState extends State<AlarmPage>
         decoration: BoxDecoration(
           color:        Colors.black.withOpacity(0.55),
           borderRadius: BorderRadius.circular(6),
-          border:       Border.all(color: Colors.white.withOpacity(0.08)),
+          border: Border.all(color: Colors.white.withOpacity(0.08)),
         ),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
           Icon(icon, color: dotColor ?? Colors.white38, size: 12),
@@ -362,56 +280,54 @@ class _AlarmPageState extends State<AlarmPage>
 
   // ── Cleared view ──────────────────────────────────────────────────────────
 
-  Widget _buildClearedView() => Container(
-        padding: const EdgeInsets.symmetric(vertical: 32),
-        child: Center(
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Container(
-              width:  72, height: 72,
-              decoration: BoxDecoration(
-                color:  const Color(0xFF0F2318),
-                shape:  BoxShape.circle,
-                border: Border.all(
-                    color: const Color(0xFF30A46C).withOpacity(0.4), width: 1.5),
-              ),
-              child: const Icon(Icons.check_rounded,
-                  color: Color(0xFF30A46C), size: 36),
+  Widget _buildClearedView() => Center(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Container(
+            width: 72, height: 72,
+            decoration: BoxDecoration(
+              color:  const Color(0xFF0F2318),
+              shape:  BoxShape.circle,
+              border: Border.all(
+                  color: const Color(0xFF30A46C).withOpacity(0.4),
+                  width: 1.5),
             ),
-            const SizedBox(height: 20),
-            const Text('Alarm cleared',
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600,
-                    color: Colors.white)),
-            const SizedBox(height: 6),
-            const Text('All slots are back to their expected state.',
-                style: TextStyle(color: Colors.white38, fontSize: 13)),
-          ]),
-        ),
+            child: const Icon(Icons.check_rounded,
+                color: Color(0xFF30A46C), size: 36),
+          ),
+          const SizedBox(height: 20),
+          const Text('Alarm cleared',
+              style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600,
+                  color: Colors.white)),
+          const SizedBox(height: 6),
+          const Text('All slots are back to their expected state.',
+              style: TextStyle(color: Colors.white38, fontSize: 13)),
+        ]),
       );
 
-  // ── Alarm content ─────────────────────────────────────────────────────────
+  // ── Scrollable auth content ───────────────────────────────────────────────
 
-  Widget _buildAlarmContent() => SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+  Widget _buildScrollContent() => SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _buildAlarmHeader(),
             if (_mismatches.isNotEmpty) ...[
-              const SizedBox(height: 12),
+              const SizedBox(height: 10),
               _buildMismatchList(),
             ],
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
             _buildAuthCard(),
           ],
         ),
       );
 
   Widget _buildAlarmHeader() => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(
-          color:  const Color(0xFF1F1315),
+          color:        const Color(0xFF1F1315),
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(
+          border:       Border.all(
               color: const Color(0xFFE5484D).withOpacity(0.2), width: 1),
         ),
         child: Row(children: [
@@ -420,27 +336,28 @@ class _AlarmPageState extends State<AlarmPage>
             builder: (_, __) => Opacity(
               opacity: _pulseAnim.value,
               child: Container(
-                width: 40, height: 40,
+                width: 36, height: 36,
                 decoration: BoxDecoration(
-                  color: const Color(0xFFE5484D).withOpacity(0.12),
-                  shape: BoxShape.circle,
+                  color:  const Color(0xFFE5484D).withOpacity(0.12),
+                  shape:  BoxShape.circle,
                 ),
                 child: const Icon(Icons.warning_rounded,
-                    color: Color(0xFFE5484D), size: 22),
+                    color: Color(0xFFE5484D), size: 20),
               ),
             ),
           ),
-          const SizedBox(width: 14),
+          const SizedBox(width: 12),
           Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start, children: [
               const Text('Alarm active',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600,
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600,
                       color: Color(0xFFFF6B6B))),
               const SizedBox(height: 2),
               Text(
                 '${_mismatches.length} slot '
                 'mismatch${_mismatches.length == 1 ? '' : 'es'} detected',
-                style: const TextStyle(color: Colors.white38, fontSize: 13),
+                style: const TextStyle(color: Colors.white38, fontSize: 12),
               ),
             ]),
           ),
@@ -450,24 +367,27 @@ class _AlarmPageState extends State<AlarmPage>
   Widget _buildMismatchList() => Container(
         decoration: BoxDecoration(
           color:        const Color(0xFF1C1C1E),
-          borderRadius: BorderRadius.circular(14),
-          border:       Border.all(color: Colors.white.withOpacity(0.07), width: 1),
+          borderRadius: BorderRadius.circular(12),
+          border:       Border.all(
+              color: Colors.white.withOpacity(0.07), width: 1),
         ),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 6),
             child: Text('MISMATCHED SLOTS',
                 style: TextStyle(
-                    fontSize: 11, fontWeight: FontWeight.w600,
-                    color: Colors.white.withOpacity(0.3), letterSpacing: 0.9)),
+                    fontSize: 10, fontWeight: FontWeight.w600,
+                    color: Colors.white.withOpacity(0.3),
+                    letterSpacing: 0.9)),
           ),
           const Divider(height: 1, color: Colors.white10),
           ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 160),
+            constraints: const BoxConstraints(maxHeight: 150),
             child: ListView.separated(
-              shrinkWrap:      true,
-              padding:         EdgeInsets.zero,
-              itemCount:       _mismatches.length,
+              shrinkWrap:       true,
+              padding:          EdgeInsets.zero,
+              physics:          const ClampingScrollPhysics(),
+              itemCount:        _mismatches.length,
               separatorBuilder: (_, __) =>
                   const Divider(height: 1, color: Colors.white10),
               itemBuilder: (_, i) {
@@ -479,35 +399,35 @@ class _AlarmPageState extends State<AlarmPage>
                 final isUnknown = pid.toString().startsWith('unknown-');
                 return Padding(
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 16, vertical: 11),
+                      horizontal: 14, vertical: 10),
                   child: Row(children: [
                     Container(
-                      width: 34, height: 34,
+                      width: 30, height: 30,
                       decoration: BoxDecoration(
-                        color:        const Color(0xFFE5484D).withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(8),
+                        color: const Color(0xFFE5484D).withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(7),
                       ),
                       child: Icon(
                           isUnknown
                               ? Icons.help_outline_rounded
                               : Icons.smartphone,
-                          color: const Color(0xFFFF6B6B), size: 18),
+                          color: const Color(0xFFFF6B6B), size: 16),
                     ),
-                    const SizedBox(width: 12),
+                    const SizedBox(width: 10),
                     Expanded(
                       child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(_pidLabel(pid),
-                              style: const TextStyle(color: Colors.white,
-                                  fontSize: 13, fontWeight: FontWeight.w500),
-                              overflow: TextOverflow.ellipsis),
-                          const SizedBox(height: 2),
-                          Text('Expected in ${_slotLabel(lid, x: x, y: y)}',
-                              style: const TextStyle(
-                                  color: Colors.white38, fontSize: 12)),
-                        ],
-                      ),
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                        Text(_pidLabel(pid),
+                            style: const TextStyle(color: Colors.white,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500),
+                            overflow: TextOverflow.ellipsis),
+                        const SizedBox(height: 1),
+                        Text('Expected in ${_slotLabel(lid, x: x, y: y)}',
+                            style: const TextStyle(
+                                color: Colors.white38, fontSize: 11)),
+                      ]),
                     ),
                   ]),
                 );
@@ -518,25 +438,28 @@ class _AlarmPageState extends State<AlarmPage>
       );
 
   Widget _buildAuthCard() => Container(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           color:        const Color(0xFF1C1C1E),
           borderRadius: BorderRadius.circular(16),
-          border:       Border.all(color: Colors.white.withOpacity(0.07), width: 1),
+          border:       Border.all(
+              color: Colors.white.withOpacity(0.07), width: 1),
         ),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           const Text('Admin authentication required',
               style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600,
                   color: Colors.white)),
-          const SizedBox(height: 4),
+          const SizedBox(height: 3),
           const Text(
-            'Enter your password to silence the alarm and begin guided resolution.',
+            'Enter your password to silence the alarm and begin resolution.',
             style: TextStyle(color: Colors.white38, fontSize: 12, height: 1.5),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 14),
           TextField(
             controller:  _passwordController,
             obscureText: true,
+            autofocus:   true,
             style:       const TextStyle(color: Colors.white),
             decoration:  InputDecoration(
               labelText:  'Admin password',
@@ -545,29 +468,32 @@ class _AlarmPageState extends State<AlarmPage>
               errorStyle: const TextStyle(color: Color(0xFFFF6B6B)),
               prefixIcon: const Icon(Icons.lock_outline,
                   color: Colors.white38, size: 20),
-              filled:     true,
-              fillColor:  Colors.white.withOpacity(0.04),
+              filled:    true,
+              fillColor: Colors.white.withOpacity(0.04),
               border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
-                  borderSide:   BorderSide(color: Colors.white.withOpacity(0.12))),
+                  borderSide:
+                      BorderSide(color: Colors.white.withOpacity(0.12))),
               enabledBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
-                  borderSide:   BorderSide(color: Colors.white.withOpacity(0.12))),
+                  borderSide:
+                      BorderSide(color: Colors.white.withOpacity(0.12))),
               focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
-                  borderSide:   const BorderSide(
+                  borderSide: const BorderSide(
                       color: Color(0xFFE5484D), width: 1.5)),
               errorBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
-                  borderSide:   const BorderSide(color: Color(0xFFE5484D))),
+                  borderSide:
+                      const BorderSide(color: Color(0xFFE5484D))),
               focusedErrorBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
-                  borderSide:   const BorderSide(
+                  borderSide: const BorderSide(
                       color: Color(0xFFE5484D), width: 1.5)),
             ),
             onSubmitted: (_) => _submitPassword(),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 12),
           ElevatedButton.icon(
             icon: _loading
                 ? const SizedBox(
@@ -576,11 +502,12 @@ class _AlarmPageState extends State<AlarmPage>
                         strokeWidth: 2, color: Colors.white))
                 : const Icon(Icons.shield_outlined, size: 18),
             label: const Text('Silence & begin resolution',
-                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                style: TextStyle(
+                    fontSize: 14, fontWeight: FontWeight.w600)),
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFFE5484D),
               foregroundColor: Colors.white,
-              padding:         const EdgeInsets.symmetric(vertical: 15),
+              padding:         const EdgeInsets.symmetric(vertical: 14),
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12)),
               elevation: 0,
