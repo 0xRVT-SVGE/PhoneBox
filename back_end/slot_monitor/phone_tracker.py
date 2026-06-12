@@ -631,6 +631,11 @@ class _RotationSignal:
         self._init_area  = None
         self._init_angle = None
 
+    def reset(self):
+        """Re-baseline area/angle so rotation is measured from this point on."""
+        self._init_area  = None
+        self._init_angle = None
+
     def update(self, gray, bbox):
         x,y,w,h=(int(v) for v in bbox)
         if w<8 or h<8: return None,None
@@ -1003,6 +1008,7 @@ class PhoneTracker:
                     roi_count+=1
                     if roi_count>=ROI_APPROACH_FRAMES:
                         self._state=_TS.ENTERING; state_ts=time.time(); still_count=0
+                        rot_sig.reset()
                         logger.info(f"[Tracker] PID={self._pid}  ENTERING")
                 else:
                     roi_count=0
