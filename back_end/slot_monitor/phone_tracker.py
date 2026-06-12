@@ -49,7 +49,6 @@ from back_end.config import (
     TrackerConfig   as _TC,
     MotionConfig    as _MC,
     LKConfig        as _LK,
-    OrbConfig       as _OC,
     OverlayConfig   as _OV,
 )
 
@@ -76,12 +75,6 @@ except ImportError:
 
 # Legacy fallback detector — only used when qr_pid_reader is unavailable
 _qr_detector_tracker = cv2.QRCodeDetector()
-
-_orb_descriptor   = cv2.ORB_create(nfeatures=100)
-_orb_reidentifier = cv2.ORB_create(nfeatures=200)
-
-# B6: BFMatcher at module level — not recreated on every _orb_reidentify() call
-_bf_matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
 
 logger = logging.getLogger(__name__)
 
@@ -276,10 +269,6 @@ LK_GOOD_QUALITY = _LK.GOOD_QUALITY
 LK_WIN_SIZE     = _LK.WIN_SIZE
 LK_MAX_LEVEL    = _LK.MAX_LEVEL
 LK_CRITERIA     = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 20, 0.03)
-
-RE_ID_EVERY_N       = _OC.RE_ID_EVERY_N
-ORB_MATCH_THRESHOLD = _OC.MATCH_THRESHOLD
-ORB_MIN_MATCHES     = _OC.MIN_MATCHES
 
 STAGING_HOLD_TIME = _TC.STAGING_HOLD_TIME
 
@@ -637,43 +626,6 @@ def _lk_update(prev_gray, curr_gray, prev_pts):
     return good.reshape(-1,1,2),(x1,y1,max(x2-x1,4),max(y2-y1,4))
 
 
-def _orb_descriptors(gray, bbox):
-    x,y,w,h=(int(v) for v in bbox)
-    if w<10 or h<10: return None,None
-    roi=gray[y:y+h, x:x+w]
-    kps, descs = _orb_descriptor.detectAndCompute(roi, None)
-    if descs is None or len(descs)<ORB_MIN_MATCHES: return None,None
-    for kp in kps: kp.pt=(kp.pt[0]+x, kp.pt[1]+y)
-    return kps,descs
-
-
-def _orb_reidentify(gray, ref_descs, search_region=None):
-    """
-    B6: uses module-level _bf_matcher instead of creating a new one each call.
-    """
-    if ref_descs is None or len(ref_descs)<ORB_MIN_MATCHES: return None
-    fh,fw=gray.shape[:2]
-    if search_region is not None:
-        sx,sy,sw,sh=search_region
-        mx,my=sw//2,sh//2
-        x1,y1=max(0,sx-mx),max(0,sy-my)
-        x2,y2=min(fw,sx+sw+mx),min(fh,sy+sh+my)
-        sg=gray[y1:y2, x1:x2]; ox,oy=x1,y1
-    else:
-        sg=gray; ox,oy=0,0
-    kps,descs=_orb_reidentifier.detectAndCompute(sg,None)
-    if descs is None or len(descs)<ORB_MIN_MATCHES: return None
-    # B6: reuse module-level matcher — no construction overhead
-    try: matches=_bf_matcher.knnMatch(ref_descs,descs,k=2)
-    except cv2.error: return None
-    good=[m for m,n in matches if m.distance<ORB_MATCH_THRESHOLD*n.distance]
-    if len(good)<ORB_MIN_MATCHES: return None
-    pts=np.array([kps[m.trainIdx].pt for m in good])
-    rx,ry=int(pts[:,0].min())+ox,int(pts[:,1].min())+oy
-    rw,rh=max(int(pts[:,0].max()-pts[:,0].min()),20)+ox,max(int(pts[:,1].max()-pts[:,1].min()),20)+oy
-    return (rx,ry,rw,rh)
-
-
 class _RotationSignal:
     def __init__(self):
         self._init_area  = None
@@ -704,6 +656,66 @@ class _RotationSignal:
         return area_ratio, angle_delta
 
 
+class _KalmanBBox:
+    """
+    Constant-velocity Kalman filter for tracker centroid smoothing.
+
+    State  : [cx, cy, vx, vy]
+    Measure: [cx, cy]
+
+    Benefits:
+    • Reduces per-frame jitter so still_count accumulates faster when
+      the phone genuinely stops moving over the slot.
+    • Produces a smoother bbox overlay for the user.
+    • Provides a short-horizon position prediction for frames where the
+      tracker momentarily misses (predict_only path).
+    """
+
+    def __init__(self) -> None:
+        self._kf: Optional[cv2.KalmanFilter] = None
+
+    def init(self, cx: int, cy: int) -> None:
+        kf = cv2.KalmanFilter(4, 2)
+        # Constant-velocity transition: x_{k+1} = F * x_k
+        kf.transitionMatrix = np.array(
+            [[1, 0, 1, 0],
+             [0, 1, 0, 1],
+             [0, 0, 1, 0],
+             [0, 0, 0, 1]], dtype=np.float32
+        )
+        # Observe centroid only: z_k = H * x_k
+        kf.measurementMatrix = np.array(
+            [[1, 0, 0, 0],
+             [0, 1, 0, 0]], dtype=np.float32
+        )
+        # Allow moderate acceleration (phone can change direction slowly)
+        kf.processNoiseCov      = np.eye(4, dtype=np.float32) * 1e-2
+        # Trust the tracker centroid measurement reasonably
+        kf.measurementNoiseCov  = np.eye(2, dtype=np.float32) * 5.0
+        kf.errorCovPost         = np.eye(4, dtype=np.float32) * 1.0
+        kf.statePost            = np.array(
+            [[cx], [cy], [0], [0]], dtype=np.float32
+        )
+        self._kf = kf
+
+    def update(self, cx: int, cy: int) -> Tuple[int, int]:
+        """Feed a tracker measurement and return the smoothed centroid."""
+        if self._kf is None:
+            self.init(cx, cy)
+            return cx, cy
+        self._kf.predict()
+        meas  = np.array([[np.float32(cx)], [np.float32(cy)]])
+        state = self._kf.correct(meas)
+        return int(state[0, 0]), int(state[1, 0])
+
+    def predict_only(self) -> Optional[Tuple[int, int]]:
+        """Propagate without a measurement (tracker missed one frame)."""
+        if self._kf is None:
+            return None
+        pred = self._kf.predict()
+        return int(pred[0, 0]), int(pred[1, 0])
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # PHONE TRACKER
 # ══════════════════════════════════════════════════════════════════════════════
@@ -717,10 +729,13 @@ class PhoneTracker:
       B6 — _orb_reidentify() uses module-level _bf_matcher
 
     Post-session 14:
-      QR anchor   — _check_qr() returns position; _track() corrects drift.
+      QR anchor    — _check_qr() returns position; _track() corrects drift.
       Smart motion — _motion_bbox() selects contours near the phone region.
-      ORB logging  — every ORB attempt, save, and failure is logged so we
-                     can measure whether ORB is worth keeping.
+      ORB removed  — instrumentation confirmed orb_attempts=0 on all deposits;
+                     dead code removed.
+      Kalman       — _KalmanBBox smooths the bbox centroid each frame so
+                     still_count accumulates faster and the overlay is jitter-
+                     free.  Raw bbox is preserved for tracker reinit anchoring.
     """
 
     DRAW_TRACKING_BOX: bool = True
@@ -819,9 +834,9 @@ class PhoneTracker:
         reinit_count    = 0
         lk_pts          = None
         prev_gray       = None
-        orb_ref_descs   = None
         last_bbox       = None
         rot_sig         = _RotationSignal()
+        kf              = _KalmanBBox()
         prev_cx=prev_cy = None
         still_count     = 0
         roi_count       = 0
@@ -892,36 +907,15 @@ class PhoneTracker:
                     lk_pts,lk_bbox=_lk_update(prev_gray,curr_gray,lk_pts)
                     if lk_bbox: bx,by,bw,bh=lk_bbox
                     else: bx=by=bw=bh=0
-                elif frame_count%RE_ID_EVERY_N==0 and orb_ref_descs is not None:
-                    self._orb_attempts += 1
-                    logger.info(
-                        f"[Tracker] ORB attempt #{self._orb_attempts} "
-                        f"PID={self._pid} state={self._state.name} "
-                        f"frame={frame_count} last_bbox={last_bbox}"
-                    )
-                    rec=_orb_reidentify(curr_gray,orb_ref_descs,last_bbox)
-                    if rec:
-                        self._orb_saves += 1
-                        bx,by,bw,bh=rec
-                        tracker=_make_tracker(); tracker.init(frame,rec)
-                        tracker_ok=True; reinit_count=0; lk_pts=None
-                        logger.info(
-                            f"[Tracker] ORB SAVED track "
-                            f"(save #{self._orb_saves}/{self._orb_attempts}) "
-                            f"PID={self._pid} rec={rec}"
-                        )
-                    else:
-                        logger.warning(
-                            f"[Tracker] ORB FAILED to recover track "
-                            f"(0/{self._orb_attempts} saves so far) "
-                            f"PID={self._pid} state={self._state.name}"
-                        )
-                        if self._state in (_TS.ENTERING,_TS.INSERTING):
-                            placed=self._run_verify(tc)
-                            if placed: return self._succeed(tc)
-                            return self._fail("phone_not_in_slot",tc)
-                        return self._fail("tracker_lost",tc)
                 else:
+                    # All tracking sources exhausted for this frame.
+                    # If the phone was already entering or inserting,
+                    # attempt the bottom-cam verification rather than
+                    # continuing to track thin air.
+                    if self._state in (_TS.ENTERING, _TS.INSERTING):
+                        placed = self._run_verify(tc)
+                        if placed: return self._succeed(tc)
+                        return self._fail("phone_not_in_slot", tc)
                     prev_gray=curr_gray; continue
 
             if bw==0 or bh==0: prev_gray=curr_gray; continue
@@ -968,11 +962,14 @@ class PhoneTracker:
                 new_lk=_lk_init(curr_gray,(bx,by,bw,bh))
                 if new_lk is not None: lk_pts=new_lk
 
-            if orb_ref_descs is None and self._state==_TS.TRACKING and qr_confirmed:
-                _,orb_ref_descs=_orb_descriptors(curr_gray,(bx,by,bw,bh))
-
-            self._bbox=(bx,by,bw,bh); last_bbox=(bx,by,bw,bh)
-            cx,cy=centroid(bx,by,bw,bh)
+            # last_bbox stays raw for tracker reinit / motion reference
+            last_bbox=(bx,by,bw,bh)
+            # Kalman: feed raw centroid → smoothed estimate for decisions
+            raw_cx,raw_cy=centroid(bx,by,bw,bh)
+            cx,cy=kf.update(raw_cx,raw_cy)
+            # Overlay uses smoothed centroid (less jitter), raw size preserved
+            sbx=max(0,cx-bw//2); sby=max(0,cy-bh//2)
+            self._bbox=(sbx,sby,bw,bh)
 
             if prev_cx is not None:
                 vel=math.hypot(cx-prev_cx,cy-prev_cy)

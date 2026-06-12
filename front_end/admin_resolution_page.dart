@@ -853,7 +853,7 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
       case _Step.trackingAdmin:  return _trackingContent();
       case _Step.autoStaged:     return _stepContent(
           icon: Icons.hourglass_top, color: Colors.amber,
-          title: 'Phone staged ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â loading next step...',
+          title: 'Phone staged, loading next step...',
           subtitle: 'The system detected the phone in the staging zone.',
           loading: true, actions: const []);
       case _Step.unstageNext:    return _unstageContent();
@@ -901,7 +901,7 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
           const SizedBox(width: 12),
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(
-              'Wrong box ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â carry to $boxName',
+              'Wrong box, carry to $boxName',
               style: const TextStyle(
                 color:       Color(0xFFFF9800),
                 fontWeight:  FontWeight.bold,
@@ -942,7 +942,7 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
       ),
       const SizedBox(height: 20),
       _primaryBtn(
-        'Understood ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â taking it to $boxName',
+        'Understood, taking it to $boxName',
         const Color(0xFFFF9800),
         () {
           setState(() {
@@ -1050,7 +1050,7 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
         child: TextButton.icon(
           icon:  const Icon(Icons.search_off, size: 16, color: Colors.redAccent),
           label: Text(
-            _canDeclareCurrentMissing ? "Can't find it ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â declare missing" : "Can't find it (check all other phones first)",
+            _canDeclareCurrentMissing ? "Can't find it, declare missing" : "Can't find it (check all other phones first)",
             style: const TextStyle(color: Colors.redAccent, fontSize: 13),
           ),
           onPressed: (_canDeclareCurrentMissing && !_pendingServer) ? _onDeclareCurrentMissing : null,
@@ -1127,7 +1127,7 @@ class _AdminResolutionPageState extends State<AdminResolutionPage>
       ] else if (_evidenceKept) ...[
         const SizedBox(height: 12),
         _warningBox(Colors.orange, Icons.warning_amber_outlined,
-            'Evidence kept ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â anomalies were recorded.'),
+            'Evidence kept, anomalies were recorded.'),
       ],
       const SizedBox(height: 24),
       _primaryBtn('Close', _forceClosed ? Colors.deepOrangeAccent : Colors.green,
@@ -1342,8 +1342,8 @@ class _TrackingQrBadge extends StatelessWidget {
     final color = qrVisible ? Colors.green : Colors.orange;
     final icon  = qrVisible ? Icons.qr_code_2 : Icons.qr_code_2_outlined;
     final label = qrVisible
-        ? 'QR visible â€” move phone to destination slot'
-        : 'QR not visible â€” keep QR facing up!';
+        ? 'QR visible, move phone to destination slot'
+        : 'QR not visible, keep QR facing up!';
     return AnimatedContainer(
       duration: const Duration(milliseconds: 300),
       padding:  const EdgeInsets.symmetric(horizontal: 16, vertical: 10),

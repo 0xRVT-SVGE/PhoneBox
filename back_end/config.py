@@ -95,7 +95,7 @@ class CameraConfig:
     #   PHONEBOX_CAM_BACKEND_FRONT   e.g. "msmf"
     #   PHONEBOX_CAM_BACKEND_TOP     e.g. "auto"
     #   PHONEBOX_CAM_BACKEND_BOTTOM  e.g. "auto"
-    FRONT_CAM_BACKEND  = os.environ.get("PHONEBOX_CAM_BACKEND_FRONT",  "dshow").lower()
+    FRONT_CAM_BACKEND  = os.environ.get("PHONEBOX_CAM_BACKEND_FRONT",  "auto").lower()
     TOP_CAM_BACKEND    = os.environ.get("PHONEBOX_CAM_BACKEND_TOP",    "msmf").lower()
     BOTTOM_CAM_BACKEND = os.environ.get("PHONEBOX_CAM_BACKEND_BOTTOM", "dshow").lower()
 

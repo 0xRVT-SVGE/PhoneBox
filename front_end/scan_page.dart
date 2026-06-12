@@ -35,6 +35,12 @@ class _ScanPageState extends State<ScanPage> {
   // arrive before the first ScanSuccessPage navigation completes.
   bool _navigating      = false;
 
+  // Reactive mirror of `_webrtcConnected` so pages pushed on top of
+  // ScanPage (e.g. AlarmPage) can rebuild themselves when the main
+  // front-camera WebRTC connection comes up / drops, without needing
+  // ScanPage itself to rebuild them.
+  final ValueNotifier<bool> _webrtcConnectedNotifier = ValueNotifier<bool>(false);
+
   // Access-control denial state
   bool   _boxDenied      = false;
   String _boxDeniedMsg   = '';
@@ -69,7 +75,13 @@ class _ScanPageState extends State<ScanPage> {
 
   Future<void> _initRenderer() async {
     await _remoteRenderer.initialize();
-    await _startWebRTC();
+    // Route through _flushAndReconnectMain (not _startWebRTC directly) so
+    // _isReconnecting is held for the whole initial negotiation. Otherwise
+    // AlarmPage.initState()'s onRequestMainConnect() can see
+    // _webrtcConnected == false && _isReconnecting == false while this first
+    // connection is still negotiating and fire a second, concurrent
+    // _startWebRTC() — producing duplicate /webrtc/offer/main calls.
+    await _flushAndReconnectMain();
   }
 
   // Opt #28: connect() is now parameterless; events come via typed streams
@@ -97,6 +109,8 @@ class _ScanPageState extends State<ScanPage> {
             initialMismatches: data["mismatches"] ?? [],
             mainRenderer:      _remoteRenderer,
             isMainConnected:   () => _webrtcConnected,
+            mainConnectedNotifier: _webrtcConnectedNotifier,
+            onRequestMainConnect:  _ensureMainWebRTC,
           ),
         ))
         .then((_) => _alarmPageOpen = false);
@@ -188,25 +202,30 @@ class _ScanPageState extends State<ScanPage> {
     if (viewDisposed) return;
     try {
       await ApiService.cancelMain();
-      _peerConnection = await createPeerConnection(WebRTCConfig.iceConfig);
+      final pc = await createPeerConnection(WebRTCConfig.iceConfig);
+      _peerConnection = pc;
 
-      _peerConnection!.onTrack = (event) {
-        if (viewDisposed || !mounted) return;
+      pc.onTrack = (event) {
+        // Bail if this connection has since been superseded/closed by a
+        // concurrent reconnect — don't resurrect a stale stream.
+        if (viewDisposed || !mounted || _peerConnection != pc) return;
         if (event.streams.isNotEmpty) {
           _remoteRenderer.srcObject = event.streams[0];
           if (mounted) setState(() {
             webrtcStatus     = 'WebRTC Connected';
             _webrtcConnected = true;
           });
+          _webrtcConnectedNotifier.value = true;
         }
       };
 
-      _peerConnection!.onConnectionState = (state) async {
-        if (viewDisposed || _isReconnecting) return;
+      pc.onConnectionState = (state) async {
+        if (viewDisposed || _isReconnecting || _peerConnection != pc) return;
         // Only reconnect on 'failed' — 'disconnected' is transient/recoverable.
         if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
           if (_alarmPageOpen) {
             if (mounted) setState(() => _webrtcConnected = false);
+            _webrtcConnectedNotifier.value = false;
             return;
           }
           _isReconnecting = true;
@@ -214,10 +233,11 @@ class _ScanPageState extends State<ScanPage> {
             webrtcStatus     = 'Reconnecting...';
             _webrtcConnected = false;
           });
-          _peerConnection?.onTrack           = null;
-          _peerConnection?.onConnectionState = null;
-          await _peerConnection?.close();
-          _peerConnection = null;
+          _webrtcConnectedNotifier.value = false;
+          pc.onTrack           = null;
+          pc.onConnectionState = null;
+          await pc.close();
+          if (_peerConnection == pc) _peerConnection = null;
           await Future.delayed(const Duration(seconds: 1));
           if (!viewDisposed && !_alarmPageOpen) {
             _remoteRenderer.srcObject = null;
@@ -227,19 +247,27 @@ class _ScanPageState extends State<ScanPage> {
         }
       };
 
-      final offer = await _peerConnection!.createOffer(WebRTCConfig.videoOfferConstraints);
-      await _peerConnection!.setLocalDescription(offer);
+      final offer = await pc.createOffer(WebRTCConfig.videoOfferConstraints);
+      await pc.setLocalDescription(offer);
 
       final answerSDP = await ApiService.sendOffer(offer.sdp!);
+      if (viewDisposed || _peerConnection != pc) {
+        // Superseded by a concurrent reconnect/flush while we were
+        // negotiating — discard this connection rather than mutating
+        // whatever _peerConnection now points to.
+        await pc.close();
+        return;
+      }
       if (answerSDP != null) {
-        await _peerConnection!
-            .setRemoteDescription(RTCSessionDescription(answerSDP, 'answer'));
+        await pc.setRemoteDescription(RTCSessionDescription(answerSDP, 'answer'));
         if (mounted) setState(() => webrtcStatus = "WebRTC Connected");
       } else {
         if (mounted) setState(() => webrtcStatus = "WebRTC Error");
+        _webrtcConnectedNotifier.value = false;
       }
     } catch (_) {
       if (mounted) setState(() => webrtcStatus = "WebRTC Error");
+      _webrtcConnectedNotifier.value = false;
     }
   }
 
@@ -263,6 +291,15 @@ class _ScanPageState extends State<ScanPage> {
     } finally {
       _isReconnecting = false;
     }
+  }
+
+  /// Called by AlarmPage if the main front-camera WebRTC connection is not
+  /// (yet) up — e.g. the initial negotiation failed silently before the
+  /// alarm fired, or the alarm fired mid-negotiation. Safe to call
+  /// repeatedly; no-ops if already connected or a reconnect is in flight.
+  Future<void> _ensureMainWebRTC() async {
+    if (viewDisposed || _webrtcConnected || _isReconnecting) return;
+    await _flushAndReconnectMain();
   }
 
   // ── Top-camera pre-connection management ───────────────────────────────
@@ -452,6 +489,7 @@ class _ScanPageState extends State<ScanPage> {
     _preTopRenderer?.srcObject = null;
     _preTopRenderer?.dispose();
     _preTopConnected?.dispose();
+    _webrtcConnectedNotifier.dispose();
     // Opt #28: cancel all stream subscriptions — no leaks
     for (final s in _subs) s.cancel();
     _peerConnection?.onTrack           = null;
@@ -567,4 +605,4 @@ class _ScanPageState extends State<ScanPage> {
       ),
     );
   }
-}
+}

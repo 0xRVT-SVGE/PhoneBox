@@ -1415,12 +1415,15 @@ class AdminOpsHandler:
             f"(safe={safe}, remaining={remaining})"
         )
         self.alarm.unsilence()
-        emit("admin_session_closed", {
+        # FIX: was bare emit() which requires Flask request context — not
+        # available in this background thread.  Use self.socketio.emit()
+        # with explicit client_id so the event actually reaches the client.
+        self.socketio.emit("admin_session_closed", {
             "summary":       summary,
             "warnings":      warnings,
             "evidence_kept": True,
             "force_closed":  True,
-        })
+        }, to=client_id, namespace="/")
 
     # ── PRE-HIGHLIGHT SLOT ────────────────────────────────
 

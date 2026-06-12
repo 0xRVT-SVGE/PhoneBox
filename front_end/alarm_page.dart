@@ -9,11 +9,23 @@ class AlarmPage extends StatefulWidget {
   final RTCVideoRenderer mainRenderer;
   final bool Function() isMainConnected;
 
+  /// Notifier updated by ScanPage whenever the main WebRTC connection
+  /// state changes — lets AlarmPage rebuild itself reactively without
+  /// polling or relying on ScanPage to push rebuilds through the tree.
+  final ValueNotifier<bool>? mainConnectedNotifier;
+
+  /// Called by AlarmPage when it discovers the main WebRTC is not up.
+  /// ScanPage triggers a (re)negotiation and the notifier delivers the
+  /// result asynchronously.
+  final Future<void> Function()? onRequestMainConnect;
+
   const AlarmPage({
     super.key,
     required this.initialMismatches,
     required this.mainRenderer,
     required this.isMainConnected,
+    this.mainConnectedNotifier,
+    this.onRequestMainConnect,
   });
 
   @override
@@ -68,16 +80,32 @@ class _AlarmPageState extends State<AlarmPage>
       CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut),
     );
 
+    // Subscribe to the connection notifier so the camera panel rebuilds
+    // as soon as ScanPage establishes (or drops) the main WebRTC stream.
+    widget.mainConnectedNotifier?.addListener(_onConnectionChanged);
+
     _connectSocket();
+
+    // If the front-cam WebRTC is not yet connected, ask ScanPage to
+    // (re)start it now so the camera panel lights up during the alarm.
+    if (!widget.isMainConnected()) {
+      widget.onRequestMainConnect?.call();
+    }
   }
 
   @override
   void dispose() {
+    widget.mainConnectedNotifier?.removeListener(_onConnectionChanged);
     _autoPop?.cancel();
     _pulseCtrl.dispose();
     _passwordController.dispose();
     for (final s in _subs) s.cancel();
     super.dispose();
+  }
+
+  void _onConnectionChanged() {
+    // ValueNotifier callback — runs on the UI thread, safe to call setState.
+    if (mounted) setState(() {});
   }
 
   // ── Socket ────────────────────────────────────────────────────────────────
@@ -195,8 +223,11 @@ class _AlarmPageState extends State<AlarmPage>
   // ── Front camera panel ───────────────────────────────────────────────────
 
   Widget _buildCameraPanel() {
-    final connected = widget.isMainConnected() &&
+    // Prefer the notifier value when available (reactive), fall back to the
+    // synchronous isMainConnected() closure for the first build.
+    final connected = (widget.mainConnectedNotifier?.value ?? widget.isMainConnected()) &&
         widget.mainRenderer.srcObject != null;
+
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -212,13 +243,19 @@ class _AlarmPageState extends State<AlarmPage>
                 color: Colors.black,
                 child: Center(
                   child: Column(mainAxisSize: MainAxisSize.min, children: [
-                    Icon(Icons.videocam_off_outlined,
-                        color: Colors.white.withOpacity(0.18), size: 36),
+                    const SizedBox(
+                      width: 24, height: 24,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2, color: Colors.white38,
+                      ),
+                    ),
                     const SizedBox(height: 10),
-                    Text('Front camera',
-                        style: TextStyle(
-                            color: Colors.white.withOpacity(0.25),
-                            fontSize: 13)),
+                    Text(
+                      'Connecting front camera…',
+                      style: TextStyle(
+                          color: Colors.white.withOpacity(0.25),
+                          fontSize: 13),
+                    ),
                   ]),
                 ),
               ),
