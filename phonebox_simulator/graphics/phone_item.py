@@ -1,13 +1,19 @@
 """
-PhoneTopItem: renders a Phone as seen by the top (QR) camera.
+PhoneTopItem: renders a Phone as seen by the top (back-face / QR) camera.
 
-The item draws the phone body and, when the phone's QR-bearing face is
-turned toward the camera (phone.qr_visible), the generated QR code.
-When the phone is rotated past 45 degrees the QR is no longer drawn.
+The phone is always presented in LANDSCAPE orientation — its long axis is
+horizontal.  The BACK of the phone faces the camera, so the QR label is
+drawn on that surface.  A subtle camera-lens graphic is painted to the
+left to indicate the back.
+
+The item's local origin is at the phone's visual centre.  No Qt-level
+rotation is applied for normal operation (the phone is already in its
+correct orientation).  The ScenarioEngine may set a non-zero Z rotation
+if the legacy "rotate on insertion" toggle is active.
 """
 
 from PySide6.QtCore import QRectF, Qt
-from PySide6.QtGui import QBrush, QColor, QPen
+from PySide6.QtGui import QBrush, QColor, QFont, QPen, QRadialGradient
 from PySide6.QtWidgets import QGraphicsItem
 
 
@@ -16,44 +22,104 @@ class PhoneTopItem(QGraphicsItem):
         super().__init__()
         self.phone = phone
         self.setZValue(10)
-        # Rotate around the center of the phone, which is the origin of
-        # the item's local coordinate system (see boundingRect below).
         self.setTransformOriginPoint(0, 0)
 
+    # The phone is landscape so visual width = spec.height, visual height = spec.width.
+    def _vis_w(self):
+        return self.phone.spec.height   # long axis runs left-right
+
+    def _vis_h(self):
+        return self.phone.spec.width    # short axis runs up-down
+
     def boundingRect(self) -> QRectF:
-        w, h = self.phone.spec.width, self.phone.spec.height
-        # Use a square bounding box large enough to cover the item at
-        # any rotation, so Qt repaints the correct region after rotating.
-        diag = (w ** 2 + h ** 2) ** 0.5
+        diag = (self._vis_w() ** 2 + self._vis_h() ** 2) ** 0.5
         return QRectF(-diag / 2, -diag / 2, diag, diag)
 
     def paint(self, painter, option, widget=None):
         phone = self.phone
-        w, h = phone.spec.width, phone.spec.height
-        rect = QRectF(-w / 2, -h / 2, w, h)
+        vw = self._vis_w()
+        vh = self._vis_h()
+        rect = QRectF(-vw / 2, -vh / 2, vw, vh)
 
+        # ── Body ──────────────────────────────────────────────────────
         painter.setBrush(QBrush(QColor(phone.spec.body_color)))
-        painter.setPen(QPen(QColor("#111111"), 2))
-        painter.drawRoundedRect(rect, 8, 8)
+        painter.setPen(QPen(QColor("#111111"), 1.5))
+        painter.drawRoundedRect(rect, 6, 6)
 
-        if phone.qr_visible:
-            qr_size = min(w, h) * 0.7
-            target = QRectF(-qr_size / 2, -qr_size / 2, qr_size, qr_size)
-            painter.drawImage(target, phone.qr_image)
+        # ── Back-face details ─────────────────────────────────────────
+        # Slight panel bevel on the back
+        bevel = rect.adjusted(3, 3, -3, -3)
+        bevel_color = QColor(phone.spec.body_color).lighter(115)
+        bevel_color.setAlpha(60)
+        painter.setBrush(QBrush(bevel_color))
+        painter.setPen(Qt.NoPen)
+        painter.drawRoundedRect(bevel, 4, 4)
+
+        # Camera lens (left side in landscape)
+        lens_cx = rect.left() + vh * 0.55
+        lens_cy = rect.center().y()
+        lens_r  = vh * 0.22
+        grad = QRadialGradient(lens_cx, lens_cy, lens_r)
+        grad.setColorAt(0.0, QColor("#1a1a2e"))
+        grad.setColorAt(0.6, QColor("#0d0d1a"))
+        grad.setColorAt(1.0, QColor("#333355"))
+        painter.setBrush(QBrush(grad))
+        painter.setPen(QPen(QColor("#444466"), 1))
+        painter.drawEllipse(
+            QRectF(lens_cx - lens_r, lens_cy - lens_r, lens_r * 2, lens_r * 2)
+        )
+        # Lens highlight
+        painter.setBrush(QBrush(QColor(255, 255, 255, 35)))
+        painter.setPen(Qt.NoPen)
+        hl_r = lens_r * 0.35
+        painter.drawEllipse(
+            QRectF(lens_cx - lens_r * 0.5, lens_cy - lens_r * 0.5, hl_r, hl_r)
+        )
+
+        # Flash LED next to lens
+        led_x = lens_cx + lens_r + 4
+        led_r = lens_r * 0.3
+        painter.setBrush(QBrush(QColor("#ccaa44")))
+        painter.drawEllipse(QRectF(led_x, lens_cy - led_r, led_r * 2, led_r * 2))
+
+        # ── QR code (or hidden indicator) ─────────────────────────────
+        # QR region: right two-thirds of the back panel
+        qr_margin = 4
+        qr_area = QRectF(
+            rect.left() + lens_cx - rect.left() + lens_r * 2 + 8,
+            rect.top() + qr_margin,
+            rect.right() - (lens_cx + lens_r * 2 + 10) - qr_margin,
+            rect.height() - qr_margin * 2,
+        )
+
+        if phone.qr_visible and qr_area.width() > 10:
+            # White QR background
+            painter.setBrush(QBrush(QColor("#ffffff")))
+            painter.setPen(Qt.NoPen)
+            painter.drawRoundedRect(qr_area, 3, 3)
+            # Scale QR to fit
+            qr_size = min(qr_area.width(), qr_area.height()) - 2
+            qr_rect = QRectF(
+                qr_area.center().x() - qr_size / 2,
+                qr_area.center().y() - qr_size / 2,
+                qr_size,
+                qr_size,
+            )
+            painter.drawImage(qr_rect, phone.qr_image)
         else:
-            painter.setPen(QPen(QColor("#999999")))
-            font = painter.font()
-            font.setPointSize(7)
+            painter.setPen(QPen(QColor("#555577")))
+            font = QFont()
+            font.setPointSize(6)
             painter.setFont(font)
-            painter.drawText(rect, Qt.AlignCenter, "QR\nhidden")
+            painter.drawText(qr_area, Qt.AlignCenter, "QR\nhidden")
 
-        # PID label under the phone, always readable regardless of rotation
+        # ── PID label (always upright, below the phone body) ──────────
         painter.save()
         painter.rotate(-self.rotation())
-        painter.setPen(QPen(QColor("#dddddd")))
-        label_rect = QRectF(-w, h / 2 + 4, 2 * w, 16)
-        font = painter.font()
-        font.setPointSize(8)
-        painter.setFont(font)
-        painter.drawText(label_rect, Qt.AlignCenter, phone.spec.pid)
+        painter.setPen(QPen(QColor("#cccccc")))
+        lbl_font = QFont()
+        lbl_font.setPointSize(7)
+        painter.setFont(lbl_font)
+        lbl_rect = QRectF(-vw / 2, vh / 2 + 3, vw, 14)
+        painter.drawText(lbl_rect, Qt.AlignCenter, phone.spec.pid)
         painter.restore()
