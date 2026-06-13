@@ -1,15 +1,5 @@
 """
 PhoneTopItem: renders a Phone as seen by the top (back-face / QR) camera.
-
-The phone is always presented in LANDSCAPE orientation — its long axis is
-horizontal.  The BACK of the phone faces the camera, so the QR label is
-drawn on that surface.  A subtle camera-lens graphic is painted to the
-left to indicate the back.
-
-The item's local origin is at the phone's visual centre.  No Qt-level
-rotation is applied for normal operation (the phone is already in its
-correct orientation).  The ScenarioEngine may set a non-zero Z rotation
-if the legacy "rotate on insertion" toggle is active.
 """
 
 from PySide6.QtCore import QRectF, Qt
@@ -24,12 +14,11 @@ class PhoneTopItem(QGraphicsItem):
         self.setZValue(10)
         self.setTransformOriginPoint(0, 0)
 
-    # The phone is landscape so visual width = spec.height, visual height = spec.width.
     def _vis_w(self):
-        return self.phone.spec.height   # long axis runs left-right
+        return self.phone.spec.height
 
     def _vis_h(self):
-        return self.phone.spec.width    # short axis runs up-down
+        return self.phone.spec.width
 
     def boundingRect(self) -> QRectF:
         diag = (self._vis_w() ** 2 + self._vis_h() ** 2) ** 0.5
@@ -41,13 +30,10 @@ class PhoneTopItem(QGraphicsItem):
         vh = self._vis_h()
         rect = QRectF(-vw / 2, -vh / 2, vw, vh)
 
-        # ── Body ──────────────────────────────────────────────────────
         painter.setBrush(QBrush(QColor(phone.spec.body_color)))
         painter.setPen(QPen(QColor("#111111"), 1.5))
         painter.drawRoundedRect(rect, 6, 6)
 
-        # ── Back-face details ─────────────────────────────────────────
-        # Slight panel bevel on the back
         bevel = rect.adjusted(3, 3, -3, -3)
         bevel_color = QColor(phone.spec.body_color).lighter(115)
         bevel_color.setAlpha(60)
@@ -55,7 +41,6 @@ class PhoneTopItem(QGraphicsItem):
         painter.setPen(Qt.NoPen)
         painter.drawRoundedRect(bevel, 4, 4)
 
-        # Camera lens (left side in landscape)
         lens_cx = rect.left() + vh * 0.55
         lens_cy = rect.center().y()
         lens_r  = vh * 0.22
@@ -68,7 +53,6 @@ class PhoneTopItem(QGraphicsItem):
         painter.drawEllipse(
             QRectF(lens_cx - lens_r, lens_cy - lens_r, lens_r * 2, lens_r * 2)
         )
-        # Lens highlight
         painter.setBrush(QBrush(QColor(255, 255, 255, 35)))
         painter.setPen(Qt.NoPen)
         hl_r = lens_r * 0.35
@@ -76,14 +60,11 @@ class PhoneTopItem(QGraphicsItem):
             QRectF(lens_cx - lens_r * 0.5, lens_cy - lens_r * 0.5, hl_r, hl_r)
         )
 
-        # Flash LED next to lens
         led_x = lens_cx + lens_r + 4
         led_r = lens_r * 0.3
         painter.setBrush(QBrush(QColor("#ccaa44")))
         painter.drawEllipse(QRectF(led_x, lens_cy - led_r, led_r * 2, led_r * 2))
 
-        # ── QR code (or hidden indicator) ─────────────────────────────
-        # QR region: right two-thirds of the back panel
         qr_margin = 4
         qr_area = QRectF(
             rect.left() + lens_cx - rect.left() + lens_r * 2 + 8,
@@ -93,11 +74,9 @@ class PhoneTopItem(QGraphicsItem):
         )
 
         if phone.qr_visible and qr_area.width() > 10:
-            # White QR background
             painter.setBrush(QBrush(QColor("#ffffff")))
             painter.setPen(Qt.NoPen)
             painter.drawRoundedRect(qr_area, 3, 3)
-            # Scale QR to fit
             qr_size = min(qr_area.width(), qr_area.height()) - 2
             qr_rect = QRectF(
                 qr_area.center().x() - qr_size / 2,
@@ -113,7 +92,6 @@ class PhoneTopItem(QGraphicsItem):
             painter.setFont(font)
             painter.drawText(qr_area, Qt.AlignCenter, "QR\nhidden")
 
-        # ── PID label (always upright, below the phone body) ──────────
         painter.save()
         painter.rotate(-self.rotation())
         painter.setPen(QPen(QColor("#cccccc")))

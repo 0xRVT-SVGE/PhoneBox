@@ -4,7 +4,7 @@ to simulate light leaking into the box from above.
 """
 
 from PySide6.QtCore import QRectF, Qt
-from PySide6.QtGui import QColor, QLinearGradient, QBrush
+from PySide6.QtGui import QBrush, QColor, QLinearGradient
 from PySide6.QtWidgets import QGraphicsItem
 
 
@@ -14,7 +14,6 @@ class LightLeakOverlay(QGraphicsItem):
         self.w = width
         self.h = height
         self.intensity = 0.0
-        # Always drawn last, on top of slots and phones.
         self.setZValue(1000)
 
     def boundingRect(self) -> QRectF:
@@ -32,16 +31,13 @@ class LightLeakOverlay(QGraphicsItem):
     def paint(self, painter, option, widget=None):
         if self.intensity <= 0:
             return
-
         gradient = QLinearGradient(0, 0, 0, self.h * 0.6)
         top_color = QColor(255, 255, 220)
         top_color.setAlphaF(0.85 * self.intensity)
         bottom_color = QColor(255, 255, 220)
         bottom_color.setAlphaF(0.0)
-
         gradient.setColorAt(0.0, top_color)
         gradient.setColorAt(1.0, bottom_color)
-
         painter.setPen(Qt.NoPen)
         painter.setBrush(QBrush(gradient))
         painter.drawRect(self.boundingRect())

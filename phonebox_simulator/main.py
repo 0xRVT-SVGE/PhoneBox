@@ -3,8 +3,6 @@ Entry point for the PhoneBox Digital Twin simulator.
 
 Run with:
     python -m phonebox_simulator.main
-
-(run from the directory that contains the phonebox_simulator/ package)
 """
 
 import sys

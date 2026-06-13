@@ -7,14 +7,15 @@ into the target slot.
 
 Layout (Y increases downward):
   ┌─────────────────────────────────────────┐  ← y = 0
-  │   transit lane  (TRANSIT_HEIGHT px)     │  ← phone travels here
+  │  [STAGING]  transit lane                │  ← phone waits here before deposit
   ├─────────────────────────────────────────┤  ← y = TRANSIT_HEIGHT
   │                                         │
   │   slot grid  (rows × cols)              │
   │                                         │
   └─────────────────────────────────────────┘
 
-entry_pos : right-edge centre of the transit lane, where new phones spawn.
+staging_pos : left side of the transit lane, where freshly created phones wait.
+entry_pos   : right-edge centre of the transit lane, where deposit animation starts.
 """
 
 from dataclasses import dataclass
@@ -75,9 +76,20 @@ class SlotGrid:
 
     @property
     def entry_pos(self) -> Tuple[float, float]:
-        """Where a phone first appears: right edge, vertically centred in the transit lane."""
+        """Right-edge of the transit lane — where the deposit animation begins."""
         w, _ = self._dims()
         return (w + 80.0, TRANSIT_HEIGHT / 2.0)
+
+    @property
+    def staging_pos(self) -> Tuple[float, float]:
+        """
+        Left side of the transit lane — where a newly created phone waits
+        visibly before the operator clicks Deposit.  The phone parks here
+        so the top camera can confirm QR readability before insertion.
+        """
+        cfg = self.config
+        # Park at the left margin, centred vertically in the transit lane.
+        return (cfg.margin + 80.0, TRANSIT_HEIGHT / 2.0)
 
     @property
     def transit_y(self) -> float:
@@ -86,6 +98,11 @@ class SlotGrid:
 
     def get(self, index: int) -> Slot:
         return self.slots[index]
+
+    def slot_label(self, index: int) -> str:
+        """Human-readable label matching the on-screen grid annotation."""
+        s = self.slots[index]
+        return f"R{s.row + 1}C{s.col + 1}"
 
     def __len__(self):
         return len(self.slots)
